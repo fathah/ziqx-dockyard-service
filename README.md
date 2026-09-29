@@ -12,7 +12,7 @@ Users choose development, staging or production before submitting Compose YAML. 
 
 Mutations return a durable `202` job envelope and support retry deduplication. The first version uses one global worker, one outstanding job per project, and a process lock. Every job transition has a transactional SQLite audit event. Interrupted or ambiguous changes block mutations until a local root recovery command can prove the live route and container identity.
 
-SQLite tracks projects, releases, slots, service revisions, domains, DNS record IDs, port reservations and jobs. Inventory APIs read the database without filesystem scans or external calls; Compose and secret files remain verified deployment artifacts. See the [database and migration guide](docs/DATABASE.md).
+SQLite tracks projects, releases, slots, service revisions, domains, DNS record IDs, port reservations and jobs. Existing Compose directories and effective Caddyfile sites sync into separate safe SQLite inventory at startup and every five minutes; imported deployments are production inventory without automatic takeover. See [existing services and 24/7 operation](docs/EXISTING.md). Inventory APIs read the database without filesystem scans or external calls; Compose and secret files remain verified deployment artifacts. See the [database and migration guide](docs/DATABASE.md).
 
 ## Development
 
@@ -29,3 +29,7 @@ make linux-build   # Docker builder; exports Linux binaries into bin/linux
 ```
 
 `make test` exercises authentication, permissions, strict input handling, reservations, persistence, command containment, logs, recovery boundaries, and deployment failures with injectable adapters. `make compose-check` verifies literal environment/command values, multi-service normalization, port confinement, and stable volume names through the actual Compose parser. These checks supplement the [real Linux acceptance procedure](docs/STAGING.md).
+
+## macOS desktop control room
+
+[Dockyard Desktop](desktop/README.md) is the Tauri 2 / Rust macOS client for this agent. It includes environment-aware Compose deployment, blue-green slots, services/logs/releases, domain and DNS controls, jobs/audit, and existing VPS inventory. It keeps API credentials in macOS Keychain and signs requests in Rust. Build/run/enrollment instructions and the limits of desktop-exclusive credentials are documented there.

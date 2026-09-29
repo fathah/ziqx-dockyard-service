@@ -1,0 +1,16 @@
+Port 22
+HostKey /etc/ssh/ssh_host_ed25519_key
+PermitRootLogin yes
+PasswordAuthentication yes
+UsePAM no
+Subsystem sftp internal-sftp
+Match User dockyard-link
+  AuthenticationMethods publickey
+  PasswordAuthentication no
+  AllowTcpForwarding local
+  PermitOpen 127.0.0.1:9123
+  PermitTTY no
+  X11Forwarding no
+  AllowAgentForwarding no
+  ForceCommand /usr/bin/false
+Match all

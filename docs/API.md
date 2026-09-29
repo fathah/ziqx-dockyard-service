@@ -9,6 +9,7 @@ The agent defaults to `https://127.0.0.1:9123`; it can bind an explicitly config
 | Method | Path | Required scope | Behavior |
 | --- | --- | --- | --- |
 | GET | `/v1/projects` | `deploy.read` | Projects allowed for this key |
+| GET | `/v1/inventory` | `deploy.read` plus all-project access | Cached host-wide existing Compose/Caddy metadata, timestamps, warnings and retained observed ports |
 | GET | `/v1/projects/{id}` | `deploy.read` | Safe metadata; no environment values |
 | GET | `/v1/projects/{id}/status` | `deploy.read` | Route coherence, active container health, busy state, expected downtime |
 | GET | `/v1/projects/{id}/releases` | `deploy.read` | Successfully activated image/environment pairs |

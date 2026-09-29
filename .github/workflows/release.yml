@@ -70,8 +70,15 @@ jobs:
             gcc -dumpfullversion
             getconf GNU_LIBC_VERSION
           } > dist/BUILD-INFO.txt
+          mkdir -p dist/package
+          install -m 0755 dist/dockyard-linux-amd64 dist/package/dockyard
+          install -m 0755 dist/dockyardctl-linux-amd64 dist/package/dockyardctl
+          cp -R deploy docs README.md dist/package/
+          cp dist/BUILD-INFO.txt dist/package/
+          tar -czf dist/dockyard-ubuntu-amd64.tar.gz -C dist/package .
           cd dist
-          sha256sum dockyard-linux-amd64 dockyardctl-linux-amd64 BUILD-INFO.txt > SHA256SUMS
+          sha256sum dockyard-linux-amd64 dockyardctl-linux-amd64 BUILD-INFO.txt \
+            dockyard-ubuntu-amd64.tar.gz > SHA256SUMS
           sha256sum --check SHA256SUMS
 
       - name: Publish binaries to GitHub Releases
@@ -96,6 +103,7 @@ jobs:
             dist/dockyard-linux-amd64 \
             dist/dockyardctl-linux-amd64 \
             dist/BUILD-INFO.txt \
+            dist/dockyard-ubuntu-amd64.tar.gz \
             dist/SHA256SUMS \
             --clobber
           # A failed upload leaves a draft; a retry finishes it before publication.

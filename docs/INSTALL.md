@@ -56,6 +56,8 @@ Use separate keys with narrow project and scope lists for automation, logs, and 
 
 ## Start and call
 
+For existing `/docker` projects and Caddy sites, run `sudo dockyard -config /etc/dockyard/config.json -sync-existing` with the daemon stopped to populate safe production inventory first. Normal startup refreshes it and repeats every five minutes. Manual sites and Compose files remain unchanged; existing deployments require an explicit migration before lifecycle control. See [existing services and 24/7 operation](EXISTING.md).
+
 ```sh
 sudo /usr/local/bin/dockyard -config /etc/dockyard/config.json -check
 sudo install -o root -g root -m 0644 deploy/dockyard.service /etc/systemd/system/dockyard.service

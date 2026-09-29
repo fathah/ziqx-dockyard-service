@@ -103,14 +103,14 @@ func TestOpenAPIReferencesAndSecurity(t *testing.T) {
 			}
 		}
 	}
-	if operations != 24 {
-		t.Fatalf("expected 18 API operations and 6 health/docs operations, got %d", operations)
+	if operations != 25 {
+		t.Fatalf("expected 19 API operations and 6 health/docs operations, got %d", operations)
 	}
 }
 
 func TestResponseSchemasMatchModels(t *testing.T) {
 	schemas := contract(t)["components"].(map[string]any)["schemas"].(map[string]any)
-	for name, value := range map[string]any{"Project": model.Project{}, "Release": model.Release{}, "Job": model.Job{}, "ServiceInfo": model.ServiceInfo{}, "DomainInfo": model.DomainInfo{}} {
+	for name, value := range map[string]any{"Project": model.Project{}, "Release": model.Release{}, "Job": model.Job{}, "ServiceInfo": model.ServiceInfo{}, "DomainInfo": model.DomainInfo{}, "Inventory": model.Inventory{}, "ExistingProject": model.ExistingProject{}, "ExistingService": model.ExistingService{}, "ExistingSite": model.ExistingSite{}} {
 		schema := schemas[name].(map[string]any)
 		properties := schema["properties"].(map[string]any)
 		required := map[string]bool{}

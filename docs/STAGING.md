@@ -21,6 +21,8 @@ Keep a dated evidence report with command/tool versions, safe test outputs, traf
 
 ## Environment acceptance
 
+Test one-shot/startup/periodic discovery against existing Compose directories, Caddy imports, static and nested proxy sites, stopped/running containers and out-of-directory Docker workloads. Compare inventory with the real topology; check warnings for unresolved interpolation/aliases/overrides and unassociated upstreams. Prove files and services remain unchanged, secrets never reach SQLite/API/logs, failed sources retain prior data, and observed ports cannot be allocated. Test daemon crash/restart, Docker/Caddy restart, host reboot and explicit operator stop under the revised systemd unit. Exercise a representative 50–100-service host; unit discovery of 100 directories does not replace live load testing.
+
 Create the same app in development, staging and production with separate IDs/domains. Verify independent ports, networks, volumes, private environment files, jobs and release history. Reject a second deployment with the same app/environment, non-production blue-green/secondary ports and wrong or omitted deploy environment before changes. Check per-project key policy prevents a development-only key from accessing production, even with the same app ID. Upgrade a version-1 database containing both single-slot and blue-green projects plus queued/recovery jobs; confirm they retain their IDs/paths/modes as production and retries survive. Exercise the CLI prompt and unattended flag with stable retry IDs. Development/staging updates must replace only their single slot through maintenance; repeat production traffic/failure tests across both slots.
 
 ## Submitted Compose acceptance

@@ -6,3 +6,11 @@ bin
 *.key
 .env
 config.json
+*.enrollment.json
+.dockyard-enrollment
+desktop/node_modules
+desktop/dist
+desktop/releases
+desktop/src-tauri/target
+desktop/src-tauri/gen
+desktop/src-tauri/resources/ubuntu

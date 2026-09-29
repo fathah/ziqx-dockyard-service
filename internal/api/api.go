@@ -189,6 +189,26 @@ func query(r *http.Request, allowed ...string) (map[string]string, error) {
 func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	e := a.Engine
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/"), "/")
+	if r.URL.Path == "/v1/inventory" {
+		if !require(w, p, "deploy.read", "") {
+			return
+		}
+		if !p.Allows("*") {
+			problem(w, 403, "SCOPE_REQUIRED", p.RequestID)
+			return
+		}
+		if _, err := query(r); err != nil {
+			fail(w, err, p.RequestID)
+			return
+		}
+		inventory, err := e.Store.Inventory()
+		if err != nil {
+			fail(w, err, p.RequestID)
+			return
+		}
+		write(w, 200, inventory)
+		return
+	}
 	if r.URL.Path == "/v1/ports/next" {
 		if !require(w, p, "projects.write", "") {
 			return

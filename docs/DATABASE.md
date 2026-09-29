@@ -6,6 +6,8 @@ SQLite is the authoritative inventory and job journal. The default database is `
 | --- | --- |
 | Project configuration, lifecycle state, release history | `projects` snapshots |
 | Unique immutable app/environment-to-project identity | `project_targets` |
+| Safe existing Compose/Caddy observations and source timestamps | `inventory` |
+| Retained observed published ports | `inventory_ports` |
 | Slot-to-release, Compose and environment bindings | `project_slots` |
 | Verified service image, template, health and ownership metadata | `compose_revisions` |
 | Currently assigned domains | `project_domains` |
@@ -32,7 +34,7 @@ Environment values, submitted command arguments and raw user YAML are excluded f
 
 ## Migration and operations
 
-Startup performs an additive transactional schema migration, tracked with SQLite `user_version` (currently 2). It preserves existing projects, jobs, idempotency records, reservations and audit history, and backfills assigned-domain and slot indexes from database snapshots. The engine imports missing service metadata from verified retained Compose revisions once. Recorded slot manifests are still verified on startup; subsequent startups do not reread every historical manifest already indexed. Schema 2 classifies existing projects as production with `app_id` equal to the existing project ID, preserving their live mode and paths, and migrates queued/recovery job snapshots. New app/environment pairs are unique and immutable. A newer schema version is rejected. See [deployment environments](ENVIRONMENTS.md).
+Startup performs an additive transactional schema migration, tracked with SQLite `user_version` (currently 3). It preserves existing projects, jobs, idempotency records, reservations and audit history, and backfills assigned-domain and slot indexes from database snapshots. The engine imports missing service metadata from verified retained Compose revisions once. Recorded slot manifests are still verified on startup; subsequent startups do not reread every historical manifest already indexed. Schema 2 classifies existing projects as production with `app_id` equal to the existing project ID, preserving their live mode and paths, and migrates queued/recovery job snapshots. New app/environment pairs are unique and immutable. Schema 3 adds observed existing-service/Caddy inventory and conservative port reservations; it does not alter or adopt live projects. See [existing services](EXISTING.md). A newer schema version is rejected. See [deployment environments](ENVIRONMENTS.md).
 
 Older project snapshots contain a flat list of Cloudflare IDs without hostname associations. Those IDs remain intact. A successful DNS job or offline DNS reconciliation records the verified hostname association; migration does not guess it.
 

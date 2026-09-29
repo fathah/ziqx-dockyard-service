@@ -7,3 +7,13 @@
 *.key
 .env
 config.json
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/
+*.enrollment.json
+
+/desktop/releases/
+/.dockyard-enrollment/
+/desktop/src-tauri/resources/ubuntu/
+__pycache__/

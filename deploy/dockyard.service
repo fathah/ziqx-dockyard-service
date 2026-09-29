@@ -1,15 +1,15 @@
 [Unit]
 Description=Ziqx Dockyard privileged deployment API
 After=network-online.target docker.service caddy.service
-Wants=network-online.target
-Requires=docker.service caddy.service
+Wants=network-online.target docker.service caddy.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=root
 Group=root
 ExecStart=/usr/local/bin/dockyard -config /etc/dockyard/config.json
-Restart=on-failure
+Restart=always
 RestartSec=5s
 TimeoutStopSec=45s
 KillMode=control-group

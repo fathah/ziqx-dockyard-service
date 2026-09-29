@@ -26,7 +26,7 @@
     6379,
     9123
   ],
-  "max_projects": 50,
+  "max_projects": 300,
   "max_queued_jobs": 100,
   "drain_seconds": 90,
   "health_seconds": 180,

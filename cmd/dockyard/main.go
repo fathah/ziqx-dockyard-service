@@ -10,6 +10,7 @@ import (
 	"github.com/ziqx/ziqx-dockyard-service/internal/auth"
 	"github.com/ziqx/ziqx-dockyard-service/internal/config"
 	"github.com/ziqx/ziqx-dockyard-service/internal/engine"
+	"github.com/ziqx/ziqx-dockyard-service/internal/inventory"
 	"github.com/ziqx/ziqx-dockyard-service/internal/process"
 	adapter "github.com/ziqx/ziqx-dockyard-service/internal/runtime"
 	"github.com/ziqx/ziqx-dockyard-service/internal/secure"
@@ -36,7 +37,11 @@ func run() error {
 	path := flag.String("config", "/etc/dockyard/config.json", "root-owned policy file")
 	check := flag.Bool("check", false, "validate policy and credentials without side effects")
 	reconcile := flag.String("reconcile-job", "", "offline root recovery; stop the daemon first")
+	syncExisting := flag.Bool("sync-existing", false, "offline read-only scan of existing Compose/Caddy metadata into SQLite; stop the daemon first")
 	flag.Parse()
+	if (*check && (*syncExisting || *reconcile != "")) || (*syncExisting && *reconcile != "") {
+		return errors.New("choose only one check, sync-existing or reconcile-job mode")
+	}
 	if runtime.GOOS != "linux" || os.Geteuid() != 0 {
 		return errors.New("the agent requires Linux and root; development tests run without root")
 	}
@@ -93,6 +98,18 @@ func run() error {
 	dns := adapter.NewDNS(c)
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	scanner := inventory.Scanner{Config: c, Store: s, Runner: runner}
+	if *syncExisting {
+		result, err := scanner.Sync(ctx)
+		if err != nil {
+			return err
+		}
+		slog.Info("existing inventory synced", "projects", len(result.Projects), "sites", len(result.Sites), "warnings", result.Warnings)
+		if len(result.Warnings) > 0 {
+			return errors.New("inventory sync has source failures; last successful metadata retained")
+		}
+		return nil
+	}
 	// Reject an unavailable/old Compose before accepting privileged operations.
 	version, err := runner.Run(ctx, c.DockerBinary, c.ProjectsRoot, []string{"compose", "version", "--short"})
 	if err != nil {
@@ -111,6 +128,11 @@ func run() error {
 	if *reconcile != "" {
 		return e.Reconcile(ctx, *reconcile)
 	}
+	if result, err := scanner.Sync(ctx); err != nil {
+		slog.Warn("initial inventory sync failed")
+	} else if len(result.Warnings) > 0 {
+		slog.Warn("initial inventory sources unavailable", "warnings", result.Warnings)
+	}
 	listener, err := net.Listen("tcp", c.Listen)
 	if err != nil {
 		return err
@@ -121,6 +143,8 @@ func run() error {
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: pool, NextProtos: []string{"http/1.1"}},
 	}
 	workerDone := make(chan error, 1)
+	inventoryDone := make(chan struct{})
+	go func() { defer close(inventoryDone); scanner.Run(ctx) }()
 	go func() { workerDone <- e.Run(ctx) }()
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- server.ServeTLS(listener, "", "") }()
@@ -137,6 +161,7 @@ func run() error {
 	shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stop()
 	server.Shutdown(shutdown)
+	<-inventoryDone
 	if !workerStopped {
 		if err := <-workerDone; result == nil {
 			result = err

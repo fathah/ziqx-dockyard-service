@@ -2,9 +2,9 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Ziqx Dockyard Service API",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
-    "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, service, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health."
+    "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, service, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved."
   },
   "servers": [
     {
@@ -1657,6 +1657,73 @@
           "deploy.read"
         ]
       }
+    },
+    "/v1/inventory": {
+      "get": {
+        "operationId": "readExistingInventory",
+        "summary": "Read existing Compose and Caddy inventory",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Requires deploy.read and all-project access. Returns safe cached SQLite observations of existing /docker Compose projects, effective Caddyfile host/upstream mappings and retained observed ports. Legacy projects are classified production and remain unmanaged; no adoption, environment-secret reads, Compose execution, Caddy reload or container changes occur during sync. GET performs no scan. Source timestamps/warnings indicate freshness; failed sources preserve their last success, missing directories remain present=false, and ports remain reserved. Aliases/interpolation/overrides may leave metadata incomplete; this is not live health or a full backup. Caddy associations use only unambiguous loopback published ports.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cached inventory, including incomplete/stale observation warnings.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Inventory"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ],
+        "x-requires-all-projects": true
+      }
     }
   },
   "components": {
@@ -2850,6 +2917,167 @@
         ],
         "description": "Required target choice. Development and staging use one Compose instance. Only production permits blue-green; selection must match the immutable project environment. This is distinct from secret environment variables/revisions.",
         "x-ui-question": "Which environment should receive this deployment?"
+      },
+      "ExistingService": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string",
+            "description": "Safe literal image reference when resolved; no environment interpolation."
+          },
+          "published_ports": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        },
+        "required": [
+          "name",
+          "published_ports"
+        ],
+        "additionalProperties": false
+      },
+      "ExistingProject": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable observed ID; legacy IDs start with existing-. Does not grant mutation authority."
+          },
+          "name": {
+            "type": "string",
+            "description": "Directory basename under configured projects_root."
+          },
+          "environment": {
+            "$ref": "#/components/schemas/DeploymentEnvironment"
+          },
+          "managed": {
+            "type": "boolean",
+            "description": "True only for projects already controlled by Dockyard; legacy discovery remains false."
+          },
+          "present": {
+            "type": "boolean"
+          },
+          "compose_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExistingService"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Fixed metadata parsing/ownership warning code; no raw source or diagnostics."
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "environment",
+          "managed",
+          "present",
+          "compose_files",
+          "services",
+          "warnings"
+        ],
+        "additionalProperties": false
+      },
+      "ExistingSite": {
+        "type": "object",
+        "properties": {
+          "host_matcher": {
+            "type": "string",
+            "description": "Effective Caddyfile host matcher, including wildcard/catch-all when present."
+          },
+          "upstreams": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Static host:port dial target. Dynamic/socket targets are omitted."
+            }
+          },
+          "project_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "Observed association through an unambiguous loopback published port; not ownership or live health."
+            }
+          }
+        },
+        "required": [
+          "host_matcher",
+          "upstreams",
+          "project_ids"
+        ],
+        "additionalProperties": false
+      },
+      "Inventory": {
+        "type": "object",
+        "properties": {
+          "last_sync_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "projects_observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "caddy_observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "docker_observed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExistingProject"
+            }
+          },
+          "sites": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExistingSite"
+            }
+          },
+          "reserved_ports": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "projects",
+          "sites",
+          "reserved_ports",
+          "warnings"
+        ],
+        "additionalProperties": false
       }
     }
   }

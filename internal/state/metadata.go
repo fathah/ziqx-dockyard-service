@@ -21,10 +21,10 @@ func (s *Store) migrateMetadata() error {
 	if err = tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 2 {
+	if version > 3 {
 		return errors.New("database schema is newer than this binary")
 	}
-	if version == 2 {
+	if version >= 2 {
 		return tx.Commit()
 	}
 	if version == 0 {

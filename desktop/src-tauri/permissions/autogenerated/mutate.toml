@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mutate"
+description = "Enables the mutate command without any pre-configured scope."
+commands.allow = ["mutate"]
+
+[[permission]]
+identifier = "deny-mutate"
+description = "Denies the mutate command without any pre-configured scope."
+commands.deny = ["mutate"]

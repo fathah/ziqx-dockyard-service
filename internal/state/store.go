@@ -87,6 +87,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_pending_project ON jobs(project_id) WHERE 
 		db.Close()
 		return nil, e
 	}
+	if e = s.migrateInventory(); e != nil {
+		db.Close()
+		return nil, e
+	}
 	return s, nil
 }
 func (s *Store) Close() error { return s.DB.Close() }
@@ -166,7 +170,7 @@ func (s *Store) Busy(id string) (bool, error) {
 }
 func (s *Store) Reserved(port int, except string) (bool, error) {
 	var n int
-	e := s.DB.QueryRow("SELECT count(*) FROM ports WHERE port=? AND project_id!=?", port, except).Scan(&n)
+	e := s.DB.QueryRow("SELECT (SELECT count(*) FROM ports WHERE port=? AND project_id!=?) + (SELECT count(*) FROM inventory_ports WHERE port=?)", port, except, port).Scan(&n)
 	return n > 0, e
 }
 func (s *Store) DomainOwner(host string) (string, error) {

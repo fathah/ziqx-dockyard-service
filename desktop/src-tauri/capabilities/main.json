@@ -1,0 +1,25 @@
+{
+  "identifier": "main",
+  "description": "Local bundled control room only. No webview HTTP, shell, filesystem, or external URL permissions.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-session-info",
+    "allow-enroll",
+    "allow-unlock",
+    "allow-lock-session",
+    "allow-forget-device",
+    "allow-read-api",
+    "allow-mutate",
+    "allow-retry-pending",
+    "allow-pending-info",
+    "allow-import-compose",
+    "allow-setup-inspect",
+    "allow-setup-install",
+    "allow-setup-resume",
+    "allow-setup-cancel"
+  ]
+}
