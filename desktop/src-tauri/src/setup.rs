@@ -977,6 +977,60 @@ mod tests {
         session
             .userauth_password("root", "dockyard-fixture-only")
             .unwrap();
+        // Validate the actual wizard credentials/root policy with the bundled Go agent.
+        // Docker is a protected placeholder here: -check never invokes containers.
+        exec(&session, "python3 -c 'from pathlib import Path; import os; [Path(p).mkdir(parents=True,exist_ok=True) for p in [\"/etc/dockyard/tls\",\"/etc/dockyard/docker\",\"/var/lib/dockyard\",\"/docker\",\"/etc/caddy/dockyard\"]]; Path(\"/usr/bin/docker\").write_text(\"fixture-check-only\"); Path(\"/etc/caddy/Caddyfile\").write_text(\"# fixture\\n\"); os.chmod(\"/usr/bin/docker\",0o755)' ").unwrap();
+        let resource_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/ubuntu");
+        let agent =
+            std::fs::read(resource_root.join("dockyard")).expect("bundle server binaries first");
+        let ctl = std::fs::read(resource_root.join("dockyardctl")).unwrap();
+        let (_, receipt) = material_with_binaries(&test_plan(), agent.clone(), ctl).unwrap();
+        let sftp = session.sftp().unwrap();
+        for (source, destination) in [
+            ("server.crt", "/etc/dockyard/tls/server.crt"),
+            ("server.key", "/etc/dockyard/tls/server.key"),
+            ("control-ca.crt", "/etc/dockyard/tls/control-ca.crt"),
+            ("desktop.key", "/etc/dockyard/desktop-01.key"),
+            ("fingerprint.key", "/etc/dockyard/fingerprint.key"),
+            ("config.json", "/etc/dockyard/config.json"),
+        ] {
+            let file = receipt.files.iter().find(|f| f.name == source).unwrap();
+            let data = Zeroizing::new(STANDARD.decode(file.data.as_ref().unwrap()).unwrap());
+            let mut remote = sftp
+                .open_mode(
+                    Path::new(destination),
+                    OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUSIVE,
+                    0o600,
+                    OpenType::File,
+                )
+                .unwrap();
+            remote.write_all(&data).unwrap();
+            remote.fsync().unwrap();
+        }
+        let mut remote = sftp
+            .open_mode(
+                Path::new("/usr/local/bin/dockyard"),
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUSIVE,
+                0o755,
+                OpenType::File,
+            )
+            .unwrap();
+        remote.write_all(&agent).unwrap();
+        remote.fsync().unwrap();
+        drop(remote);
+        let mut check = session.channel_session().unwrap();
+        check
+            .exec("/usr/local/bin/dockyard -config /etc/dockyard/config.json -check 2>&1")
+            .unwrap();
+        let mut check_output = String::new();
+        check.read_to_string(&mut check_output).unwrap();
+        check.wait_close().unwrap();
+        assert_eq!(
+            check.exit_status().unwrap(),
+            0,
+            "generated fixture policy: {check_output}"
+        );
+        drop(sftp);
         let key = ssh_key::PrivateKey::random(
             &mut ssh_key::rand_core::OsRng,
             ssh_key::Algorithm::Ed25519,

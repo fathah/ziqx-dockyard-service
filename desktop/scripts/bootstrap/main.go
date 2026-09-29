@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+	"unicode"
 )
 
 type options struct {
@@ -36,7 +37,7 @@ type identity struct {
 	PEM, Private []byte
 }
 
-var token = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
+var token = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
 
 func issue(name string, parent *identity, ip net.IP) (identity, error) {
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -103,11 +104,16 @@ func generate(o options) error {
 	}
 	for _, s := range []string{o.Server, o.Key, o.Actor} {
 		if !token.MatchString(s) {
-			return errors.New("IDs must use 1–64 letters, digits, underscores or hyphens")
+			return errors.New("IDs must start with a lowercase letter and use 1–48 lowercase letters, digits or hyphens")
 		}
 	}
-	if len(o.Name) == 0 || len(o.Name) > 100 {
-		return errors.New("choose a connection name up to 100 bytes")
+	if len(o.Name) == 0 || len(o.Name) > 80 {
+		return errors.New("choose a connection name up to 80 bytes")
+	}
+	for _, r := range o.Name {
+		if unicode.IsControl(r) {
+			return errors.New("connection names cannot contain control characters")
+		}
 	}
 	if o.Out == "" {
 		return errors.New("-out is required; choose a new directory inside a private local folder")

@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex as SyncMutex,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -55,6 +55,30 @@ struct Session {
 fn deadline_passed(monotonic: Instant, wall: SystemTime) -> bool {
     Instant::now() >= monotonic || SystemTime::now() >= wall
 }
+#[derive(Default)]
+struct AwayTimer {
+    deadline: Option<(Instant, SystemTime)>,
+    locked: bool,
+}
+impl AwayTimer {
+    fn observe(&mut self, focused: bool, now: Instant, wall: SystemTime) -> bool {
+        let expired = self
+            .deadline
+            .is_some_and(|(mono, real)| now >= mono || wall >= real);
+        if expired {
+            self.deadline = None;
+            self.locked = true;
+        }
+        if focused {
+            self.deadline = None;
+            self.locked = false;
+        } else if self.deadline.is_none() && !self.locked {
+            let grace = Duration::from_secs(60);
+            self.deadline = Some((now + grace, wall + grace));
+        }
+        expired
+    }
+}
 #[derive(Clone, Serialize)]
 struct Profile {
     name: String,
@@ -78,6 +102,7 @@ struct Control {
     inner: Arc<Mutex<Inner>>,
     native_prompt: Arc<AtomicBool>,
     setup: Arc<Mutex<Option<setup::Plan>>>,
+    away: Arc<SyncMutex<AwayTimer>>,
 }
 impl Control {
     fn new() -> Self {
@@ -91,12 +116,46 @@ impl Control {
             })),
             native_prompt: Arc::new(AtomicBool::new(false)),
             setup: Arc::new(Mutex::new(None)),
+            away: Arc::new(SyncMutex::new(AwayTimer::default())),
         }
     }
     async fn clear(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.inner.lock().await.session = None;
         self.setup.lock().await.take();
+    }
+}
+fn observe_focus(c: &Control, app: &tauri::AppHandle, focused: bool) {
+    if c.native_prompt.load(Ordering::SeqCst) {
+        return;
+    }
+    let expired = {
+        let mut timer = c.away.lock().expect("focus timer poisoned");
+        if c.native_prompt.load(Ordering::SeqCst) {
+            return;
+        }
+        timer.observe(focused, Instant::now(), SystemTime::now())
+    };
+    if expired {
+        // Revoke immediately even when an API call holds the async session mutex.
+        let revoked = c.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        let _ = app.emit("session-locked", ());
+        let c = c.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut inner = c.inner.lock().await;
+            if inner
+                .session
+                .as_ref()
+                .is_some_and(|s| s.generation < revoked)
+            {
+                inner.session = None;
+            }
+            drop(inner);
+            let mut plan = c.setup.lock().await;
+            if c.generation.load(Ordering::SeqCst) == revoked {
+                plan.take();
+            }
+        });
     }
 }
 fn profile(e: &Enrollment) -> Profile {
@@ -172,7 +231,11 @@ async fn setup_inspect(
         if native::load_optional()?.is_some() { return Err("A saved enrollment already exists. Unlock it, or resume its installation; setup cannot replace it".into()); }
         setup::inspect(&handle,request)
     }).await?;
-    if generation != c.generation.load(Ordering::SeqCst) {
+    if generation != c.generation.load(Ordering::SeqCst)
+        || !app
+            .get_webview_window("main")
+            .is_some_and(|w| w.is_focused().unwrap_or(false))
+    {
         return Err("SESSION_LOCKED".into());
     }
     let preview = plan.preview(&setup::binary(&app, "dockyard")?);
@@ -180,7 +243,12 @@ async fn setup_inspect(
     Ok(preview)
 }
 
-async fn finish_setup(app: &tauri::AppHandle, c: &Control, saved: Saved, generation: u64) -> Result<Value, String> {
+async fn finish_setup(
+    app: &tauri::AppHandle,
+    c: &Control,
+    saved: Saved,
+    generation: u64,
+) -> Result<Value, String> {
     let mut s = make_session(saved, generation).await?;
     send(&s, &read_op(&Read::Projects {})?).await?;
     s.saved.setup = None;
@@ -188,7 +256,10 @@ async fn finish_setup(app: &tauri::AppHandle, c: &Control, saved: Saved, generat
     let p = profile(&s.saved.enrollment);
     let mut inner = c.inner.lock().await;
     if generation != c.generation.load(Ordering::SeqCst)
-        || !app.get_webview_window("main").is_some_and(|w| w.is_focused().unwrap_or(false)) {
+        || !app
+            .get_webview_window("main")
+            .is_some_and(|w| w.is_focused().unwrap_or(false))
+    {
         return Err("SESSION_LOCKED: Setup completed and was saved. Unlock with Touch ID".into());
     }
     inner.profile = Some(p.clone());
@@ -367,6 +438,8 @@ async fn native_task<T: Send + 'static>(
         return Err("A native prompt is already open".into());
     }
     let _guard = PromptGuard(c.native_prompt.clone());
+    // Dockyard's own Touch ID, review and file dialogs count as using the app.
+    *c.away.lock().expect("focus timer poisoned") = AwayTimer::default();
     tauri::async_runtime::spawn_blocking(task)
         .await
         .map_err(|_| "Native operation failed")?
@@ -659,7 +732,10 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
             s.saved.enrollment.name, s.saved.enrollment.server_id, s.saved.enrollment.origin
         );
         if let Some(ssh) = &s.saved.enrollment.ssh {
-            target.push_str(&format!("\nVPS: {}:{}\nSSH: {}", ssh.server_ip, ssh.port, ssh.host_sha256));
+            target.push_str(&format!(
+                "\nVPS: {}:{}\nSSH: {}",
+                ssh.server_ip, ssh.port, ssh.host_sha256
+            ));
         }
         target
     };
@@ -799,6 +875,19 @@ fn main() {
                 .build()?;
             let handle = app.handle().clone();
             let c = control.clone();
+            let focus_handle = handle.clone();
+            let focus_control = c.clone();
+            // Keep the away timer independent of slow API calls holding the session mutex.
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    if let Some(window) = focus_handle.get_webview_window("main") {
+                        if let Ok(focused) = window.is_focused() {
+                            observe_focus(&focus_control, &focus_handle, focused);
+                        }
+                    }
+                }
+            });
             tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -835,16 +924,9 @@ fn main() {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 window.app_handle().exit(0);
             }
-            if matches!(event, tauri::WindowEvent::Focused(false)) {
+            if let tauri::WindowEvent::Focused(focused) = event {
                 let c = window.state::<Control>().inner().clone();
-                if !c.native_prompt.load(Ordering::SeqCst) {
-                    c.generation.fetch_add(1, Ordering::SeqCst);
-                    let _ = window.app_handle().emit("session-locked", ());
-                    tauri::async_runtime::spawn(async move {
-                        c.inner.lock().await.session = None;
-                        c.setup.lock().await.take();
-                    });
-                }
+                observe_focus(&c, window.app_handle(), *focused);
             }
         })
         .run(tauri::generate_context!())
@@ -1020,6 +1102,51 @@ mod transport_tests {
             Instant::now() + duration,
             SystemTime::now() + duration
         ));
+    }
+    #[test]
+    fn returning_within_a_minute_preserves_session_and_restarts_next_absence() {
+        let (now, wall) = (Instant::now(), SystemTime::now());
+        let mut timer = AwayTimer::default();
+        assert!(!timer.observe(false, now, wall));
+        let later = Duration::from_secs(59);
+        assert!(!timer.observe(true, now + later, wall + later));
+        assert!(timer.deadline.is_none());
+        let next = Duration::from_secs(90);
+        assert!(!timer.observe(false, now + next, wall + next));
+        assert!(!timer.observe(false, now + next + later, wall + next + later));
+        assert!(timer.observe(
+            false,
+            now + next + Duration::from_secs(60),
+            wall + next + Duration::from_secs(60)
+        ));
+    }
+    #[test]
+    fn repeated_background_checks_do_not_extend_grace_and_late_return_locks_once() {
+        let (now, wall) = (Instant::now(), SystemTime::now());
+        let mut timer = AwayTimer::default();
+        timer.observe(false, now, wall);
+        for seconds in 1..60 {
+            let d = Duration::from_secs(seconds);
+            assert!(!timer.observe(false, now + d, wall + d));
+        }
+        let d = Duration::from_secs(65);
+        assert!(timer.observe(true, now + d, wall + d));
+        assert!(!timer.observe(true, now + d, wall + d));
+        let mut timer = AwayTimer::default();
+        timer.observe(false, now, wall);
+        assert!(timer.observe(false, now + d, wall + d));
+        assert!(!timer.observe(false, now + d + d, wall + d + d));
+    }
+    #[test]
+    fn background_lock_covers_sleep_and_backward_clock_changes() {
+        let (now, wall) = (Instant::now(), SystemTime::now());
+        let elapsed = Duration::from_secs(61);
+        let mut timer = AwayTimer::default();
+        timer.observe(false, now, wall);
+        assert!(timer.observe(true, now + Duration::from_secs(1), wall + elapsed));
+        let mut timer = AwayTimer::default();
+        timer.observe(false, now, wall);
+        assert!(timer.observe(true, now + elapsed, wall - elapsed));
     }
     #[test]
     fn restored_pending_operations_cannot_change_authority_or_body() {

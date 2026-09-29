@@ -2048,7 +2048,7 @@ function Security({
             {
               icon: LockKeyhole,
               title: "Credentials stay outside the webview",
-              text: "Keychain storage, native authentication, five-minute sessions, and lock when the app loses focus.",
+              text: "Keychain storage, native authentication, five-minute sessions, and auto-lock after one minute away from the app.",
             },
             {
               icon: History,

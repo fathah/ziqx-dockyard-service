@@ -2,11 +2,13 @@
 """Fixed first-install operations. Receives only a native-generated, private staged kit."""
 import fcntl
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -127,6 +129,31 @@ def same_sites(before, after):
     after.pop('admin', None)
     return before == after
 
+def live_caddy_config(address):
+    # Fixed private endpoints only, independent of HTTP proxy environment variables.
+    if address in ('unix//run/caddy/admin.sock', SOCKET):
+        class UnixConnection(http.client.HTTPConnection):
+            def connect(self):
+                self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self.sock.settimeout(10)
+                self.sock.connect('/run/caddy/admin.sock')
+        connection = UnixConnection('localhost', timeout=10)
+    elif address in ('localhost:2019', '127.0.0.1:2019'):
+        connection = http.client.HTTPConnection('127.0.0.1', 2019, timeout=10)
+    else:
+        raise ValueError('custom Caddy admin endpoint requires manual setup')
+    try:
+        connection.request('GET', '/config/')
+        response = connection.getresponse()
+        body = response.read(8 * 1024 * 1024 + 1)
+        if response.status != 200 or len(body) > 8 * 1024 * 1024:
+            raise ValueError('cannot verify live Caddy configuration')
+        result = json.loads(body)
+        if not isinstance(result, dict): raise ValueError('invalid live Caddy configuration')
+        return result
+    finally:
+        connection.close()
+
 def docker_dependencies(stage):
     if not shutil.which('docker'):
         # No replacement/removal of existing runtimes or packages.
@@ -180,15 +207,19 @@ def prepare_caddy(stage):
     if not before.exists(): write(before, path.read_bytes())
     candidate = Path('/etc/caddy/.dockyard-desktop.Caddyfile')
     content = caddy_candidate(before.read_text()).encode()
-    write(candidate, content, 0o644)
+    write(candidate, content, 0o600)
     # The original snapshot is in a different directory: resolve relative imports there using a same-directory copy.
     snapshot = Path('/etc/caddy/.dockyard-before.Caddyfile')
-    write(snapshot, before.read_bytes(), 0o644)
+    write(snapshot, before.read_bytes(), 0o600)
     original = json.loads(run(['caddy', 'adapt', '--adapter', 'caddyfile', '--config', str(snapshot)]))
     proposed = json.loads(run(['caddy', 'adapt', '--adapter', 'caddyfile', '--config', str(candidate)]))
     if not same_sites(original, proposed): raise ValueError('Caddy routes would change; manual preparation required')
     run(['caddy', 'validate', '--adapter', 'caddyfile', '--config', str(candidate)])
     if path.read_bytes() not in (before.read_bytes(), content): raise ValueError('Caddyfile changed during setup')
+    active = subprocess.run(['systemctl', 'is-active', '--quiet', 'caddy']).returncode == 0
+    address = 'unix//run/caddy/admin.sock' if Path('/run/caddy/admin.sock').exists() else original.get('admin', {}).get('listen', 'localhost:2019')
+    if active and not same_sites(original, live_caddy_config(address)):
+        raise ValueError('live Caddy routes differ from disk; manual reconciliation required')
     mkdir('/etc/systemd/system/caddy.service.d', 0o755)
     write('/etc/systemd/system/caddy.service.d/dockyard.conf', b'[Service]\nRuntimeDirectory=caddy\nRuntimeDirectoryMode=0700\n', 0o644)
     import pwd, grp
@@ -201,21 +232,21 @@ def prepare_caddy(stage):
     os.chown(runtime, uid, grp.getgrnam('caddy').gr_gid)
     os.chmod(runtime, 0o700)
     run(['systemctl', 'daemon-reload'])
-    active = subprocess.run(['systemctl', 'is-active', '--quiet', 'caddy']).returncode == 0
     if path.read_bytes() != content:
         # Atomic disk update; preserve the backup and installed state on uncertain reloads.
         replacement = Path('/etc/caddy/.dockyard-apply.Caddyfile')
-        write(replacement, content, 0o644)
+        write(replacement, content, stat.S_IMODE(path.stat().st_mode))
         os.replace(replacement, path)
     if active:
         # If a prior attempt already changed the admin address, use the new socket.
-        address = 'unix//run/caddy/admin.sock' if Path('/run/caddy/admin.sock').exists() else original.get('admin', {}).get('listen', 'localhost:2019')
         if address not in ('localhost:2019', '127.0.0.1:2019', 'unix//run/caddy/admin.sock'):
             raise ValueError('custom Caddy admin endpoint requires manual setup')
         run(['caddy', 'reload', '--adapter', 'caddyfile', '--config', str(path), '--address', address])
     else:
         run(['systemctl', 'enable', '--now', 'caddy'])
     if not Path('/run/caddy/admin.sock').exists(): raise ValueError('Caddy admin socket unavailable')
+    if not same_sites(proposed, live_caddy_config('unix//run/caddy/admin.sock')):
+        raise ValueError('Caddy reload outcome is uncertain; preserve existing containers and reconcile manually')
 
 def configure_ssh(stage):
     username = 'dockyard-link'

@@ -33,3 +33,5 @@ make linux-build   # Docker builder; exports Linux binaries into bin/linux
 ## macOS desktop control room
 
 [Dockyard Desktop](desktop/README.md) is the Tauri 2 / Rust macOS client for this agent. It includes environment-aware Compose deployment, blue-green slots, services/logs/releases, domain and DNS controls, jobs/audit, and existing VPS inventory. It keeps API credentials in macOS Keychain and signs requests in Rust. Build/run/enrollment instructions and the limits of desktop-exclusive credentials are documented there.
+
+For a new server, the desktop offers **Set up Dockyard on your server**: choose Ubuntu, enter its IP/SSH port, verify its host fingerprint, and supply the root password in a native secure prompt. The installer uses bundled Ubuntu binaries, creates the systemd service and restricted SSH connector, generates enrollment automatically, and saves the server IP for future connections. See [first-time setup and recovery](desktop/FIRST_TIME.md).

@@ -138,6 +138,7 @@ export default function SetupWizard({
     close();
   }
   const current = stages.findIndex(([id]) => id === phase);
+  const installedLocked = error.includes("Setup completed and was saved");
   return (
     <div className="modal-backdrop">
       <section
@@ -344,12 +345,16 @@ export default function SetupWizard({
               <h3>
                 {busy
                   ? "Setting up your server"
-                  : "Resume the saved installation"}
+                  : installedLocked
+                    ? "Dockyard is installed"
+                    : "Resume the saved installation"}
               </h3>
               <p>
                 {busy
                   ? "Keep Dockyard open. Dependency installation can take several minutes."
-                  : "The installation may have made changes. Resume the same setup to keep its saved credentials and checksums."}
+                  : installedLocked
+                    ? "Close this window and unlock with Touch ID to connect to your saved server."
+                    : "The installation may have made changes. Resume the same setup to keep its saved credentials and checksums."}
               </p>
               <div className="setup-progress" aria-live="polite">
                 {stages.map(([id, label], i) => (
@@ -441,7 +446,7 @@ export default function SetupWizard({
               <Terminal size={16} /> Install Dockyard
             </button>
           )}
-          {step === 3 && attempted && !busy && (
+          {step === 3 && attempted && !busy && !installedLocked && (
             <button
               className="button primary"
               onClick={() => void install(true)}

@@ -4,10 +4,10 @@ A Tauri 2 desktop control room with a Rust API client and a bundled React interf
 
 ## Run on this Mac
 
-The verified local Apple Silicon app is ready in `releases/Dockyard.app`, with a ZIP and SHA-256 checksum alongside it. From the repository root:
+The updated local Apple Silicon app with server setup is ready in `releases/idle-lock/Dockyard.app`, with `releases/Dockyard-idle-lock-macos-arm64.zip` and a SHA-256 checksum. From the repository root:
 
 ```sh
-open desktop/releases/Dockyard.app
+open desktop/releases/idle-lock/Dockyard.app
 ```
 
 Quit any previously opened Dockyard instance first so the single-instance guard does not bring an older build to the foreground. This local artifact uses an ad-hoc signature; it is not notarized for distribution.
@@ -87,7 +87,7 @@ Server `recovery_required` blocks all VPS writes until local reconciliation; the
 
 TLS 1.3 is mandatory, using only the enrolled server CA and an exact SHA-256 pin of the server leaf certificate, checked during the handshake before API payloads are sent. Standard chain, expiry, SAN and handshake signature verification remain mandatory. Proxy inheritance, redirects, automatic request retries, cookies and TLS bypasses are disabled. HTTP responses are bounded to 3 MiB (32 MiB for the project index, which includes release history for all projects) and requests to the existing API limits. Enrolled signing material and session clients stay in Rust; credential buffers and retained write bodies use best-effort zeroization. Compose/environment editor values necessarily exist in UI memory while being edited; there is no localStorage, plaintext payload cache or credential export command.
 
-Only the bundled `main` window has explicit command capabilities. Release CSP denies webview network connections other than Tauri IPC. Remote navigation/popups are rejected, devtools are disabled, and there are no HTTP/shell/filesystem/opener plugins. Rust validates operation types, IDs and parameters; the VPS remains the final authorization and Compose validation boundary. Sessions last five minutes (checked against both monotonic and wall-clock deadlines to cover Mac sleep), lock when the app loses focus, and require a fresh Touch ID scan to unlock. If macOS locks out Touch ID, unlock the Mac with its login password to restore Touch ID and then retry; Dockyard itself remains locked. It checks Touch ID availability before requesting authentication and does not reuse a recent Mac unlock. Locks discard the session and clear visible server data/editors. An already accepted VPS job continues running.
+Only the bundled `main` window has explicit command capabilities. Release CSP denies webview network connections other than Tauri IPC. Remote navigation/popups are rejected, devtools are disabled, and there are no HTTP/shell/filesystem/opener plugins. Rust validates operation types, IDs and parameters; the VPS remains the final authorization and Compose validation boundary. Sessions last five minutes (checked against both monotonic and wall-clock deadlines to cover Mac sleep), lock after one continuous minute away from the app (returning sooner cancels that timer), and require a fresh Touch ID scan to unlock. If macOS locks out Touch ID, unlock the Mac with its login password to restore Touch ID and then retry; Dockyard itself remains locked. It checks Touch ID availability before requesting authentication and does not reuse a recent Mac unlock. Locks discard the session and clear visible server data/editors. An already accepted VPS job continues running.
 
 **An API can authenticate this Mac's enrolled credentials; it cannot prove that only a particular UI/binary sent a request.** A copied client private key + HMAC secret can impersonate the app. The initial enrollment is exportable software key material, not a Secure Enclave non-exportable identity or remote attestation. macOS Keychain/native prompts improve local protection but do not protect a compromised Mac or an operator who explicitly allows another program access. A compromised enrolled server could supply malicious content to the UI; React renders content as text and native dialogs protect writes, but no application can claim absolute security.
 

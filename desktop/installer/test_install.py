@@ -1,5 +1,10 @@
 import importlib.util
 import unittest
+import json
+import shutil
+import subprocess
+import tempfile
+import time
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).with_name('install.py'))
@@ -42,6 +47,43 @@ class CaddyPreparation(unittest.TestCase):
         self.assertTrue(installer.same_sites(original, only_admin))
         self.assertFalse(installer.same_sites(original, changed))
         self.assertNotIn('admin', original)
+
+    @unittest.skipUnless(shutil.which('caddy'), 'requires the real Caddy binary')
+    def test_real_adapter_preserves_relative_imports_and_existing_routes(self):
+        Path('/etc/caddy/dockyard').mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'sites.caddy').write_text('http://imported.example.com {\n reverse_proxy 127.0.0.1:4200\n}\n')
+            source = '{\n admin localhost:2019\n}\nimport sites.caddy\nhttp://example.com {\n reverse_proxy 127.0.0.1:3000\n header X-Example "a { b }"\n}\n'
+            original = root / 'original.Caddyfile'
+            candidate = root / 'candidate.Caddyfile'
+            original.write_text(source)
+            candidate.write_text(installer.caddy_candidate(source))
+            def adapt(path):
+                result = subprocess.run(['caddy', 'adapt', '--adapter', 'caddyfile', '--config', str(path)], capture_output=True, check=True)
+                return json.loads(result.stdout)
+            before, after = adapt(original), adapt(candidate)
+            self.assertTrue(installer.same_sites(before, after))
+            self.assertEqual(after['admin']['listen'], installer.SOCKET)
+            self.assertIn('imported.example.com', json.dumps(after))
+            Path('/run/caddy').mkdir(parents=True, exist_ok=True)
+            process = subprocess.Popen(['caddy', 'run', '--adapter', 'caddyfile', '--config', str(candidate)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                live = None
+                for _ in range(50):
+                    try:
+                        live = installer.live_caddy_config('unix//run/caddy/admin.sock')
+                        break
+                    except (OSError, ConnectionError):
+                        time.sleep(0.05)
+                self.assertIsNotNone(live, 'real Caddy must become reachable on its private Unix socket')
+                self.assertTrue(installer.same_sites(after, live))
+                changed = json.loads(json.dumps(live))
+                changed['apps']['http']['servers']['srv0']['routes'][0]['match'] = [{'host': ['changed.example.com']}]
+                self.assertFalse(installer.same_sites(after, changed))
+            finally:
+                process.terminate()
+                process.wait(timeout=10)
 
 if __name__ == '__main__':
     unittest.main()
