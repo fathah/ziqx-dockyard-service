@@ -1,0 +1,123 @@
+package model
+
+import "time"
+
+type Release struct {
+	ID          string    `json:"id"`
+	Image       string    `json:"image"`
+	Environment string    `json:"environment_revision"`
+	Compose     string    `json:"compose_revision,omitempty"`
+	Created     time.Time `json:"created_at"`
+}
+
+type Project struct {
+	ID               string             `json:"id"`
+	AppID            string             `json:"app_id"`
+	Environment      string             `json:"environment"`
+	Template         string             `json:"template_id"`
+	TemplateRevision string             `json:"template_revision"`
+	Domains          []string           `json:"domains"`
+	ZeroDowntime     bool               `json:"zerodowntime"`
+	BluePort         int                `json:"blue_port"`
+	GreenPort        int                `json:"green_port,omitempty"`
+	Active           string             `json:"active_slot,omitempty"`
+	State            string             `json:"state"`
+	Slots            map[string]Release `json:"slots"`
+	Releases         []Release          `json:"releases"`
+	DNS              []string           `json:"dns_records,omitempty"`
+	RecoveryDrain    bool               `json:"recovery_drain_pending,omitempty"`
+}
+
+const (
+	Development = "development"
+	Staging     = "staging"
+	Production  = "production"
+)
+
+func ValidEnvironment(value string) bool {
+	return value == Development || value == Staging || value == Production
+}
+
+func (p Project) ValidateTarget() error {
+	if p.AppID == "" || !ValidEnvironment(p.Environment) {
+		return Uncertain("PROJECT_TARGET_INVALID")
+	}
+	_, green := p.Slots["green"]
+	if p.Environment != Production && (p.ZeroDowntime || p.GreenPort != 0 || p.Active == "green" || green) {
+		return Uncertain("ENVIRONMENT_MODE_INVALID")
+	}
+	return nil
+}
+
+func (p Project) Port(slot string) int {
+	if slot == "green" {
+		return p.GreenPort
+	}
+	return p.BluePort
+}
+func (p Project) Current() (Release, bool) {
+	// A failed single-slot candidate can already occupy Slots during maintenance.
+	// Restore uses the last activated release rather than that failed candidate.
+	if p.State != "running" && len(p.Releases) > 0 {
+		return p.Releases[len(p.Releases)-1], true
+	}
+	r, ok := p.Slots[p.Active]
+	return r, ok
+}
+
+type Input struct {
+	Project     *Project `json:"project,omitempty"`
+	Release     *Release `json:"release,omitempty"`
+	Hostname    string   `json:"hostname,omitempty"`
+	DNSRecordID string   `json:"dns_record_id,omitempty"`
+}
+
+// ServiceSpec is safe revision metadata, not raw user YAML or secret values.
+type ServiceSpec struct {
+	Image       string            `json:"image"`
+	Template    string            `json:"template_id"`
+	Volumes     []string          `json:"volumes"`
+	Labels      map[string]string `json:"labels"`
+	Healthcheck struct {
+		Test []string `json:"test"`
+	} `json:"healthcheck"`
+}
+
+type ServiceInfo struct {
+	Slot        string `json:"slot"`
+	Name        string `json:"name"`
+	Image       string `json:"image"`
+	Template    string `json:"template_id"`
+	Compose     string `json:"compose_revision,omitempty"`
+	Environment string `json:"environment_revision"`
+}
+
+type DomainInfo struct {
+	Hostname    string `json:"hostname"`
+	Assigned    bool   `json:"assigned"`
+	DNSRecordID string `json:"dns_record_id,omitempty"`
+}
+
+type Job struct {
+	ID        string     `json:"job_id"`
+	ProjectID string     `json:"project_id"`
+	Action    string     `json:"action"`
+	Status    string     `json:"status"`
+	Phase     string     `json:"phase"`
+	Error     string     `json:"error_code,omitempty"`
+	Warning   string     `json:"warning_code,omitempty"`
+	Actor     string     `json:"actor_id"`
+	RequestID string     `json:"request_id"`
+	Created   time.Time  `json:"created_at"`
+	Finished  *time.Time `json:"finished_at,omitempty"`
+	Input     Input      `json:"-"`
+}
+
+type Fault struct {
+	Code     string
+	Recovery bool
+}
+
+func (e *Fault) Error() string    { return e.Code }
+func Fail(code string) error      { return &Fault{Code: code} }
+func Uncertain(code string) error { return &Fault{Code: code, Recovery: true} }

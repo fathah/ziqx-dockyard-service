@@ -1,0 +1,13 @@
+# Produces native Linux binaries for export; the agent runs under host systemd.
+# Pin the builder image digest in your release pipeline after staging validation.
+ARG GO_IMAGE=golang:1.27.1-bookworm
+FROM ${GO_IMAGE} AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN go test -race ./... && go vet ./...
+RUN CGO_ENABLED=1 go build -trimpath -ldflags='-s -w' -o /out/dockyard ./cmd/dockyard && \
+    CGO_ENABLED=1 go build -trimpath -ldflags='-s -w' -o /out/dockyardctl ./cmd/dockyardctl
+FROM scratch AS binaries
+COPY --from=build /out/ /

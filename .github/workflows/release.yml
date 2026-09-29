@@ -1,0 +1,102 @@
+name: Release Ubuntu binaries
+
+on:
+  push:
+    branches:
+      - release
+
+permissions:
+  contents: read
+
+# Serialize retries of the same commit without cancelling other release pushes.
+concurrency:
+  group: ubuntu-release-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, test and publish Ubuntu x86-64
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      CGO_ENABLED: '1'
+      GOOS: linux
+      GOARCH: amd64
+      GOAMD64: v1
+      GOFLAGS: -mod=readonly
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out the pushed commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install the current stable Go toolchain
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: stable
+          check-latest: true
+          cache-dependency-path: go.sum
+
+      - name: Verify dependencies and the CGO compiler
+        run: |
+          gcc --version
+          go mod download
+          go mod verify
+
+      - name: Run tests and vet
+        run: |
+          go test -race ./...
+          go vet ./...
+
+      - name: Build Ubuntu binaries and checksums
+        run: |
+          mkdir -p dist
+          go build -trimpath -buildvcs=false -ldflags='-s -w' \
+            -o dist/dockyard-linux-amd64 ./cmd/dockyard
+          go build -trimpath -buildvcs=false -ldflags='-s -w' \
+            -o dist/dockyardctl-linux-amd64 ./cmd/dockyardctl
+          {
+            printf 'Source commit: %s\n' "$GITHUB_SHA"
+            printf 'Workflow run: %s/%s/actions/runs/%s\n' \
+              "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf 'Build target: Ubuntu 22.04, linux/amd64, CGO enabled\n'
+            go version
+            gcc -dumpfullversion
+            getconf GNU_LIBC_VERSION
+          } > dist/BUILD-INFO.txt
+          cd dist
+          sha256sum dockyard-linux-amd64 dockyardctl-linux-amd64 BUILD-INFO.txt > SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+      - name: Publish binaries to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="release-${GITHUB_SHA}"
+          if is_draft=$(gh release view "$tag" --json isDraft --jq '.isDraft'); then
+            if [[ "$is_draft" == 'false' ]]; then
+              printf 'Release %s is already published; preserving its assets.\n' "$tag"
+              exit 0
+            fi
+          else
+            gh release create "$tag" \
+              --target "$GITHUB_SHA" \
+              --title "Ubuntu binaries ${GITHUB_SHA:0:12}" \
+              --generate-notes \
+              --draft
+          fi
+          gh release upload "$tag" \
+            dist/dockyard-linux-amd64 \
+            dist/dockyardctl-linux-amd64 \
+            dist/BUILD-INFO.txt \
+            dist/SHA256SUMS \
+            --clobber
+          # A failed upload leaves a draft; a retry finishes it before publication.
+          gh release edit "$tag" --draft=false

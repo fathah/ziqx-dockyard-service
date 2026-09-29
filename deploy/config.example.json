@@ -1,0 +1,91 @@
+{
+  "server_id": "vps-01",
+  "listen": "127.0.0.1:9123",
+  "tls_cert": "/etc/dockyard/tls/server.crt",
+  "tls_key": "/etc/dockyard/tls/server.key",
+  "client_ca": "/etc/dockyard/tls/control-ca.crt",
+  "state_dir": "/var/lib/dockyard",
+  "projects_root": "/docker",
+  "docker_binary": "/usr/bin/docker",
+  "docker_config": "/etc/dockyard/docker",
+  "caddy_binary": "/usr/bin/caddy",
+  "caddyfile": "/etc/caddy/Caddyfile",
+  "caddy_sites": "/etc/caddy/dockyard",
+  "caddy_admin_socket": "/run/caddy/admin.sock",
+  "allowed_domains": [
+    "example.com"
+  ],
+  "reserved_domains": [
+    "agent.example.com",
+    "admin.example.com"
+  ],
+  "port_min": 3000,
+  "port_max": 9999,
+  "reserved_ports": [
+    5432,
+    6379,
+    9123
+  ],
+  "max_projects": 50,
+  "max_queued_jobs": 100,
+  "drain_seconds": 90,
+  "health_seconds": 180,
+  "command_seconds": 240,
+  "fingerprint_key_file": "/etc/dockyard/fingerprint.key",
+  "keys": [
+    {
+      "id": "control-01",
+      "secret_file": "/etc/dockyard/control-01.key",
+      "certificate_sha256": "REPLACE_WITH_CLIENT_CERTIFICATE_DER_SHA256_LOWERCASE_HEX",
+      "scopes": [
+        "projects.write",
+        "sites.write",
+        "dns.write",
+        "deploy.read",
+        "deploy.logs",
+        "deploy.execute",
+        "deploy.environment",
+        "deploy.rollback",
+        "deploy.lifecycle",
+        "deploy.stop"
+      ],
+      "projects": [
+        "*"
+      ]
+    }
+  ],
+  "templates": {
+    "web-node": {
+      "image_repository": "ghcr.io/your-org/your-app",
+      "container_port": 3000,
+      "health_command": [
+        "node",
+        "/app/healthcheck.js"
+      ],
+      "readiness_path": "/health/ready",
+      "allowed_environment": [
+        "NODE_ENV",
+        "DATABASE_URL",
+        "APP_URL",
+        "PORT"
+      ],
+      "required_environment": [
+        "DATABASE_URL",
+        "APP_URL"
+      ],
+      "user": "1000:1000",
+      "memory_mb": 512,
+      "cpus": 1
+    }
+  },
+  "cloudflare": {
+    "token_file": "/etc/dockyard/cloudflare.token",
+    "zones": {
+      "example.com": "REPLACE_WITH_32_HEX_ZONE_ID"
+    },
+    "origin_ip": "203.0.113.10",
+    "proxied": false
+  },
+  "max_stack_memory_mb": 2048,
+  "max_stack_cpus": 4
+}

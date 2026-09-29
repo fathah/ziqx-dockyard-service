@@ -1,0 +1,8 @@
+# Merge this admin option into your existing global options block.
+# /run/caddy must be writable by the Caddy service account only (apart from root).
+{
+    admin unix//run/caddy/admin.sock|0600
+}
+
+# Keep your existing manual sites. Install this import once, at the top level.
+import /etc/caddy/dockyard/*.caddy

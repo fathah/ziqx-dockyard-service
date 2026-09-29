@@ -1,0 +1,2856 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Ziqx Dockyard Service API",
+    "version": "0.4.0",
+    "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
+    "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, service, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Same HTTPS origin as the private/loopback agent."
+    }
+  ],
+  "tags": [
+    {
+      "name": "Projects"
+    },
+    {
+      "name": "Deployments"
+    },
+    {
+      "name": "Routing and DNS"
+    },
+    {
+      "name": "Observability"
+    },
+    {
+      "name": "Health"
+    },
+    {
+      "name": "Documentation"
+    }
+  ],
+  "security": [
+    {
+      "MutualTLS": [],
+      "HMACSignature": []
+    }
+  ],
+  "paths": {
+    "/v1/projects": {
+      "get": {
+        "operationId": "listProjects",
+        "summary": "List authorized projects",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Only projects allowed for this signing key are returned.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Projects"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ]
+      },
+      "post": {
+        "operationId": "createProject",
+        "summary": "Provision a project",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Creates approved /docker/<id> files, reserves domains/ports and installs maintenance. Existing directories are rejected. Omit ports to allocate. A nonzero secondary_port requires zerodowntime=true and differs from port. Wait for success before first deployment. Requires app_id and an explicit environment choice. App/environment is unique and immutable; deploy the same app in the three environments through distinct project IDs. Production defaults to blue-green; development/staging reserve a single slot. Blue-green true outside production returns BLUE_GREEN_PRODUCTION_ONLY; duplicate app/environment returns APP_ENVIRONMENT_EXISTS. Missing environment returns HTTP 422 DEPLOYMENT_ENVIRONMENT_REQUIRED.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Durably accepted. Poll the job_id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error400",
+            "description": "Deployment environment choice is required."
+          }
+        },
+        "x-required-scopes": [
+          "projects.write"
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProject"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}": {
+      "get": {
+        "operationId": "getProject",
+        "summary": "Read project metadata",
+        "tags": [
+          "Projects"
+        ],
+        "description": "No environment values or host paths are returned.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ]
+      }
+    },
+    "/v1/projects/{id}/status": {
+      "get": {
+        "operationId": "getProjectStatus",
+        "summary": "Inspect project status",
+        "tags": [
+          "Observability"
+        ],
+        "description": "Reports route coherence, active container identity/readiness, busy state and expected downtime. Public TLS is currently unverified.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ]
+      }
+    },
+    "/v1/projects/{id}/releases": {
+      "get": {
+        "operationId": "listReleases",
+        "summary": "Read activated releases",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Retained successful image/environment activation pairs.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Releases"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ]
+      }
+    },
+    "/v1/projects/{id}/logs": {
+      "get": {
+        "operationId": "getProjectLogs",
+        "summary": "Read container logs",
+        "tags": [
+          "Observability"
+        ],
+        "description": "Bounded per-service log snapshot, redacted using all retained app and companion environment revisions. Only services in the selected slot revision can be read.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          },
+          {
+            "name": "slot",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "inactive",
+                "blue",
+                "green"
+              ],
+              "default": "active"
+            },
+            "description": "green unavailable in single-slot mode; active/inactive need a recorded mapping."
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000,
+              "default": 200
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "30m"
+            },
+            "description": "Positive Go duration no greater than 24h, e.g. 30m or 1h. Duplicate/unknown parameters rejected."
+          },
+          {
+            "name": "service",
+            "in": "query",
+            "description": "Service belonging to this slot\u2019s recorded Compose revision. Unknown service names are rejected.",
+            "schema": {
+              "type": "string",
+              "default": "app",
+              "pattern": "^[a-z][a-z0-9-]{0,47}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Logs"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.logs"
+        ]
+      }
+    },
+    "/v1/jobs/{job_id}": {
+      "get": {
+        "operationId": "getJob",
+        "summary": "Poll a job",
+        "tags": [
+          "Observability"
+        ],
+        "description": "The signing key must allow the job's project. Accepted work may fail asynchronously; recovery_required preserves containers and blocks mutations.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/JobID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ]
+      }
+    },
+    "/v1/ports/next": {
+      "get": {
+        "operationId": "getNextPort",
+        "summary": "Find the next available port",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Advisory check of durable reservations, Docker published ports and host listeners. Does not reserve a port.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NextPort"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "projects.write"
+        ]
+      }
+    },
+    "/v1/audit": {
+      "get": {
+        "operationId": "listAudit",
+        "summary": "Read audit events",
+        "tags": [
+          "Observability"
+        ],
+        "description": "Requires all-project key access (projects: [\"*\"]). Returns up to 100 events after the supplied ID. Event names use the persisted audit contract.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Last observed event ID."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Audit"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ],
+        "x-requires-all-projects": true
+      }
+    },
+    "/v1/projects/{id}/routes": {
+      "put": {
+        "operationId": "updateRoutes",
+        "summary": "Update Caddy domains or ports",
+        "tags": [
+          "Routing and DNS"
+        ],
+        "description": "Replaces assigned domain list. Domain-only changes can apply while running; changed ports require stopped state. Removed reservations are retained. DNS creation is a separate operation.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Durably accepted. Poll the job_id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "sites.write"
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Routes"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}/dns": {
+      "post": {
+        "operationId": "createDNS",
+        "summary": "Create a Cloudflare subdomain",
+        "tags": [
+          "Routing and DNS"
+        ],
+        "description": "Hostname must already belong to this project and lie below a configured zone. Root policy fixes origin IP, type and proxy settings. Reuses exact ownership-marked records; rejects foreign records. DNS propagation/TLS readiness are separate.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Durably accepted. Poll the job_id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "dns.write"
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DNS"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}/deploy": {
+      "post": {
+        "operationId": "deployProject",
+        "summary": "Deploy a validated Compose stack",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires user-supplied Compose YAML. The service validates a strict subset in memory before invoking Compose config --quiet on an immutable, policy-enforced model. Pulls and starts all services with Docker Compose, verifies every service before switching Caddy, then drains the preceding slot. Stopped projects require start. Persistent named volumes require single-slot mode. Inline service environments or non-null variables require deploy.environment. Requires an explicit environment matching the project. Missing choice returns HTTP 422 DEPLOYMENT_ENVIRONMENT_REQUIRED; a different valid choice returns HTTP 409 DEPLOYMENT_ENVIRONMENT_MISMATCH before Compose processing or secret writes. Clients should ask the environment question before sending the signed request.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Durably accepted. Poll the job_id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.execute"
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Deploy"
+              }
+            }
+          }
+        },
+        "x-conditional-scopes": [
+          {
+            "when": "variables or any services.<name>.environment is a non-null object",
+            "scopes": [
+              "deploy.environment"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/projects/{id}/rollback": {
+      "post": {
+        "operationId": "rollbackProject",
+        "summary": "Roll back to an activated release",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires running state. Activates a retained exact image/environment pair as a new release. Omit release_id for the preceding activation. Database migrations are not reversed.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Durably accepted. Poll the job_id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.rollback"
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Rollback"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}/restart": {
+      "post": {
+        "operationId": "restartProject",
+        "summary": "Restart the active release",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires running state. Blue-green restart uses the inactive slot; single-slot restart permits downtime. Submit {}.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Durably accepted. Poll the job_id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.execute"
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}/start": {
+      "post": {
+        "operationId": "startProject",
+        "summary": "Start a stopped project",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires stopped/initialized state. Restores the last successful image/environment pair. Submit {}.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Durably accepted. Poll the job_id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.lifecycle"
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Empty"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}/stop": {
+      "post": {
+        "operationId": "stopProject",
+        "summary": "Stop a running project",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Confirmation must equal the path ID. Installs maintenance, drains requests and stops only managed services; no volume deletion or Docker prune.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Durably accepted. Poll the job_id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.stop"
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Stop"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Check agent liveness",
+        "tags": [
+          "Health"
+        ],
+        "description": "mTLS at the listener; no HMAC. Readiness covers local state/admission, not full Docker/Caddy or public TLS availability.",
+        "security": [
+          {
+            "MutualTLS": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "getReadiness",
+        "summary": "Check local admission readiness",
+        "tags": [
+          "Health"
+        ],
+        "description": "mTLS at the listener; no HMAC. Readiness covers local state/admission, not full Docker/Caddy or public TLS availability.",
+        "security": [
+          {
+            "MutualTLS": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        }
+      }
+    },
+    "/docs": {
+      "get": {
+        "operationId": "getDocs",
+        "summary": "Browse the read-only API reference",
+        "tags": [
+          "Documentation"
+        ],
+        "description": "Bundled static resource; only mTLS at the agent listener. No HMAC, credentials, remote assets or operation execution.",
+        "security": [
+          {
+            "MutualTLS": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Documentation",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "405": {
+            "description": "Only GET is supported."
+          }
+        }
+      }
+    },
+    "/docs/style.css": {
+      "get": {
+        "operationId": "getDocsStyles",
+        "summary": "Read bundled styles",
+        "tags": [
+          "Documentation"
+        ],
+        "description": "Bundled static resource; only mTLS at the agent listener. No HMAC, credentials, remote assets or operation execution.",
+        "security": [
+          {
+            "MutualTLS": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Documentation",
+            "content": {
+              "text/css": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "405": {
+            "description": "Only GET is supported."
+          }
+        }
+      }
+    },
+    "/docs/app.js": {
+      "get": {
+        "operationId": "getDocsScript",
+        "summary": "Read bundled renderer",
+        "tags": [
+          "Documentation"
+        ],
+        "description": "Bundled static resource; only mTLS at the agent listener. No HMAC, credentials, remote assets or operation execution.",
+        "security": [
+          {
+            "MutualTLS": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Documentation",
+            "content": {
+              "text/javascript": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "405": {
+            "description": "Only GET is supported."
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "getOpenAPI",
+        "summary": "Download the OpenAPI 3.1.1 document",
+        "tags": [
+          "Documentation"
+        ],
+        "description": "Bundled static resource; only mTLS at the agent listener. No HMAC, credentials, remote assets or operation execution.",
+        "security": [
+          {
+            "MutualTLS": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Documentation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "405": {
+            "description": "Only GET is supported."
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}/services": {
+      "get": {
+        "operationId": "listProjectServices",
+        "summary": "Read project services from SQLite",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Read recorded service inventory from SQLite without accessing project files or Docker. Includes both recorded slots; candidates/old slots may be stopped, failed or draining. Use status/log endpoints for live checks.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Services"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ]
+      }
+    },
+    "/v1/projects/{id}/domains": {
+      "get": {
+        "operationId": "listProjectDomains",
+        "summary": "Read project domains from SQLite",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Read assigned and conservatively retained reserved domains with recorded Cloudflare IDs from SQLite. Does not test DNS propagation, Caddy coherence or public TLS. Older hostname-to-record associations populate on the next DNS job/reconciliation.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Domains"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "MutualTLS": {
+        "type": "mutualTLS",
+        "description": "Verified TLS 1.3 client certificate. /v1/* additionally pins its leaf DER hash to the signing key."
+      },
+      "HMACSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Deploy-Signature",
+        "description": "Fresh 64-hex request HMAC, not a reusable token. Requires the six additional headers and the exact signing protocol in info.description."
+      }
+    },
+    "parameters": {
+      "ProjectID": {
+        "in": "path",
+        "name": "id",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,47}$",
+          "maxLength": 48
+        }
+      },
+      "JobID": {
+        "in": "path",
+        "name": "job_id",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^job-[0-9a-f]{32}$"
+        }
+      },
+      "KeyID": {
+        "name": "X-Deploy-Key-ID",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$",
+          "maxLength": 96
+        },
+        "description": "Configured signing key, pinned to the client certificate."
+      },
+      "Timestamp": {
+        "name": "X-Deploy-Timestamp",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$"
+        },
+        "description": "Canonical Unix seconds, at most 60 seconds clock skew."
+      },
+      "Scopes": {
+        "name": "X-Deploy-Scopes",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "description": "Sorted unique known scopes, separated by single spaces. 1\u201310 scopes, within key policy."
+      },
+      "Idempotency": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$",
+          "maxLength": 96
+        },
+        "description": "Stable mutation operation key; also required for authenticated reads."
+      },
+      "Actor": {
+        "name": "X-Actor-ID",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$",
+          "maxLength": 96
+        },
+        "description": "Attributable actor asserted by the signing backend."
+      },
+      "RequestID": {
+        "name": "X-Request-ID",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$",
+          "maxLength": 96
+        },
+        "description": "Stable request ID for retries. Cannot be reused under another mutation key."
+      }
+    },
+    "responses": {
+      "Error400": {
+        "description": "Invalid, duplicate, unknown or out-of-policy input, unsafe/invalid Compose YAML, or persistent volumes in blue-green mode.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error401": {
+        "description": "Signature, freshness, certificate pin or authentication failed.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error403": {
+        "description": "Scope, key policy or project permission denied.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error404": {
+        "description": "Resource or retained release not found.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error409": {
+        "description": "Project/port/domain/identity conflict, busy/stopped state or history/redaction limit.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error413": {
+        "description": "Body exceeds 128 KiB.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error422": {
+        "description": "First deploy is missing the required environment snapshot.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error429": {
+        "description": "Queue/project/rate/concurrency limit exceeded.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Error503": {
+        "description": "Dependency unavailable or recovery blocks admission.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Hostname": {
+        "type": "string",
+        "maxLength": 253,
+        "description": "Canonical lowercase ASCII/Punycode hostname, with at least two labels. Each label is 1\u201363 characters with no leading/trailing hyphen. IP literals/wildcards are rejected. Must satisfy root domain policy."
+      },
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string",
+                "const": "The operation could not be completed."
+              },
+              "request_id": {
+                "type": "string",
+                "description": "Empty if authentication did not establish trusted metadata."
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "request_id"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "Action": {
+        "type": "string",
+        "enum": [
+          "project_create",
+          "routes_update",
+          "dns_create",
+          "deploy",
+          "rollback",
+          "restart",
+          "start",
+          "stop"
+        ]
+      },
+      "AcceptedJob": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "pattern": "^job-[0-9a-f]{32}$"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "maxLength": 48
+          },
+          "action": {
+            "$ref": "#/components/schemas/Action"
+          },
+          "status": {
+            "type": "string",
+            "const": "queued",
+            "description": "Original acceptance envelope stays queued on replay. Poll the job for its actual status."
+          }
+        },
+        "required": [
+          "job_id",
+          "project_id",
+          "action",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "Release": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^rel-[0-9a-f]{32}$"
+          },
+          "image": {
+            "type": "string",
+            "pattern": "^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$",
+            "description": "Must use the template's exact allowed GHCR repository."
+          },
+          "environment_revision": {
+            "type": "string",
+            "pattern": "^env-[0-9a-f]{32}$"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "compose_revision": {
+            "type": "string",
+            "pattern": "^cmp-[0-9a-f]{64}$",
+            "description": "Immutable normalized Compose revision. Omitted for legacy releases."
+          }
+        },
+        "required": [
+          "id",
+          "image",
+          "environment_revision",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "Project": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "maxLength": 48
+          },
+          "template_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "maxLength": 48
+          },
+          "template_revision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Hostname"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true
+          },
+          "zerodowntime": {
+            "type": "boolean"
+          },
+          "blue_port": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 65535
+          },
+          "green_port": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 65535
+          },
+          "active_slot": {
+            "type": "string",
+            "enum": [
+              "blue",
+              "green"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "provisioning",
+              "awaiting_release",
+              "running",
+              "stopped"
+            ]
+          },
+          "slots": {
+            "type": "object",
+            "properties": {
+              "blue": {
+                "$ref": "#/components/schemas/Release"
+              },
+              "green": {
+                "$ref": "#/components/schemas/Release"
+              }
+            },
+            "additionalProperties": false
+          },
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Release"
+            }
+          },
+          "dns_records": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recovery_drain_pending": {
+            "type": "boolean"
+          },
+          "app_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "maxLength": 48,
+            "description": "Logical application shared by its development, staging and production deployments. One project per app/environment; each project has a separate authorized ID and runtime resources."
+          },
+          "environment": {
+            "$ref": "#/components/schemas/DeploymentEnvironment"
+          }
+        },
+        "required": [
+          "id",
+          "template_id",
+          "template_revision",
+          "domains",
+          "zerodowntime",
+          "blue_port",
+          "state",
+          "slots",
+          "releases",
+          "app_id",
+          "environment"
+        ],
+        "additionalProperties": false
+      },
+      "ProjectStatus": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "$ref": "#/components/schemas/Project"
+          },
+          "busy": {
+            "type": "boolean"
+          },
+          "route": {
+            "type": "string",
+            "description": "ok or a safe dependency/divergence code."
+          },
+          "health": {
+            "type": "string",
+            "description": "healthy, not_running, or a safe identity/readiness code."
+          },
+          "downtime_expected": {
+            "type": "boolean"
+          },
+          "public_tls_state": {
+            "type": "string",
+            "const": "unverified"
+          }
+        },
+        "required": [
+          "project",
+          "busy",
+          "route",
+          "health",
+          "downtime_expected",
+          "public_tls_state"
+        ],
+        "additionalProperties": false
+      },
+      "Projects": {
+        "type": "object",
+        "properties": {
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Project"
+            }
+          }
+        },
+        "required": [
+          "projects"
+        ],
+        "additionalProperties": false
+      },
+      "Releases": {
+        "type": "object",
+        "properties": {
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Release"
+            }
+          }
+        },
+        "required": [
+          "releases"
+        ],
+        "additionalProperties": false
+      },
+      "Job": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string",
+            "pattern": "^job-[0-9a-f]{32}$"
+          },
+          "project_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "maxLength": 48
+          },
+          "action": {
+            "$ref": "#/components/schemas/Action"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled",
+              "recovery_required"
+            ]
+          },
+          "phase": {
+            "type": "string"
+          },
+          "error_code": {
+            "type": "string"
+          },
+          "warning_code": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$",
+            "maxLength": 96
+          },
+          "request_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$",
+            "maxLength": 96
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "job_id",
+          "project_id",
+          "action",
+          "status",
+          "phase",
+          "actor_id",
+          "request_id",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "Logs": {
+        "type": "object",
+        "properties": {
+          "slot": {
+            "type": "string",
+            "enum": [
+              "blue",
+              "green"
+            ]
+          },
+          "logs": {
+            "type": "string",
+            "description": "Bounded, control-stripped and known-value-redacted snapshot. Transformed/unrelated application secrets cannot be guaranteed absent."
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "service": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$"
+          }
+        },
+        "required": [
+          "slot",
+          "logs",
+          "truncated",
+          "service"
+        ],
+        "additionalProperties": false
+      },
+      "NextPort": {
+        "type": "object",
+        "properties": {
+          "port": {
+            "type": "integer",
+            "minimum": 1024,
+            "maximum": 65535
+          },
+          "reserved": {
+            "type": "boolean",
+            "const": false
+          }
+        },
+        "required": [
+          "port",
+          "reserved"
+        ],
+        "additionalProperties": false
+      },
+      "AuditEvent": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 1
+          },
+          "event": {
+            "type": "object",
+            "properties": {
+              "JobID": {
+                "type": "string"
+              },
+              "ProjectID": {
+                "type": "string"
+              },
+              "Action": {
+                "type": "string"
+              },
+              "Status": {
+                "type": "string"
+              },
+              "Phase": {
+                "type": "string"
+              },
+              "ActorID": {
+                "type": "string"
+              },
+              "RequestID": {
+                "type": "string"
+              },
+              "Code": {
+                "type": "string"
+              },
+              "Time": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "required": [
+              "JobID",
+              "ProjectID",
+              "Action",
+              "Status",
+              "Phase",
+              "ActorID",
+              "RequestID",
+              "Code",
+              "Time"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "event"
+        ],
+        "additionalProperties": false
+      },
+      "Audit": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEvent"
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "additionalProperties": false
+      },
+      "CreateProject": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "maxLength": 48
+          },
+          "template_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "maxLength": 48
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Hostname"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true
+          },
+          "zerodowntime": {
+            "type": "boolean",
+            "description": "Optional. Defaults true for production and false for development/staging. True is rejected outside production. Production may explicitly use false for persistent-volume stacks."
+          },
+          "port": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "const": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 65535
+              }
+            ],
+            "description": "Omit/0 to allocate on creation or retain on a route update. Subject to root port policy."
+          },
+          "secondary_port": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "const": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 65535
+              }
+            ],
+            "description": "Omit/0 to allocate on creation or retain on a route update. Subject to root port policy."
+          },
+          "app_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "maxLength": 48,
+            "description": "Logical application shared by its development, staging and production deployments. One project per app/environment; each project has a separate authorized ID and runtime resources."
+          },
+          "environment": {
+            "$ref": "#/components/schemas/DeploymentEnvironment"
+          }
+        },
+        "required": [
+          "id",
+          "template_id",
+          "domains",
+          "app_id",
+          "environment"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "id": "demo",
+            "template_id": "web-node",
+            "domains": [
+              "demo.example.com"
+            ],
+            "zerodowntime": true,
+            "port": 3001,
+            "secondary_port": 3002,
+            "app_id": "demo",
+            "environment": "production"
+          }
+        ],
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "environment": {
+                  "enum": [
+                    "development",
+                    "staging"
+                  ]
+                }
+              },
+              "required": [
+                "environment"
+              ]
+            },
+            "then": {
+              "properties": {
+                "zerodowntime": {
+                  "const": false
+                },
+                "secondary_port": {
+                  "const": 0
+                }
+              }
+            }
+          }
+        ]
+      },
+      "Deploy": {
+        "type": "object",
+        "properties": {
+          "variables": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "writeOnly": true,
+            "maxProperties": 100,
+            "propertyNames": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "writeOnly": true,
+              "maxLength": 8192,
+              "pattern": "^[^\\r\\n\\u0000]*$"
+            },
+            "description": "Full write-only app environment snapshot. May be supplied either here or as services.app.environment, never both. Single-line literal string values, up to 8192 UTF-8 bytes; root template allowed/required keys apply. Omit both to copy the current app environment into a new revision; first deploy requires a snapshot. Companion environments are supplied within Compose YAML. New values require deploy.environment."
+          },
+          "compose_yaml": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536,
+            "writeOnly": true,
+            "description": "Required UTF-8 Compose YAML, maximum 64 KiB in bytes. Strict allow-list; services.app is the Caddy target. Up to 8 services; companions declare x-dockyard-template. Every image uses its approved repository and immutable digest. Only services and managed named volumes are accepted at the top level. See the Compose policy documentation for supported fields. Backend policy validation happens before Docker Compose config --quiet on the normalized model. Inline environment maps require deploy.environment.",
+            "x-compose-schema": {
+              "$ref": "#/components/schemas/ComposeDocument"
+            }
+          },
+          "environment": {
+            "$ref": "#/components/schemas/DeploymentEnvironment"
+          }
+        },
+        "required": [
+          "compose_yaml",
+          "environment"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "compose_yaml": "services:\n  app:\n    image: ghcr.io/your-org/your-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+            "variables": {
+              "DATABASE_URL": "example-only-secret",
+              "APP_URL": "https://demo.example.com"
+            },
+            "environment": "production"
+          }
+        ]
+      },
+      "Routes": {
+        "type": "object",
+        "properties": {
+          "domains": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Hostname"
+            },
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true
+          },
+          "port": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "const": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 65535
+              }
+            ],
+            "description": "Omit/0 to allocate on creation or retain on a route update. Subject to root port policy."
+          },
+          "secondary_port": {
+            "oneOf": [
+              {
+                "type": "integer",
+                "const": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 65535
+              }
+            ],
+            "description": "Omit/0 to allocate on creation or retain on a route update. Subject to root port policy."
+          }
+        },
+        "required": [
+          "domains"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "domains": [
+              "new.example.com"
+            ],
+            "port": 3005,
+            "secondary_port": 3006
+          }
+        ]
+      },
+      "DNS": {
+        "type": "object",
+        "properties": {
+          "hostname": {
+            "$ref": "#/components/schemas/Hostname"
+          }
+        },
+        "required": [
+          "hostname"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "hostname": "demo.example.com"
+          }
+        ]
+      },
+      "Rollback": {
+        "type": "object",
+        "properties": {
+          "release_id": {
+            "type": "string",
+            "description": "Retained successful release ID. Omit/empty for preceding activation."
+          }
+        },
+        "required": [],
+        "additionalProperties": false,
+        "examples": [
+          {}
+        ]
+      },
+      "Empty": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false,
+        "examples": [
+          {}
+        ]
+      },
+      "Stop": {
+        "type": "object",
+        "properties": {
+          "confirmation": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "maxLength": 48,
+            "description": "Must exactly equal the path project ID."
+          }
+        },
+        "required": [
+          "confirmation"
+        ],
+        "additionalProperties": false,
+        "examples": [
+          {
+            "confirmation": "demo"
+          }
+        ]
+      },
+      "ComposeService": {
+        "type": "object",
+        "required": [
+          "image"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "image": {
+            "type": "string",
+            "pattern": "^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$",
+            "description": "Must use the template's exact allowed GHCR repository."
+          },
+          "x-dockyard-template": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,47}$",
+            "description": "Required on companions; app uses the project template."
+          },
+          "environment": {
+            "type": "object",
+            "writeOnly": true,
+            "maxProperties": 100,
+            "propertyNames": {
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+            },
+            "additionalProperties": {
+              "type": "string",
+              "writeOnly": true,
+              "maxLength": 8192,
+              "pattern": "^[^\\r\\n\\u0000]*$"
+            },
+            "description": "Literal, write-only service environment; per-template allowed/required keys and 8192-byte value limits apply. New maps require deploy.environment."
+          },
+          "command": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 1024,
+              "description": "Literal container argument; 1024 UTF-8 byte limit. No host shell interpretation."
+            }
+          },
+          "entrypoint": {
+            "type": "array",
+            "maxItems": 32,
+            "items": {
+              "type": "string",
+              "maxLength": 1024,
+              "description": "Literal container argument; 1024 UTF-8 byte limit. No host shell interpretation."
+            }
+          },
+          "depends_on": {
+            "type": "array",
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,47}$"
+            },
+            "description": "Must refer to existing services; cycles rejected. Agent enforces service_healthy."
+          },
+          "volumes": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            },
+            "description": "Named volume:/root-approved/container/target[:ro|rw]. Single-slot mode only."
+          },
+          "ports": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "App only. Omit for automatic loopback publishing. If supplied, target must match root template; public binds rejected."
+          },
+          "expose": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "Must match template container port."
+          }
+        }
+      },
+      "ComposeDocument": {
+        "type": "object",
+        "required": [
+          "services"
+        ],
+        "additionalProperties": false,
+        "description": "Schema for the strict Compose subset inside compose_yaml, before agent normalization. YAML anchors/aliases/custom tags/duplicates and multiple documents are rejected. Runtime policy adds constraints beyond this schema. Aggregate memory/CPU sums must fit root stack budgets; omitted budgets default to the largest individual template limits.",
+        "properties": {
+          "services": {
+            "type": "object",
+            "required": [
+              "app"
+            ],
+            "minProperties": 1,
+            "maxProperties": 8,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,47}$"
+            },
+            "properties": {
+              "app": {
+                "$ref": "#/components/schemas/ComposeService"
+              }
+            },
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ComposeService"
+            }
+          },
+          "volumes": {
+            "type": "object",
+            "maxProperties": 8,
+            "propertyNames": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{0,47}$"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "maxProperties": 0,
+              "additionalProperties": false
+            },
+            "description": "Managed project-local named volumes, declared as empty objects. Every declared volume must be mounted; zero-downtime projects reject all volumes."
+          }
+        }
+      },
+      "ServiceInfo": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "slot",
+          "name",
+          "image",
+          "template_id",
+          "environment_revision"
+        ],
+        "properties": {
+          "slot": {
+            "type": "string",
+            "enum": [
+              "blue",
+              "green"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string",
+            "pattern": "^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$",
+            "description": "Must use the template's exact allowed GHCR repository."
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "compose_revision": {
+            "type": "string",
+            "pattern": "^cmp-[0-9a-f]{64}$",
+            "description": "Immutable normalized Compose revision. Omitted for legacy releases."
+          },
+          "environment_revision": {
+            "type": "string",
+            "pattern": "^env-[0-9a-f]{32}$"
+          }
+        },
+        "description": "Recorded slot service inventory from SQLite. Does not assert the container is currently running/healthy. Legacy image values resolve from the recorded slot release."
+      },
+      "Services": {
+        "type": "object",
+        "required": [
+          "services"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceInfo"
+            },
+            "maxItems": 16
+          }
+        }
+      },
+      "DomainInfo": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "hostname",
+          "assigned"
+        ],
+        "properties": {
+          "hostname": {
+            "$ref": "#/components/schemas/Hostname"
+          },
+          "assigned": {
+            "type": "boolean",
+            "description": "Currently assigned to the project. False means a conservatively retained reservation."
+          },
+          "dns_record_id": {
+            "type": "string",
+            "description": "Cloudflare record ID recorded after a DNS job/reconciliation. Absence does not prove no DNS record exists."
+          }
+        }
+      },
+      "Domains": {
+        "type": "object",
+        "required": [
+          "domains"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "domains": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DomainInfo"
+            }
+          }
+        }
+      },
+      "DeploymentEnvironment": {
+        "type": "string",
+        "enum": [
+          "development",
+          "staging",
+          "production"
+        ],
+        "description": "Required target choice. Development and staging use one Compose instance. Only production permits blue-green; selection must match the immutable project environment. This is distinct from secret environment variables/revisions.",
+        "x-ui-question": "Which environment should receive this deployment?"
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+.git
+.cache
+bin
+*.db*
+*.pem
+*.key
+.env
+config.json

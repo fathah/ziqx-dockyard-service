@@ -1,0 +1,9 @@
+/bin/
+/.cache/
+*.db
+*.db-shm
+*.db-wal
+*.pem
+*.key
+.env
+config.json
