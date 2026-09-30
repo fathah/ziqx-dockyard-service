@@ -125,7 +125,7 @@ pub fn terminal_password(
         if remember {
             "Saved in this Mac’s Keychain only after successful SSH authentication. This opens full administrative access."
         } else {
-            "Used for this terminal connection only; never saved. This opens full administrative access."
+            "Used for this root SSH connection only; never saved. This opens full administrative access."
         },
     )
 }

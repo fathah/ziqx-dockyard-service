@@ -150,7 +150,11 @@ function Skeleton({
 }
 function SkeletonStats({ count = 3 }: { count?: number }) {
   return (
-    <div className={`stats-grid ${count === 3 ? "three" : ""}`} aria-label="Loading summary" role="status">
+    <div
+      className={`stats-grid ${count === 3 ? "three" : ""}`}
+      aria-label="Loading summary"
+      role="status"
+    >
       {Array.from({ length: count }, (_, index) => (
         <div className="stat skeleton-stat" key={index}>
           <div>
@@ -544,38 +548,6 @@ function App() {
         <div className="brand">
           <Brand />
         </div>
-        <button
-          className={page === "security" ? "server-summary active" : "server-summary"}
-          onClick={() => {
-            setPage("security");
-            setSelected(null);
-            setError("");
-          }}
-          aria-label="Open server details"
-        >
-          <div className="server-symbol">
-            <Server size={18} />
-          </div>
-          <div>
-            <strong>
-              {preview
-                ? "Preview workspace"
-                : (session.profile?.name ?? "Your VPS")}
-            </strong>
-            <span>
-              <i
-                className={
-                  session.unlocked && !preview ? "green-dot" : "gray-dot"
-                }
-              />
-              {preview
-                ? "Sample data"
-                : session.unlocked
-                  ? "Connected"
-                  : "Not connected"}
-            </span>
-          </div>
-        </button>
         <div className="nav-label">WORKSPACE</div>
         <nav>
           {nav.map((n) => (
@@ -590,24 +562,52 @@ function App() {
             >
               <n.icon size={18} />
               <span>{n.label}</span>
-              {n.id === "projects" && canUse && <small>{projectCount}</small>}
+              {n.id === "projects" && canUse && !initialWorkspaceLoading && (
+                <small>{projectCount}</small>
+              )}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="operator">
-            <span className="avatar">
-              {initials(session.profile?.actor_id ?? "mac owner")}
-            </span>
-            <div>
-              <strong>{session.profile?.actor_id ?? "Mac operator"}</strong>
-              <span>
-                {session.unlocked
-                  ? "Authenticated session"
-                  : "Device authentication"}
-              </span>
-            </div>
+          <div
+            className={
+              page === "security" ? "server-footer active" : "server-footer"
+            }
+          >
             <button
+              className="server-summary"
+              onClick={() => {
+                setPage("security");
+                setSelected(null);
+                setError("");
+              }}
+              aria-label="Open server details"
+            >
+              <span className="server-symbol">
+                <Server size={18} />
+              </span>
+              <span className="server-summary-copy">
+                <strong>
+                  {preview
+                    ? "Preview workspace"
+                    : (session.profile?.name ?? "Your VPS")}
+                </strong>
+                <span className="server-status">
+                  <i
+                    className={
+                      session.unlocked && !preview ? "green-dot" : "gray-dot"
+                    }
+                  />
+                  {preview
+                    ? "Sample data"
+                    : session.unlocked
+                      ? "Connected"
+                      : "Not connected"}
+                </span>
+              </span>
+            </button>
+            <button
+              className="sidebar-lock"
               aria-label="Lock session"
               title="Lock session"
               onClick={() => {
@@ -769,6 +769,7 @@ function App() {
               inventory={shownInventory}
               preview={preview}
               back={() => setSelected(null)}
+              openServerDetails={() => { setSelected(null); setPage("security"); }}
             />
           ) : page === "projects" ? (
             <Projects
@@ -1310,6 +1311,9 @@ function ProjectDetail({
 }) {
   const [tab, setTab] = useState("overview");
   const [services, setServices] = useState<Service[]>([]);
+  const [servicesLoading, setServicesLoading] = useState(!preview);
+  const [dnsLoading, setDnsLoading] = useState(!preview);
+  const [logsLoading, setLogsLoading] = useState(false);
   const [status, setStatus] = useState<{
     health: string;
     route: string;
@@ -1328,6 +1332,8 @@ function ProjectDetail({
   useEffect(() => {
     let cancelled = false;
     if (preview) {
+      setServicesLoading(false);
+      setDnsLoading(false);
       setServices([
         {
           name: "app",
@@ -1347,6 +1353,10 @@ function ProjectDetail({
       setDNS(p.domains.map((hostname) => ({ hostname, assigned: true })));
       return;
     }
+    setServicesLoading(true);
+    setDnsLoading(true);
+    setServices([]);
+    setDNS([]);
     void api
       .read<{ services: Service[] }>({
         kind: "project",
@@ -1358,6 +1368,9 @@ function ProjectDetail({
       })
       .catch((e) => {
         if (!cancelled) report(e);
+      })
+      .finally(() => {
+        if (!cancelled) setServicesLoading(false);
       });
     void api
       .read<
@@ -1375,6 +1388,9 @@ function ProjectDetail({
       })
       .catch((e) => {
         if (!cancelled) report(e);
+      })
+      .finally(() => {
+        if (!cancelled) setDnsLoading(false);
       });
     return () => {
       cancelled = true;
@@ -1403,6 +1419,7 @@ function ProjectDetail({
   }
   async function loadLogs() {
     setBusy(true);
+    setLogsLoading(true);
     try {
       if (preview) {
         setLogs(
@@ -1424,6 +1441,7 @@ function ProjectDetail({
       report(e);
     } finally {
       setBusy(false);
+      setLogsLoading(false);
     }
   }
   return (
@@ -1567,8 +1585,11 @@ function ProjectDetail({
         <section className="panel">
           <div className="section-heading">
             <h2>Multi-service stack</h2>
-            <Tag>{services.length} recorded services</Tag>
+            {!servicesLoading && <Tag>{services.length} recorded services</Tag>}
           </div>
+          {servicesLoading && (
+            <SkeletonRows count={3} label="Loading services" />
+          )}
           {services.map((s) => (
             <div className="service-row" key={s.slot + s.name}>
               <Box size={22} />
@@ -1580,7 +1601,7 @@ function ProjectDetail({
               <Tag>{s.template_id}</Tag>
             </div>
           ))}
-          {!services.length && (
+          {!services.length && !servicesLoading && (
             <Empty title="No services recorded">
               Deploy your first validated Compose stack.
             </Empty>
@@ -1676,10 +1697,22 @@ function ProjectDetail({
               Read logs
             </button>
           </div>
-          <pre className="terminal">
-            {logs ||
-              "Select a service and read its logs. No terminal or shell access is exposed."}
-          </pre>
+          {logsLoading ? (
+            <div
+              className="terminal skeleton-terminal"
+              role="status"
+              aria-label="Loading container logs"
+            >
+              {["72%", "53%", "84%", "45%", "64%"].map((width, index) => (
+                <Skeleton key={index} width={width} height={12} />
+              ))}
+            </div>
+          ) : (
+            <pre className="terminal">
+              {logs ||
+                "Select a service and read its logs. No terminal or shell access is exposed."}
+            </pre>
+          )}
           {truncated && (
             <p className="warning">Output was truncated by the server.</p>
           )}
@@ -1703,6 +1736,9 @@ function ProjectDetail({
               Edit routes <Settings2 size={14} />
             </button>
           </div>
+          {dnsLoading && (
+            <SkeletonRows count={3} label="Loading project domains" />
+          )}
           {dns.map((d) => (
             <div className="domain-row" key={d.hostname}>
               <Globe2 size={20} />
@@ -1748,16 +1784,22 @@ function ProjectDetail({
 function Jobs({
   jobs,
   preview,
+  loading,
   refresh,
   report,
 }: {
   jobs: Job[];
   preview: boolean;
+  loading: boolean;
   refresh: () => Promise<void>;
   report: (e: unknown) => void;
 }) {
   const [lookup, setLookup] = useState("");
   const [found, setFound] = useState<Job | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+  const activeJobs = jobs.filter((job) =>
+    ["queued", "running", "recovery_required"].includes(job.status),
+  ).length;
   return (
     <>
       <div className="page-heading">
@@ -1785,10 +1827,14 @@ function Jobs({
         onSubmit={async (e) => {
           e.preventDefault();
           if (preview) return;
+          setFound(null);
+          setLookingUp(true);
           try {
             setFound(await api.read<Job>({ kind: "job", job: lookup }));
           } catch (e) {
             report(e);
+          } finally {
+            setLookingUp(false);
           }
         }}
       >
@@ -1799,11 +1845,17 @@ function Jobs({
           value={lookup}
           onChange={(e) => setLookup(e.target.value)}
         />
-        <button className="button small" disabled={preview}>
+        <button className="button small" disabled={preview || lookingUp}>
           Look up
         </button>
       </form>
       <section className="panel">
+        <div className="section-heading">
+          <h2>Recent operations</h2>
+          {!loading && <span className="count">{activeJobs} active</span>}
+        </div>
+        {loading && <SkeletonRows count={3} label="Loading operations" />}
+        {lookingUp && <SkeletonRows count={1} label="Looking up operation" />}
         {[
           ...(found ? [found] : []),
           ...jobs.filter((j) => j.job_id !== found?.job_id),
@@ -1841,7 +1893,7 @@ function Jobs({
             </div>
           </div>
         ))}
-        {!jobs.length && !found && (
+        {!jobs.length && !found && !loading && !lookingUp && (
           <Empty icon={Layers3} title="No deployments yet">
             Deploy a Compose stack to get started.
           </Empty>
@@ -1853,14 +1905,33 @@ function Jobs({
 function Domains({
   projects,
   inventory,
+  loading,
   select,
   open,
 }: {
   projects: Project[];
   inventory: Inventory | null;
+  loading: boolean;
   select: (s: string) => void;
   open: (m: Modal) => void;
 }) {
+  if (loading) {
+    return (
+      <>
+        <div className="page-heading">
+          <h1>Domains</h1>
+        </div>
+        <section className="panel">
+          <h2>Managed routes</h2>
+          <SkeletonRows label="Loading managed routes" />
+        </section>
+        <section className="panel">
+          <h2>Observed Caddy sites</h2>
+          <SkeletonRows label="Loading Caddy sites" />
+        </section>
+      </>
+    );
+  }
   return (
     <>
       <div className="page-heading">
@@ -1934,11 +2005,13 @@ function ObservedProjectDetail({
   inventory,
   preview,
   back,
+  openServerDetails,
 }: {
   project: Inventory["projects"][number];
   inventory: Inventory | null;
   preview: boolean;
   back: () => void;
+  openServerDetails: () => void;
 }) {
   const [migrationOpen, setMigrationOpen] = useState(false);
   const sites = (inventory?.sites ?? []).filter((site) =>
@@ -1956,7 +2029,10 @@ function ObservedProjectDetail({
         </div>
         <div className="heading-actions">
           <Tag>Existing Compose · read-only</Tag>
-          <button className="button primary" onClick={() => setMigrationOpen(true)}>
+          <button
+            className="button primary"
+            onClick={() => setMigrationOpen(true)}
+          >
             Migrate Now <ArrowRight size={16} />
           </button>
         </div>
@@ -2024,6 +2100,7 @@ function ObservedProjectDetail({
           project={project}
           preview={preview}
           close={() => setMigrationOpen(false)}
+          openServerDetails={() => { setMigrationOpen(false); openServerDetails(); }}
         />
       )}
     </>
@@ -2033,32 +2110,55 @@ const migrationLabels: Record<string, string> = {
   INVENTORY_FRESH: "Refresh VPS inventory and resolve scan warnings.",
   SOURCE_PRESENT: "Restore the project folder before migrating.",
   SOURCE_METADATA_COMPLETE: "Resolve Compose metadata warnings.",
-  SINGLE_COMPOSE_FILE: "Multiple Compose files or overrides need a reviewed merge.",
+  SINGLE_COMPOSE_FILE:
+    "Multiple Compose files or overrides need a reviewed merge.",
   PROJECT_ID_SUPPORTED: "Project name must fit Dockyard's naming rules.",
   NO_MANUAL_CADDY_CUTOVER: "This Caddy route needs a reviewed traffic cutover.",
-  NO_EXISTING_PUBLISHED_PORTS: "This published port needs a reviewed traffic cutover.",
-  APPROVED_TEMPLATES_CONFIGURED: "Configure approved deployment templates on the VPS.",
-  SOURCE_FILE_TRUSTED: "The Compose file and its parent folders need safe root ownership.",
+  NO_EXISTING_PUBLISHED_PORTS:
+    "This published port needs a reviewed traffic cutover.",
+  APPROVED_TEMPLATES_CONFIGURED:
+    "Configure approved deployment templates on the VPS.",
+  SOURCE_FILE_TRUSTED:
+    "The Compose file and its parent folders need safe root ownership.",
   SOURCE_FILE_READABLE: "The Compose file could not be read safely.",
-  APP_TEMPLATE_UNAMBIGUOUS: "Pin the app image by digest and map it to one approved template.",
-  COMPOSE_POLICY_COMPATIBLE: "Convert unsupported Compose settings to Dockyard's secure subset.",
+  APP_TEMPLATE_UNAMBIGUOUS:
+    "Pin the app image by digest and map it to one approved template.",
+  COMPOSE_POLICY_COMPATIBLE:
+    "Convert unsupported Compose settings to Dockyard's secure subset.",
   STATELESS_STACK: "Persistent volumes need a separate data migration plan.",
 };
+function migrationCheckError(error: string) {
+  if (error.includes("HTTP_404: NOT_FOUND")) {
+    return "The Dockyard service running on this VPS does not have the migration-check endpoint. Update the VPS service to enable this check. No project files or containers were changed.";
+  }
+  if (error.includes("HTTP_404: PROJECT_NOT_FOUND")) {
+    return "This project is no longer in the VPS inventory. Refresh the inventory and try again.";
+  }
+  if (error.includes("SESSION_LOCKED")) {
+    return "Your session locked. Unlock with Touch ID, then try again.";
+  }
+  return "The migration check could not reach or read the VPS service. Try again after checking the connection.";
+}
 function MigrationReview({
   project,
   preview,
   close,
+  openServerDetails,
 }: {
   project: Inventory["projects"][number];
   preview: boolean;
   close: () => void;
+  openServerDetails: () => void;
 }) {
-  const [assessment, setAssessment] = useState<MigrationAssessment | null>(null);
+  const [assessment, setAssessment] = useState<MigrationAssessment | null>(
+    null,
+  );
   const [error, setError] = useState("");
   useEffect(() => {
     if (preview) return;
     let active = true;
-    api.read<MigrationAssessment>({ kind: "migration", project: project.id })
+    api
+      .read<MigrationAssessment>({ kind: "migration", project: project.id })
       .then((value) => {
         if (active) setAssessment(value);
       })
@@ -2089,37 +2189,66 @@ function MigrationReview({
         </div>
         <div className="wizard-body">
           <p className="migration-intro">
-            Dockyard will check whether this stack can be moved safely into its managed deployment system.
+            Check whether this stack is eligible. Automatic takeover is not
+            available yet.
           </p>
-          {preview && <div className="alert pending">Connect to your VPS to check this project.</div>}
-          {error && (
+          {preview && (
             <div className="alert pending">
-              Could not check this project. The VPS may need a newer Dockyard service. {error}
+              Connect to your VPS to check this project.
             </div>
           )}
-          {!preview && !error && !assessment && <p>Checking the project…</p>}
+          {error && (
+            <div className="alert pending migration-error" role="alert">
+              <strong>Migration check unavailable</strong>
+              <span>{migrationCheckError(error)}</span>
+              {error.includes("HTTP_404: NOT_FOUND") && <button className="button" onClick={openServerDetails}>Open Server details <ArrowRight size={15} /></button>}
+              <details>
+                <summary>Technical details</summary>
+                <code>{error}</code>
+              </details>
+            </div>
+          )}
+          {!preview && !error && !assessment && (
+            <SkeletonRows count={4} label="Checking migration requirements" />
+          )}
           {assessment && (
             <>
               <div className="migration-result">
-                <strong>{assessment.status === "candidate" ? "Source checks passed" : "Needs preparation"}</strong>
-                <span>{assessment.checks.filter((check) => check.status === "blocked").length} blockers</span>
+                <strong>
+                  {assessment.status === "candidate"
+                    ? "Source checks passed"
+                    : "Needs preparation"}
+                </strong>
+                <span>
+                  {
+                    assessment.checks.filter(
+                      (check) => check.status === "blocked",
+                    ).length
+                  }{" "}
+                  blockers
+                </span>
               </div>
               <div className="migration-checks">
-                {assessment.checks.filter((check) => check.status === "blocked").map((check) => (
-                  <div className="migration-check" key={check.code}>
-                    <X size={16} />
-                    <span>{migrationLabels[check.code] ?? check.code}</span>
-                  </div>
-                ))}
+                {assessment.checks
+                  .filter((check) => check.status === "blocked")
+                  .map((check) => (
+                    <div className="migration-check" key={check.code}>
+                      <X size={16} />
+                      <span>{migrationLabels[check.code] ?? check.code}</span>
+                    </div>
+                  ))}
               </div>
               <div className="alert pending">
-                Migration is not yet available on this server. The existing containers and files remain untouched.
+                Migration is not yet available on this server. The existing
+                containers and files remain untouched.
               </div>
             </>
           )}
         </div>
         <div className="modal-footer">
-          <button className="button" onClick={close}>Close</button>
+          <button className="button" onClick={close}>
+            Close
+          </button>
         </div>
       </section>
     </div>
@@ -2128,12 +2257,28 @@ function MigrationReview({
 function InventoryView({
   inventory: i,
   loading,
+  initialLoading,
   refresh,
 }: {
   inventory: Inventory | null;
   loading: boolean;
+  initialLoading: boolean;
   refresh: () => void;
 }) {
+  if (initialLoading) {
+    return (
+      <>
+        <div className="page-heading">
+          <h1>VPS inventory</h1>
+        </div>
+        <SkeletonStats />
+        <section className="panel">
+          <h2>Observed projects</h2>
+          <SkeletonRows count={5} label="Loading VPS inventory" />
+        </section>
+      </>
+    );
+  }
   return (
     <>
       <div className="page-heading">
@@ -2302,7 +2447,10 @@ function AuditView({
             </div>
           );
         })}
-        {events.length === 0 && (
+        {busy && events.length === 0 && (
+          <SkeletonRows count={5} label="Loading audit trail" />
+        )}
+        {events.length === 0 && !busy && (
           <Empty
             icon={History}
             title={
@@ -2349,7 +2497,7 @@ function Security({
       <div className="page-heading">
         <div>
           <h1>
-            Connection & security{" "}
+            Server details{" "}
             <Help label="connection security">
               Access uses this Mac’s dedicated credentials. Revoke other client
               keys on the VPS to limit access. A compromised Mac or copied
@@ -2365,25 +2513,30 @@ function Security({
       </div>
       <div className="security-grid">
         <section className="panel enrollment-panel">
-          <div className="security-symbol">
-            <ShieldCheck size={32} />
+          <div className="server-card-header">
+            <div className="security-symbol">
+              <ShieldCheck size={28} />
+            </div>
+            <div>
+              <h2>
+                {p?.name ?? "Connect your VPS"}
+                <Help label="enrollment">
+                  Set up a new Ubuntu VPS, or import an enrollment for an
+                  existing Dockyard server. Credentials are stored in macOS
+                  Keychain. Removing local enrollment does not revoke its key on
+                  the VPS.
+                </Help>
+              </h2>
+              {p?.server_ip && (
+                <p className="mono server-address">
+                  {p.server_ip}:{p.ssh_port}
+                </p>
+              )}
+            </div>
           </div>
-          <h2>
-            {p?.name ?? "Connect your VPS"}
-            <Help label="enrollment">
-              Set up a new Ubuntu VPS, or import an enrollment for an existing
-              Dockyard server. Credentials are stored in macOS Keychain.
-              Removing local enrollment does not revoke its key on the VPS.
-            </Help>
-          </h2>
-          {p?.server_ip && (
-            <p className="mono">
-              {p.server_ip}:{p.ssh_port}
-            </p>
-          )}
           {p && (
             <dl className="facts">
-              <dt>Origin</dt>
+              <dt>API origin</dt>
               <dd className="mono">{p.origin}</dd>
               <dt>Server ID</dt>
               <dd>{p.server_id}</dd>
@@ -2395,10 +2548,6 @@ function Security({
               <dd className="mono">{p.server_certificate_sha256}</dd>
               {p.server_ip && (
                 <>
-                  <dt>Saved server IP</dt>
-                  <dd className="mono">{p.server_ip}</dd>
-                  <dt>SSH port</dt>
-                  <dd>{p.ssh_port}</dd>
                   <dt>SSH fingerprint</dt>
                   <dd className="mono">{p.ssh_fingerprint}</dd>
                 </>
@@ -2417,37 +2566,43 @@ function Security({
               </button>
             )}
             <button
-              className="button primary"
+              className={p ? "button" : "button primary"}
               disabled={!native || busy}
               onClick={() => authenticate("enroll")}
             >
               <Plus size={15} />
               Import existing enrollment
             </button>
-            <button
-              className="button"
-              disabled={!native || busy}
-              onClick={() => authenticate("unlock")}
-            >
-              <Fingerprint size={15} />
-              Unlock with Touch ID
-            </button>
+            {!unlocked && (
+              <button
+                className="button"
+                disabled={!native || busy}
+                onClick={() => authenticate("unlock")}
+              >
+                <Fingerprint size={15} />
+                Unlock with Touch ID
+              </button>
+            )}
           </div>
-          {p && (
-            <button
-              className="text-button danger-text"
-              disabled={busy}
-              onClick={forget}
-            >
-              Remove local enrollment
-            </button>
-          )}
           {!native && (
             <p className="muted">Preview · use the Mac app to connect.</p>
           )}
-          <button className="text-button" onClick={explore}>
-            Explore sample workspace <ArrowRight size={14} />
-          </button>
+          <div className="enrollment-secondary-actions">
+            {p && native && (
+              <button
+                className="text-button danger-text"
+                disabled={busy}
+                onClick={forget}
+              >
+                Remove local enrollment
+              </button>
+            )}
+            {!p && (
+              <button className="text-button" onClick={explore}>
+                Explore sample workspace <ArrowRight size={14} />
+              </button>
+            )}
+          </div>
         </section>
         <section className="panel security-list">
           <h2>Layered access controls</h2>
@@ -2491,8 +2646,113 @@ function Security({
           ))}
         </section>
       </div>
+      {p?.server_ip && native && unlocked && <ServerAccess />}
+      {p?.server_ip && native && unlocked && <ServerUpdater />}
     </>
   );
+}
+function ServerAccess() {
+  const [report, setReport] = useState<api.ServerAccessReport | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function check() {
+    setBusy(true);
+    setError("");
+    try { setReport(await api.checkServerAccess()); }
+    catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  }
+  async function prepare() {
+    setBusy(true);
+    setError("");
+    try {
+      const next = await api.prepareServerAccess();
+      setReport(next);
+      if (next.update_directory === "ready") toast.success("Updater access is ready.");
+    } catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  }
+  const rows = report ? [
+    ["Root SSH", report.root_ssh, "Full server access for this Mac's pinned SSH connection."],
+    ["Updater folder", report.update_directory === "ready", "A private, root-owned directory holds temporary update files."],
+    ["Installed binaries", report.installed_binaries, "Dockyard binaries must be root-owned and executable."],
+    ["SQLite database", report.database, "The updater needs access to back up the Dockyard database."],
+    ["Dockyard service", report.service_active, "The service must be running before an update."],
+  ] as const : [];
+  return <section className="panel server-access">
+    <div className="server-updater-heading">
+      <h2>Required server access</h2>
+      <button className="button" disabled={busy} onClick={() => void check()}><RefreshCw size={16} />{busy ? "Checking…" : "Check access"}</button>
+    </div>
+    {report && <>
+      <div className="server-access-grid">
+        {rows.map(([label, allowed, detail]) => <div className="server-access-row" key={label}>
+          <span>{label} <Help label={label}>{detail}</Help></span>
+          <Tag tone={allowed ? "green" : "neutral"}>{allowed ? "Ready" : label === "Updater folder" && report.update_directory === "can_prepare" ? "Needs setup" : "Needs review"}</Tag>
+        </div>)}
+      </div>
+      {report.update_directory === "can_prepare" && <button className="button primary" disabled={busy} onClick={() => void prepare()}>Prepare updater access with Touch ID</button>}
+      {report.update_directory === "manual_review" && <p className="muted">Review ownership and permissions for /var/lib/dockyard-desktop-updates on the VPS.</p>}
+      {(!report.installed_binaries || !report.database || !report.service_active) && <p className="muted">Review the flagged VPS items before updating. Dockyard will not change binaries, database permissions, or services from this check.</p>}
+    </>}
+    {error && <div className="alert error" role="alert">{error}</div>}
+  </section>;
+}
+function ServerUpdater() {
+  const [preview, setPreview] = useState<api.ServerUpdatePreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [review, setReview] = useState(false);
+  async function check() {
+    setBusy(true);
+    setError("");
+    setReview(false);
+    try { setPreview(await api.checkServerUpdate()); }
+    catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  }
+  async function update() {
+    if (!preview) return;
+    setBusy(true);
+    setError("");
+    try {
+      const version = await api.applyServerUpdate(preview);
+      toast.success(version === "unversioned" ? `Dockyard service updated to bundled build ${preview.source_commit.slice(0, 12)}.` : `Dockyard service updated to v${version}.`);
+      setReview(false);
+      setPreview({ ...preview, installed_dockyard: preview.candidate_dockyard, installed_dockyardctl: preview.candidate_dockyardctl, installed_version: preview.candidate_version === "unversioned" ? null : preview.candidate_version, installed_commit: preview.candidate_version === "unversioned" ? null : preview.source_commit, version_status: "current", update_available: false });
+    } catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  }
+  async function forgetPassword() {
+    setBusy(true);
+    setError("");
+    try {
+      await api.forgetRootPassword();
+      toast.success("Saved root password removed from Keychain.");
+    } catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  }
+  return <section className="panel server-updater">
+    <div className="server-updater-heading">
+      <div><h2>Server software</h2><p className="muted">Check the VPS against the verified Ubuntu build in this Mac app.</p></div>
+      <button className="button" disabled={busy} onClick={() => void check()}><RefreshCw size={16} />{busy ? "Working…" : "Check version"}</button>
+    </div>
+    {preview && <div className="server-updater-status">
+      <Tag tone={preview.version_status === "current" ? "green" : "neutral"}>{preview.version_status === "current" ? "Up to date" : preview.version_status === "server_newer" ? "VPS is newer" : preview.version_status === "same_version_different_build" ? "Same version, different build" : preview.version_status === "bundle_unversioned" ? "Bundle needs rebuild" : preview.version_status === "legacy_bundle" ? "Unversioned update" : "Update available"}</Tag>
+      <span>VPS: {preview.installed_version ? `v${preview.installed_version}` : "Version unavailable"}</span>
+      <span>Bundled: {preview.candidate_version === "unversioned" ? "Version unavailable" : `v${preview.candidate_version}`}</span>
+      {preview.update_available && !review && <button className="button primary" disabled={busy} onClick={() => setReview(true)}>Update server <ArrowRight size={15} /></button>}
+    </div>}
+    {preview?.version_status === "bundle_unversioned" && <p className="muted">This Mac app contains an older, unversioned Ubuntu binary. Bundle the current Go build to enable in-app updates.</p>}
+    {review && preview && <div className="server-updater-review">
+      <h3>Update Dockyard on your VPS?</h3>
+      <p>{preview.candidate_version === "unversioned" ? "This older bundle has no version number. Check its source commit before installing; the control service will restart briefly." : "The control service will restart briefly. Containers and Caddy will continue; Dockyard keeps a database and binary backup for rollback."}</p>
+      <div className="server-updater-hashes"><span>Installed version</span><strong>{preview.installed_version ? `v${preview.installed_version}` : "Unavailable (older build)"}</strong><span>New build</span><strong>{preview.candidate_version === "unversioned" ? `Unversioned · ${preview.source_commit.slice(0, 12)}` : `v${preview.candidate_version}`}</strong></div>
+      <div className="controls"><button className="button primary" disabled={busy} onClick={() => void update()}>{busy ? "Updating…" : "Confirm update with Touch ID"}</button><button className="button" disabled={busy} onClick={() => setReview(false)}>Cancel</button></div>
+    </div>}
+    <button className="text-button server-updater-forget" disabled={busy} onClick={() => void forgetPassword()}>Forget saved root password</button>
+    {error && <div className="alert error" role="alert">{error}</div>}
+  </section>;
 }
 function OperationModal({
   modal: m,

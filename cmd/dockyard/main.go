@@ -8,6 +8,7 @@ import (
 	"flag"
 	"github.com/ziqx/ziqx-dockyard-service/internal/api"
 	"github.com/ziqx/ziqx-dockyard-service/internal/auth"
+	"github.com/ziqx/ziqx-dockyard-service/internal/buildinfo"
 	"github.com/ziqx/ziqx-dockyard-service/internal/config"
 	"github.com/ziqx/ziqx-dockyard-service/internal/engine"
 	"github.com/ziqx/ziqx-dockyard-service/internal/inventory"
@@ -35,10 +36,15 @@ func main() {
 }
 func run() error {
 	path := flag.String("config", "/etc/dockyard/config.json", "root-owned policy file")
+	showVersion := flag.Bool("version", false, "print build version and exit")
+	versionJSON := flag.Bool("version-json", false, "print machine-readable build version and exit")
 	check := flag.Bool("check", false, "validate policy and credentials without side effects")
 	reconcile := flag.String("reconcile-job", "", "offline root recovery; stop the daemon first")
 	syncExisting := flag.Bool("sync-existing", false, "offline read-only scan of existing Compose/Caddy metadata into SQLite; stop the daemon first")
 	flag.Parse()
+	if *showVersion || *versionJSON {
+		return buildinfo.Print(os.Stdout, *versionJSON)
+	}
 	if (*check && (*syncExisting || *reconcile != "")) || (*syncExisting && *reconcile != "") {
 		return errors.New("choose only one check, sync-existing or reconcile-job mode")
 	}

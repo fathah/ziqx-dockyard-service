@@ -22,6 +22,10 @@ fn main() {
             "terminal_poll",
             "terminal_close",
             "terminal_forget_password",
+            "server_update_check",
+            "server_update_apply",
+            "server_access_check",
+            "server_access_prepare",
         ]),
     ))
     .expect("Tauri build failed");

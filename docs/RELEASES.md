@@ -4,6 +4,8 @@ The [release workflow](../.github/workflows/release.yml) runs on pushes to the `
 
 The target is **Linux x86-64 (`amd64`) on Ubuntu 22.04 or newer**. These are dynamically linked native binaries; they require the host's compatible glibc. This workflow does not build ARM64 binaries. Build metadata records the source commit, Actions run, Go/compiler and glibc versions.
 
+The release reads the server version from [`VERSION`](../VERSION) and embeds that version and the source commit in both Go binaries. Inspect either binary without root credentials or a running service using `dockyard -version` or `dockyard -version-json` (`dockyardctl` supports the same flags). Development builds without release flags report `dev` and `unknown`.
+
 Each successful commit produces a GitHub Release tagged `release-<full-commit-sha>` with these assets:
 
 - `dockyard-linux-amd64` — privileged deployment daemon

@@ -57,11 +57,17 @@ jobs:
       - name: Build Ubuntu binaries and checksums
         run: |
           mkdir -p dist
-          go build -trimpath -buildvcs=false -ldflags='-s -w' \
+          version=$(cat VERSION)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          build_flags="-s -w -X github.com/ziqx/ziqx-dockyard-service/internal/buildinfo.Version=$version -X github.com/ziqx/ziqx-dockyard-service/internal/buildinfo.Commit=$GITHUB_SHA"
+          go build -trimpath -buildvcs=false -ldflags="$build_flags" \
             -o dist/dockyard-linux-amd64 ./cmd/dockyard
-          go build -trimpath -buildvcs=false -ldflags='-s -w' \
+          go build -trimpath -buildvcs=false -ldflags="$build_flags" \
             -o dist/dockyardctl-linux-amd64 ./cmd/dockyardctl
+          test "$(dist/dockyard-linux-amd64 -version-json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" = "$version"
+          test "$(dist/dockyardctl-linux-amd64 -version-json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')" = "$version"
           {
+            printf 'Version: %s\n' "$version"
             printf 'Source commit: %s\n' "$GITHUB_SHA"
             printf 'Workflow run: %s/%s/actions/runs/%s\n' \
               "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
@@ -87,6 +93,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           tag="release-${GITHUB_SHA}"
+          version=$(cat VERSION)
           if is_draft=$(gh release view "$tag" --json isDraft --jq '.isDraft'); then
             if [[ "$is_draft" == 'false' ]]; then
               printf 'Release %s is already published; preserving its assets.\n' "$tag"
@@ -95,7 +102,7 @@ jobs:
           else
             gh release create "$tag" \
               --target "$GITHUB_SHA" \
-              --title "Ubuntu binaries ${GITHUB_SHA:0:12}" \
+              --title "Dockyard v${version} · Ubuntu x86-64 (${GITHUB_SHA:0:12})" \
               --generate-notes \
               --draft
           fi

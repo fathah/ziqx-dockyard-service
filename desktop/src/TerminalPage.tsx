@@ -51,7 +51,7 @@ export default function TerminalPage({
   const [mode, setMode] = useState("root");
   const [container, setContainer] = useState("");
   const [shell, setShell] = useState("/bin/sh");
-  const [remember, setRemember] = useState(false);
+  const [remember, setRemember] = useState(true);
   const [busy, setBusy] = useState(false);
   const [active, setActive] = useState(false);
   const [message, setMessage] = useState("");

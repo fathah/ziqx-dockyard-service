@@ -15,5 +15,6 @@ config.json
 
 /desktop/releases/
 /.dockyard-enrollment/
-/desktop/src-tauri/resources/ubuntu/
+/desktop/src-tauri/resources/ubuntu/*
+!/desktop/src-tauri/resources/ubuntu/manifest.json
 __pycache__/

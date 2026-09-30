@@ -8,6 +8,7 @@ mod setup;
 mod setup_error;
 mod terminal;
 mod tls;
+mod updater;
 
 use protocol::{Enrollment, Mutation, Operation, Read};
 use serde::{Deserialize, Serialize};
@@ -458,14 +459,18 @@ async fn session_info(c: State<'_, Control>) -> Result<Value, String> {
         .as_ref()
         .map(|s| s.saved.jobs.clone())
         .unwrap_or_default();
-    let profile = if unlocked { inner.profile.clone() } else { None };
+    let profile = if unlocked {
+        inner.profile.clone()
+    } else {
+        None
+    };
     let known_enrollment = unlocked || inner.profile.is_some();
     drop(inner);
     let enrolled = if known_enrollment {
         true
     } else if let Some(bytes) = native::load_optional()? {
-        let saved: Saved = serde_json::from_slice(&bytes)
-            .map_err(|_| "Saved enrollment is invalid")?;
+        let saved: Saved =
+            serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid")?;
         saved.setup.is_none()
     } else {
         false
@@ -883,6 +888,55 @@ async fn terminal_authority(
     ))
 }
 #[tauri::command]
+async fn server_update_check(
+    app: tauri::AppHandle,
+    c: State<'_, Control>,
+) -> Result<updater::Preview, String> {
+    let (ssh, lease) = terminal_authority(&c).await?;
+    native_task(&c, move || {
+        lease.check()?;
+        updater::check(&app, &ssh)
+    })
+    .await
+}
+#[tauri::command]
+async fn server_update_apply(
+    app: tauri::AppHandle,
+    c: State<'_, Control>,
+    expected: updater::Preview,
+) -> Result<String, String> {
+    let (ssh, lease) = terminal_authority(&c).await?;
+    native_task(&c, move || {
+        lease.check()?;
+        updater::apply(&app, &ssh, &expected)
+    })
+    .await
+}
+#[tauri::command]
+async fn server_access_check(
+    app: tauri::AppHandle,
+    c: State<'_, Control>,
+) -> Result<updater::AccessReport, String> {
+    let (ssh, lease) = terminal_authority(&c).await?;
+    native_task(&c, move || {
+        lease.check()?;
+        updater::check_access(&app, &ssh)
+    })
+    .await
+}
+#[tauri::command]
+async fn server_access_prepare(
+    app: tauri::AppHandle,
+    c: State<'_, Control>,
+) -> Result<updater::AccessReport, String> {
+    let (ssh, lease) = terminal_authority(&c).await?;
+    native_task(&c, move || {
+        lease.check()?;
+        updater::prepare_access(&app, &ssh)
+    })
+    .await
+}
+#[tauri::command]
 async fn terminal_connect(
     app: tauri::AppHandle,
     c: State<'_, Control>,
@@ -1023,7 +1077,11 @@ fn main() {
             terminal_resize,
             terminal_poll,
             terminal_close,
-            terminal_forget_password
+            terminal_forget_password,
+            server_update_check,
+            server_update_apply,
+            server_access_check,
+            server_access_prepare
         ])
         .setup(move |app| {
             tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?

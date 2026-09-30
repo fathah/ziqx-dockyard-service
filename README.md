@@ -18,6 +18,8 @@ SQLite tracks projects, releases, slots, service revisions, domains, DNS record 
 
 Push to the `release` branch to run tests and build Ubuntu x86-64 binaries automatically. GitHub Releases receives `dockyard`, `dockyardctl`, build metadata and checksums for each successful source commit. See [automated releases](docs/RELEASES.md).
 
+The server version lives in [`VERSION`](VERSION). Release and local `make build` binaries print it with `dockyard -version` or `dockyard -version-json`; the JSON output also reports the build commit and target platform. Local builds identify their commit as `local`.
+
 Go 1.24+ and a C compiler are needed for the pinned SQLite driver (`github.com/mattn/go-sqlite3`); use a supported, patched Go release for production builds. The Linux builder selects Go 1.27.1. Native host binaries use libc; build on a compatible distribution/architecture. A macOS build is useful for development, but the daemon refuses to run outside Linux or without root.
 
 ```sh

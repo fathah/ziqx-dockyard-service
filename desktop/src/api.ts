@@ -23,3 +23,28 @@ export const installServer = (id: string) =>
   invoke<Session>("setup_install", { id });
 export const resumeSetup = () => invoke<Session>("setup_resume");
 export const cancelSetup = () => invoke<void>("setup_cancel");
+export type ServerUpdatePreview = {
+  source_commit: string;
+  candidate_version: string;
+  installed_version: string | null;
+  installed_commit: string | null;
+  version_status: "current" | "update_available" | "legacy" | "legacy_bundle" | "server_newer" | "same_version_different_build" | "bundle_unversioned";
+  candidate_dockyard: string;
+  candidate_dockyardctl: string;
+  installed_dockyard: string;
+  installed_dockyardctl: string;
+  update_available: boolean;
+};
+export const checkServerUpdate = () => invoke<ServerUpdatePreview>("server_update_check");
+export const applyServerUpdate = (expected: ServerUpdatePreview) =>
+  invoke<string>("server_update_apply", { expected });
+export const forgetRootPassword = () => invoke<void>("terminal_forget_password");
+export type ServerAccessReport = {
+  root_ssh: boolean;
+  update_directory: "ready" | "can_prepare" | "manual_review";
+  installed_binaries: boolean;
+  database: boolean;
+  service_active: boolean;
+};
+export const checkServerAccess = () => invoke<ServerAccessReport>("server_access_check");
+export const prepareServerAccess = () => invoke<ServerAccessReport>("server_access_prepare");

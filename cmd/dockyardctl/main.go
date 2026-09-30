@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/ziqx/ziqx-dockyard-service/internal/auth"
+	"github.com/ziqx/ziqx-dockyard-service/internal/buildinfo"
 	"github.com/ziqx/ziqx-dockyard-service/internal/state"
 	"io"
 	"net/http"
@@ -28,6 +29,8 @@ func main() {
 	}
 }
 func run() error {
+	showVersion := flag.Bool("version", false, "print build version and exit")
+	versionJSON := flag.Bool("version-json", false, "print machine-readable build version and exit")
 	base := flag.String("url", "https://127.0.0.1:9123", "agent HTTPS origin")
 	server := flag.String("server", "", "VPS server ID")
 	keyID := flag.String("key-id", "", "HMAC key ID")
@@ -44,6 +47,9 @@ func run() error {
 	bodyFile := flag.String("body", "", "JSON body file; never include secrets in arguments")
 	environment := flag.String("environment", "", "development, staging or production; otherwise prompt when omitted from a create/deploy body")
 	flag.Parse()
+	if *showVersion || *versionJSON {
+		return buildinfo.Print(os.Stdout, *versionJSON)
+	}
 	u, err := url.Parse(*base)
 	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Path != "" || u.Fragment != "" || u.Host == "" {
 		return errors.New("invalid HTTPS origin")
