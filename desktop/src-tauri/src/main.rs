@@ -51,24 +51,50 @@ struct Session {
     saved: Saved,
     client: reqwest::Client,
     secret: Zeroizing<Vec<u8>>,
-    expires: Instant,
-    expires_wall: SystemTime,
     api_origin: String,
     _tunnel: Option<setup::Tunnel>,
 }
-fn deadline_passed(monotonic: Instant, wall: SystemTime) -> bool {
-    Instant::now() >= monotonic || SystemTime::now() >= wall
-}
 #[derive(Default)]
 struct AwayTimer {
+    prompt_epoch: u64,
+    last_sample: Option<(Instant, SystemTime)>,
     deadline: Option<(Instant, SystemTime)>,
     locked: bool,
 }
 impl AwayTimer {
+    fn sample(
+        &mut self,
+        active: bool,
+        prompt_active: bool,
+        epoch: u64,
+        now: Instant,
+        wall: SystemTime,
+    ) -> bool {
+        if prompt_active || self.prompt_epoch != epoch {
+            *self = Self {
+                prompt_epoch: epoch,
+                ..Self::default()
+            };
+        }
+        if prompt_active {
+            return false;
+        }
+        self.observe(active, now, wall)
+    }
     fn observe(&mut self, focused: bool, now: Instant, wall: SystemTime) -> bool {
-        let expired = self
-            .deadline
-            .is_some_and(|(mono, real)| now >= mono || wall >= real);
+        // A long polling gap means the Mac slept or the app was suspended.
+        let suspended = self.last_sample.is_some_and(|(mono, real)| {
+            now.saturating_duration_since(mono) >= Duration::from_secs(5)
+                || wall
+                    .duration_since(real)
+                    .is_ok_and(|gap| gap >= Duration::from_secs(5))
+        });
+        self.last_sample = Some((now, wall));
+        let expired = !self.locked
+            && (suspended
+                || self
+                    .deadline
+                    .is_some_and(|(mono, real)| now >= mono || wall >= real));
         if expired {
             self.deadline = None;
             self.locked = true;
@@ -77,7 +103,7 @@ impl AwayTimer {
             self.deadline = None;
             self.locked = false;
         } else if self.deadline.is_none() && !self.locked {
-            let grace = Duration::from_secs(60);
+            let grace = Duration::from_secs(5);
             self.deadline = Some((now + grace, wall + grace));
         }
         expired
@@ -135,15 +161,16 @@ impl Control {
     }
 }
 fn observe_focus(c: &Control, app: &tauri::AppHandle, focused: bool) {
-    if c.native_prompt.load(Ordering::SeqCst) {
-        return;
-    }
     let expired = {
         let mut timer = c.away.lock().expect("focus timer poisoned");
-        if c.native_prompt.load(Ordering::SeqCst) {
-            return;
-        }
-        timer.observe(focused, Instant::now(), SystemTime::now())
+        let (prompt_active, epoch) = native::prompt_state();
+        timer.sample(
+            focused,
+            prompt_active,
+            epoch,
+            Instant::now(),
+            SystemTime::now(),
+        )
     };
     if expired {
         // Revoke immediately even when an API call holds the async session mutex.
@@ -181,10 +208,11 @@ fn profile(e: &Enrollment) -> Profile {
     }
 }
 fn session(inner: &mut Inner) -> Result<&mut Session, String> {
-    if inner.session.as_ref().is_some_and(|s| {
-        deadline_passed(s.expires, s.expires_wall)
-            || s.generation != inner.generation.load(Ordering::SeqCst)
-    }) {
+    if inner
+        .session
+        .as_ref()
+        .is_some_and(|s| s.generation != inner.generation.load(Ordering::SeqCst))
+    {
         inner.session = None;
     }
     inner
@@ -220,8 +248,6 @@ async fn make_session(saved: Saved, generation: u64) -> Result<Session, String> 
         secret,
         api_origin,
         _tunnel: tunnel,
-        expires: Instant::now() + Duration::from_secs(300),
-        expires_wall: SystemTime::now() + Duration::from_secs(300),
     })
 }
 
@@ -298,7 +324,7 @@ async fn setup_install(
         if native::load_optional()?.is_some() {return Err("A saved enrollment exists; resume it instead".into());}
         let mode="Compose management with full server privileges";
         let review=format!("Install Dockyard on {}:{} (Ubuntu {})\nSSH: {}\n\n{}\nInstall missing Docker/Compose/Caddy dependencies; preserve existing Compose files.\nBack up and validate Caddy before adding its private admin socket and managed import.\nInstall a 24/7 systemd service and restricted SSH connector.\nSave generated Mac credentials in Keychain before making server changes.\nRoot password is never saved.",plan.request.server_ip,plan.request.ssh_port,plan.version,plan.host,mode);
-        if rfd::MessageDialog::new().set_title("Review Ubuntu server installation").set_description(review).set_buttons(rfd::MessageButtons::OkCancel).show()!=rfd::MessageDialogResult::Ok {return Err("Installation cancelled; no server changes made".into());}
+        if native::with_prompt(|| rfd::MessageDialog::new().set_title("Review Ubuntu server installation").set_description(review).set_buttons(rfd::MessageButtons::OkCancel).show())!=rfd::MessageDialogResult::Ok {return Err("Installation cancelled; no server changes made".into());}
         let (enrollment,receipt)=setup::material(&handle,&plan)?;
         let saved=Saved{enrollment,pending:None,jobs:vec![],setup:Some(receipt.clone())};
         persist(&saved)?;
@@ -315,7 +341,7 @@ async fn setup_resume(app: tauri::AppHandle, c: State<'_, Control>) -> Result<Va
     let handle = app.clone();
     let saved = native_task(&c, move || {
         native::authenticate()?;
-        let bytes = native::load()?;
+        let bytes = native::with_prompt(native::load)?;
         let saved: Saved =
             serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid")?;
         let receipt = saved
@@ -444,11 +470,9 @@ async fn native_task<T: Send + 'static>(
     task: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     if c.native_prompt.swap(true, Ordering::SeqCst) {
-        return Err("A native prompt is already open".into());
+        return Err("A native operation is already running".into());
     }
     let _guard = PromptGuard(c.native_prompt.clone());
-    // Dockyard's own Touch ID, review and file dialogs count as using the app.
-    *c.away.lock().expect("focus timer poisoned") = AwayTimer::default();
     tauri::async_runtime::spawn_blocking(task)
         .await
         .map_err(|_| "Native operation failed")?
@@ -495,11 +519,13 @@ async fn enroll(c: State<'_, Control>) -> Result<Value, String> {
                 );
             }
         }
-        let path = rfd::FileDialog::new()
-            .set_title("Enroll this Mac · select a private Dockyard enrollment")
-            .add_filter("Enrollment", &["json"])
-            .pick_file()
-            .ok_or("Enrollment cancelled")?;
+        let path = native::with_prompt(|| {
+            rfd::FileDialog::new()
+                .set_title("Enroll this Mac · select a private Dockyard enrollment")
+                .add_filter("Enrollment", &["json"])
+                .pick_file()
+        })
+        .ok_or("Enrollment cancelled")?;
         use std::{
             io::Read,
             os::unix::{
@@ -563,7 +589,7 @@ async fn unlock(c: State<'_, Control>) -> Result<Value, String> {
     let generation = c.generation.load(Ordering::SeqCst);
     let saved: Saved = native_task(&c, || {
         native::authenticate()?;
-        let bytes = native::load()?;
+        let bytes = native::with_prompt(native::load)?;
         serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid".into())
     })
     .await?;
@@ -631,7 +657,7 @@ async fn forget_device(c: State<'_, Control>) -> Result<(), String> {
     c.clear().await;
     native_task(&c, || {
         native::authenticate()?;
-        let bytes = native::load()?;
+        let bytes = native::with_prompt(native::load)?;
         let saved: Saved =
             serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid")?;
         if saved.pending.is_some() || saved.setup.is_some() {
@@ -662,9 +688,7 @@ async fn read_api(c: State<'_, Control>, read: Read) -> Result<Value, String> {
     let mut inner = c.inner.lock().await;
     let s = session(&mut inner)?;
     let data = send(s, &op).await?;
-    if deadline_passed(s.expires, s.expires_wall)
-        || s.generation != c.generation.load(Ordering::SeqCst)
-    {
+    if s.generation != c.generation.load(Ordering::SeqCst) {
         return Err("SESSION_LOCKED".into());
     }
     if let Read::Job { job } = read {
@@ -794,14 +818,20 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         "\nPayload SHA-256:\n{}\n\nThis changes services on your VPS.",
         hex::encode(sha2::Sha256::digest(op.body.as_bytes()))
     ));
+    let sensitive = op.action != "create";
     let approved = native_task(&c, move || {
-        Ok(rfd::MessageDialog::new()
-            .set_title("Confirm Dockyard operation")
-            .set_description(review)
-            .set_level(rfd::MessageLevel::Warning)
-            .set_buttons(rfd::MessageButtons::OkCancel)
-            .show()
-            == rfd::MessageDialogResult::Ok)
+        let approved = native::with_prompt(|| {
+            rfd::MessageDialog::new()
+                .set_title("Confirm Dockyard operation")
+                .set_description(review)
+                .set_level(rfd::MessageLevel::Warning)
+                .set_buttons(rfd::MessageButtons::OkCancel)
+                .show()
+        }) == rfd::MessageDialogResult::Ok;
+        if approved && sensitive {
+            native::authenticate_reason("Confirm a service or traffic change on your VPS")?;
+        }
+        Ok(approved)
     })
     .await?;
     if !approved {
@@ -836,11 +866,12 @@ async fn import_compose(c: State<'_, Control>) -> Result<Option<String>, String>
     }
     native_task(&c, || {
         use std::{io::Read, os::unix::fs::OpenOptionsExt};
-        let Some(path) = rfd::FileDialog::new()
-            .set_title("Import Docker Compose")
-            .add_filter("Compose YAML", &["yaml", "yml"])
-            .pick_file()
-        else {
+        let Some(path) = native::with_prompt(|| {
+            rfd::FileDialog::new()
+                .set_title("Import Docker Compose")
+                .add_filter("Compose YAML", &["yaml", "yml"])
+                .pick_file()
+        }) else {
             return Ok(None);
         };
         let file = std::fs::OpenOptions::new()
@@ -885,8 +916,6 @@ async fn terminal_authority(
         terminal::Lease {
             generation: c.generation.clone(),
             expected: s.generation,
-            expires: s.expires,
-            expires_wall: s.expires_wall,
         },
     ))
 }
@@ -898,7 +927,9 @@ async fn server_update_check(
     let (ssh, lease) = terminal_authority(&c).await?;
     native_task(&c, move || {
         lease.check()?;
-        updater::check(&app, &ssh)
+        let result = updater::check(&app, &ssh)?;
+        lease.check()?;
+        Ok(result)
     })
     .await
 }
@@ -936,7 +967,9 @@ async fn server_access_check(
     let (ssh, lease) = terminal_authority(&c).await?;
     native_task(&c, move || {
         lease.check()?;
-        updater::check_access(&app, &ssh)
+        let result = updater::check_access(&app, &ssh)?;
+        lease.check()?;
+        Ok(result)
     })
     .await
 }
@@ -1125,12 +1158,15 @@ fn main() {
             // Keep the away timer independent of slow API calls holding the session mutex.
             tauri::async_runtime::spawn(async move {
                 loop {
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    if let Some(window) = focus_handle.get_webview_window("main") {
-                        if let Ok(focused) = window.is_focused() {
-                            observe_focus(&focus_control, &focus_handle, focused);
-                        }
-                    }
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    let handle = focus_handle.clone();
+                    let control = focus_control.clone();
+                    let _ = focus_handle.run_on_main_thread(move || {
+                        let visible = handle.get_webview_window("main").is_some_and(|w| {
+                            w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(true)
+                        });
+                        observe_focus(&control, &handle, visible && native::app_is_active());
+                    });
                 }
             });
             tauri::async_runtime::spawn(async move {
@@ -1145,22 +1181,6 @@ fn main() {
                             plan.take();
                         }
                     }
-                    let expired = {
-                        let mut inner = c.inner.lock().await;
-                        if inner
-                            .session
-                            .as_ref()
-                            .is_some_and(|s| deadline_passed(s.expires, s.expires_wall))
-                        {
-                            inner.session = None;
-                            true
-                        } else {
-                            false
-                        }
-                    };
-                    if expired {
-                        let _ = handle.emit("session-locked", ());
-                    }
                 }
             });
             Ok(())
@@ -1169,10 +1189,8 @@ fn main() {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 window.app_handle().exit(0);
             }
-            if let tauri::WindowEvent::Focused(focused) = event {
-                let c = window.state::<Control>().inner().clone();
-                observe_focus(&c, window.app_handle(), *focused);
-            }
+            // Sample application activation on the main thread. Webview/window focus
+            // changes inside Dockyard must not start the away timer.
         })
         .run(tauri::generate_context!())
         .expect("Unable to run Dockyard");
@@ -1204,8 +1222,6 @@ mod transport_tests {
             },
             client,
             secret,
-            expires: Instant::now() + Duration::from_secs(300),
-            expires_wall: SystemTime::now() + Duration::from_secs(300),
         }
     }
     #[test]
@@ -1333,36 +1349,86 @@ mod transport_tests {
         assert!(legacy.attempted);
     }
     #[test]
-    fn session_deadline_survives_sleep_or_wall_clock_changes() {
-        let duration = Duration::from_secs(60);
-        assert!(deadline_passed(
-            Instant::now() + duration,
-            SystemTime::now() - duration
+    fn active_app_stays_unlocked_for_a_full_workday() {
+        let (now, wall) = (Instant::now(), SystemTime::now());
+        let mut timer = AwayTimer::default();
+        for second in 0..86400 {
+            let elapsed = Duration::from_secs(second);
+            assert!(!timer.observe(true, now + elapsed, wall + elapsed));
+            assert!(timer.deadline.is_none());
+        }
+    }
+    #[test]
+    fn native_dialogs_are_activity_but_background_work_is_not() {
+        let (now, wall) = (Instant::now(), SystemTime::now());
+        let mut timer = AwayTimer::default();
+        assert!(!timer.sample(true, false, 0, now, wall));
+        // A biometric/file dialog may temporarily own focus for a long time.
+        assert!(!timer.sample(
+            false,
+            true,
+            0,
+            now + Duration::from_secs(20),
+            wall + Duration::from_secs(20)
         ));
-        assert!(deadline_passed(
-            Instant::now() - duration,
-            SystemTime::now() + duration
+        assert!(!timer.sample(
+            true,
+            false,
+            1,
+            now + Duration::from_secs(30),
+            wall + Duration::from_secs(30)
         ));
-        assert!(!deadline_passed(
-            Instant::now() + duration,
-            SystemTime::now() + duration
+        // Its closing epoch is consumed once, not on each subsequent sample.
+        assert!(!timer.sample(
+            false,
+            false,
+            1,
+            now + Duration::from_secs(31),
+            wall + Duration::from_secs(31)
+        ));
+        for sec in 32..36 {
+            assert!(!timer.sample(
+                false,
+                false,
+                1,
+                now + Duration::from_secs(sec),
+                wall + Duration::from_secs(sec)
+            ));
+        }
+        assert!(timer.sample(
+            false,
+            false,
+            1,
+            now + Duration::from_secs(36),
+            wall + Duration::from_secs(36)
         ));
     }
     #[test]
-    fn returning_within_a_minute_preserves_session_and_restarts_next_absence() {
+    fn sleeping_while_frontmost_still_revokes_session_on_return() {
+        let (now, wall) = (Instant::now(), SystemTime::now());
+        let mut timer = AwayTimer::default();
+        assert!(!timer.observe(true, now, wall));
+        assert!(timer.observe(
+            true,
+            now + Duration::from_secs(20),
+            wall + Duration::from_secs(20)
+        ));
+    }
+    #[test]
+    fn returning_within_five_seconds_preserves_session_and_restarts_next_absence() {
         let (now, wall) = (Instant::now(), SystemTime::now());
         let mut timer = AwayTimer::default();
         assert!(!timer.observe(false, now, wall));
-        let later = Duration::from_secs(59);
+        let later = Duration::from_secs(4);
         assert!(!timer.observe(true, now + later, wall + later));
         assert!(timer.deadline.is_none());
-        let next = Duration::from_secs(90);
+        let next = Duration::from_secs(4);
         assert!(!timer.observe(false, now + next, wall + next));
         assert!(!timer.observe(false, now + next + later, wall + next + later));
         assert!(timer.observe(
             false,
-            now + next + Duration::from_secs(60),
-            wall + next + Duration::from_secs(60)
+            now + next + Duration::from_secs(5),
+            wall + next + Duration::from_secs(5)
         ));
     }
     #[test]
@@ -1370,11 +1436,11 @@ mod transport_tests {
         let (now, wall) = (Instant::now(), SystemTime::now());
         let mut timer = AwayTimer::default();
         timer.observe(false, now, wall);
-        for seconds in 1..60 {
+        for seconds in 1..5 {
             let d = Duration::from_secs(seconds);
             assert!(!timer.observe(false, now + d, wall + d));
         }
-        let d = Duration::from_secs(65);
+        let d = Duration::from_secs(6);
         assert!(timer.observe(true, now + d, wall + d));
         assert!(!timer.observe(true, now + d, wall + d));
         let mut timer = AwayTimer::default();
@@ -1385,7 +1451,7 @@ mod transport_tests {
     #[test]
     fn background_lock_covers_sleep_and_backward_clock_changes() {
         let (now, wall) = (Instant::now(), SystemTime::now());
-        let elapsed = Duration::from_secs(61);
+        let elapsed = Duration::from_secs(6);
         let mut timer = AwayTimer::default();
         timer.observe(false, now, wall);
         assert!(timer.observe(true, now + Duration::from_secs(1), wall + elapsed));

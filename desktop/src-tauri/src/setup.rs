@@ -233,9 +233,15 @@ fn root_connect(
     expected: Option<&str>,
 ) -> Result<(SshSession, String), String> {
     let (session, pin) = connect(ip, port, expected)?;
-    if expected.is_none() && rfd::MessageDialog::new().set_title("Verify your server's SSH identity")
+    if expected.is_none()
+        && native::with_prompt(|| {
+            rfd::MessageDialog::new().set_title("Verify your server's SSH identity")
         .set_description(format!("Server: {ip}:{port}\nSSH fingerprint: {pin}\n\nCompare this with your VPS provider or a trusted SSH connection. Accept only if it matches. No password has been sent."))
-        .set_buttons(rfd::MessageButtons::OkCancel).show()!=rfd::MessageDialogResult::Ok { return Err("SSH identity review cancelled".into()); }
+        .set_buttons(rfd::MessageButtons::OkCancel).show()
+        }) != rfd::MessageDialogResult::Ok
+    {
+        return Err("SSH identity review cancelled".into());
+    }
     let password = native::root_password(app, format!("{ip}:{port}"))?;
     session.userauth_password("root",&password).map_err(|_| "Root SSH authentication failed. Root password login must already be permitted by your server")?;
     if !session.authenticated() {
@@ -318,11 +324,13 @@ pub fn inspect(app: &tauri::AppHandle, request: Request) -> Result<Plan, String>
     }
     preflight(&session, lines[6] == "caddy")?;
     let policy = if request.import_policy {
-        let path = rfd::FileDialog::new()
-            .set_title("Select your reviewed root deployment policy")
-            .add_filter("Root policy", &["json"])
-            .pick_file()
-            .ok_or("Policy selection cancelled")?;
+        let path = native::with_prompt(|| {
+            rfd::FileDialog::new()
+                .set_title("Select your reviewed root deployment policy")
+                .add_filter("Root policy", &["json"])
+                .pick_file()
+        })
+        .ok_or("Policy selection cancelled")?;
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
         let file = std::fs::OpenOptions::new()
             .read(true)

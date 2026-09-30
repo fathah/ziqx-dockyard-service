@@ -9,7 +9,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc, Arc, Mutex,
     },
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
 
@@ -19,13 +19,10 @@ const INPUT: usize = 8 * 1024;
 pub struct Lease {
     pub generation: Arc<AtomicU64>,
     pub expected: u64,
-    pub expires: Instant,
-    pub expires_wall: SystemTime,
 }
 impl Lease {
     pub fn valid(&self) -> bool {
         self.generation.load(Ordering::SeqCst) == self.expected
-            && !crate::deadline_passed(self.expires, self.expires_wall)
     }
     pub fn check(&self) -> Result<(), String> {
         if self.valid() {
@@ -419,18 +416,10 @@ mod tests {
         let lease = Lease {
             generation: generation.clone(),
             expected: 7,
-            expires: Instant::now() + Duration::from_secs(30),
-            expires_wall: SystemTime::now() + Duration::from_secs(30),
         };
         assert!(lease.valid());
         generation.fetch_add(1, Ordering::SeqCst);
         assert!(!lease.valid());
-        let expired = Lease {
-            expected: 8,
-            expires_wall: SystemTime::now() - Duration::from_secs(1),
-            ..lease
-        };
-        assert!(!expired.valid());
     }
 }
 
@@ -521,8 +510,6 @@ fi
         let lease = || Lease {
             generation: generation.clone(),
             expected: generation.load(Ordering::SeqCst),
-            expires: Instant::now() + Duration::from_secs(60),
-            expires_wall: SystemTime::now() + Duration::from_secs(60),
         };
         let (root, catalog) = spawn(ssh, lease(), false).unwrap();
         assert!(
@@ -633,8 +620,6 @@ fi
         let lease = || Lease {
             generation: generation.clone(),
             expected: generation.load(Ordering::SeqCst),
-            expires: Instant::now() + Duration::from_secs(60),
-            expires_wall: SystemTime::now() + Duration::from_secs(60),
         };
         let (root, catalog) = spawn(ssh, lease(), false).unwrap();
         assert!(

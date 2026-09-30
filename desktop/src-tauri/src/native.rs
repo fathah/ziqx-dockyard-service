@@ -1,3 +1,30 @@
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+static PROMPT_DEPTH: AtomicUsize = AtomicUsize::new(0);
+static PROMPT_EPOCH: AtomicU64 = AtomicU64::new(0);
+struct PromptScope;
+impl PromptScope {
+    fn new() -> Self {
+        PROMPT_DEPTH.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+impl Drop for PromptScope {
+    fn drop(&mut self) {
+        PROMPT_EPOCH.fetch_add(1, Ordering::SeqCst);
+        PROMPT_DEPTH.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+pub fn prompt_state() -> (bool, u64) {
+    (
+        PROMPT_DEPTH.load(Ordering::SeqCst) > 0,
+        PROMPT_EPOCH.load(Ordering::SeqCst),
+    )
+}
+pub fn with_prompt<T>(task: impl FnOnce() -> T) -> T {
+    let _scope = PromptScope::new();
+    task()
+}
+
 use zeroize::Zeroizing;
 const SERVICE: &str = "com.ziqx.dockyard.enrollment.v1";
 const ACCOUNT: &str = "primary";
@@ -52,6 +79,7 @@ pub fn authenticate() -> Result<(), String> {
     authenticate_reason("Unlock Dockyard to manage your VPS")
 }
 pub fn authenticate_reason(reason_text: &str) -> Result<(), String> {
+    let _prompt = PromptScope::new();
     use objc::runtime::{Object, BOOL, YES};
     use objc::{class, msg_send, sel, sel_impl};
     let (tx, rx) = std::sync::mpsc::channel();
@@ -151,6 +179,7 @@ fn secure_prompt(
     placeholder: &'static str,
     action: &'static str,
 ) -> Result<Zeroizing<String>, String> {
+    let _prompt = PromptScope::new();
     let (tx, rx) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         use cocoa::foundation::{NSPoint, NSRect, NSSize};
@@ -217,5 +246,16 @@ pub fn terminal_delete(account: &str) -> Result<(), String> {
         Ok(()) => Ok(()),
         Err(error) if error.code() == -25300 => Ok(()),
         Err(_) => Err("Keychain could not remove the saved SSH password".into()),
+    }
+}
+
+/// Main-thread AppKit activation, independent of which Dockyard control has focus.
+pub fn app_is_active() -> bool {
+    use objc::runtime::{Object, BOOL, YES};
+    use objc::{class, msg_send, sel, sel_impl};
+    unsafe {
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        let active: BOOL = msg_send![app, isActive];
+        active == YES
     }
 }

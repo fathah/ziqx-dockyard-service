@@ -205,8 +205,10 @@ fn binaries(app: &AppHandle) -> Result<(Vec<u8>, Vec<u8>, Manifest), String> {
     }
     Ok((agent, ctl, m))
 }
-fn ssh(app: &AppHandle, identity: &SshIdentity, reason: &str) -> Result<Session, String> {
-    native::authenticate_reason(reason)?;
+fn ssh(app: &AppHandle, identity: &SshIdentity, reason: Option<&str>) -> Result<Session, String> {
+    if let Some(reason) = reason {
+        native::authenticate_reason(reason)?;
+    }
     let (session, _) = setup::connect(
         &identity.server_ip,
         identity.port,
@@ -215,6 +217,9 @@ fn ssh(app: &AppHandle, identity: &SshIdentity, reason: &str) -> Result<Session,
     let account = terminal::account(&identity.server_ip, identity.port, &identity.host_sha256);
     let saved = native::terminal_load(&account)?;
     let save_after_login = saved.is_none();
+    if save_after_login && reason.is_none() {
+        native::authenticate_reason("Save root SSH access in Keychain for Dockyard")?;
+    }
     let password = if let Some(bytes) = saved {
         if bytes.is_empty() || bytes.len() > 1024 {
             return Err(
@@ -283,14 +288,14 @@ fn inspect_access(session: &Session) -> Result<AccessReport, String> {
     Ok(access_report(raw))
 }
 pub fn check_access(app: &AppHandle, identity: &SshIdentity) -> Result<AccessReport, String> {
-    let session = ssh(app, identity, "Check Dockyard updater access on your VPS")?;
+    let session = ssh(app, identity, None)?;
     inspect_access(&session)
 }
 pub fn prepare_access(app: &AppHandle, identity: &SshIdentity) -> Result<AccessReport, String> {
     let session = ssh(
         app,
         identity,
-        "Prepare Dockyard's private updater directory on your VPS",
+        Some("Prepare Dockyard's private updater directory on your VPS"),
     )?;
     if inspect_access(&session)?.update_directory != "can_prepare" {
         return Err("Updater directory cannot be prepared automatically. Review its owner and path on the VPS".into());
@@ -341,11 +346,7 @@ fn inspect(session: &Session, m: &Manifest) -> Result<Preview, String> {
 }
 pub fn check(app: &AppHandle, identity: &SshIdentity) -> Result<Preview, String> {
     let (_, _, m) = binaries(app)?;
-    let session = ssh(
-        app,
-        identity,
-        "Check the Dockyard service version on your VPS",
-    )?;
+    let session = ssh(app, identity, None)?;
     inspect(&session, &m)
 }
 fn upload(session: &Session, path: &str, bytes: &[u8], executable: bool) -> Result<(), String> {
@@ -388,7 +389,7 @@ pub fn apply(
     let session = ssh(
         app,
         identity,
-        "Update and restart the Dockyard control service on your VPS",
+        Some("Update and restart the Dockyard control service on your VPS"),
     )?;
     let current = inspect(&session, &m)?;
     if current.installed_dockyard != expected.installed_dockyard
@@ -524,7 +525,7 @@ pub fn enable_compose(app: &AppHandle, identity: &SshIdentity, key_id: &str) -> 
     {
         return Err("Invalid enrolled credential".into());
     }
-    let session = ssh(app, identity, "Allow this Mac to deploy Docker Compose stacks with full server privileges. Dockyard will restart briefly.")?;
+    let session = ssh(app, identity, Some("Allow this Mac to deploy Docker Compose stacks with full server privileges. Dockyard will restart briefly."))?;
     let script = include_str!("../../updater/compose_access.py").replace('\'', "'\"'\"'");
     let output = command(
         &session,

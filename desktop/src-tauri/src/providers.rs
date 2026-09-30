@@ -52,8 +52,6 @@ async fn authority(c: &Control) -> Result<Lease, String> {
     Ok(Lease {
         generation: c.generation.clone(),
         expected: s.generation,
-        expires: s.expires,
-        expires_wall: s.expires_wall,
     })
 }
 fn credential(id: &str) -> Result<Credential, String> {
@@ -585,8 +583,6 @@ mod tests {
         Lease {
             generation: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)),
             expected: 1,
-            expires: std::time::Instant::now() + Duration::from_secs(60),
-            expires_wall: std::time::SystemTime::now() + Duration::from_secs(60),
         }
     }
     fn fixture(response: String) -> (String, std::thread::JoinHandle<String>) {

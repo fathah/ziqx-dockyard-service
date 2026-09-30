@@ -2748,7 +2748,7 @@ function Security({
             {
               icon: LockKeyhole,
               title: "Touch ID & Keychain",
-              text: "Keychain storage, native authentication, five-minute sessions, and auto-lock after one minute away from the app.",
+              text: "Touch ID unlocks the app. It stays unlocked while active and locks after five seconds away. Sensitive changes require a fresh scan.",
             },
             {
               icon: History,
