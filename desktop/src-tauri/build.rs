@@ -26,6 +26,14 @@ fn main() {
             "server_update_apply",
             "server_access_check",
             "server_access_prepare",
+            "server_compose_enable",
+            "provider_list",
+            "provider_connect",
+            "provider_remove",
+            "provider_token_page",
+            "provider_zones",
+            "provider_records",
+            "provider_write",
         ]),
     ))
     .expect("Tauri build failed");

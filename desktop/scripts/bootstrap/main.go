@@ -164,7 +164,7 @@ func generate(o options) error {
 	if err != nil {
 		return err
 	}
-	credentials, err := jsonBytes(map[string]any{"server_id": o.Server, "listen": net.JoinHostPort(addr.String(), strconv.Itoa(o.Port)), "tls_cert": "/etc/dockyard/tls/server.crt", "tls_key": "/etc/dockyard/tls/server.key", "client_ca": "/etc/dockyard/tls/control-ca.crt", "fingerprint_key_file": "/etc/dockyard/fingerprint.key", "keys": []any{map[string]any{"id": o.Key, "secret_file": "/etc/dockyard/" + o.Key + ".key", "certificate_sha256": fingerprint(client.Cert), "scopes": []string{"projects.write", "sites.write", "dns.write", "deploy.read", "deploy.logs", "deploy.execute", "deploy.environment", "deploy.rollback", "deploy.lifecycle", "deploy.stop"}, "projects": []string{"*"}}}})
+	credentials, err := jsonBytes(map[string]any{"server_id": o.Server, "listen": net.JoinHostPort(addr.String(), strconv.Itoa(o.Port)), "tls_cert": "/etc/dockyard/tls/server.crt", "tls_key": "/etc/dockyard/tls/server.key", "client_ca": "/etc/dockyard/tls/control-ca.crt", "fingerprint_key_file": "/etc/dockyard/fingerprint.key", "keys": []any{map[string]any{"id": o.Key, "secret_file": "/etc/dockyard/" + o.Key + ".key", "certificate_sha256": fingerprint(client.Cert), "scopes": []string{"compose.admin", "projects.write", "sites.write", "dns.write", "deploy.read", "deploy.logs", "deploy.execute", "deploy.environment", "deploy.rollback", "deploy.lifecycle", "deploy.stop"}, "projects": []string{"*"}}}})
 	if err != nil {
 		return err
 	}
@@ -190,9 +190,9 @@ sudo install -o root -g root -m 0600 server.crt server.key control-ca.crt /etc/d
 sudo install -o root -g root -m 0600 %s.key fingerprint.key /etc/dockyard/
 
 Merge credentials.json fields into /etc/dockyard/config.json for a NEW installation.
-This is a credentials fragment, not a complete policy. Configure approved templates,
+This is a credentials fragment, not a complete policy. Configure storage,
 domain suffixes, Docker/Caddy paths and optional Cloudflare separately using docs/INSTALL.md.
-The generated administrative key has all management scopes and projects ["*"]; narrow if needed.
+The generated administrative key has full Compose (root-equivalent) management scopes and projects ["*"]; narrow if needed.
 Do not replace a live policy, its stable fingerprint key or its client CA with this kit.
 
 Then run dockyard -config /etc/dockyard/config.json -check and start its systemd service.

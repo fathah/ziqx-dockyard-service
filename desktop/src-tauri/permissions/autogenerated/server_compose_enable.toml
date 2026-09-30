@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-server-compose-enable"
+description = "Enables the server_compose_enable command without any pre-configured scope."
+commands.allow = ["server_compose_enable"]
+
+[[permission]]
+identifier = "deny-server-compose-enable"
+description = "Denies the server_compose_enable command without any pre-configured scope."
+commands.deny = ["server_compose_enable"]

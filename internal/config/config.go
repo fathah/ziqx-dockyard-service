@@ -12,6 +12,7 @@ import (
 
 var ID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
 var EnvKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
+var ServiceName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 var Digest = regexp.MustCompile(`^ghcr\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$`)
 
 type Key struct {
@@ -155,7 +156,7 @@ func (c Config) Validate() error {
 			return bad
 		}
 	}
-	if len(c.Keys) < 1 || len(c.Keys) > 10 || len(c.Templates) < 1 || len(c.AllowedDomains) < 1 {
+	if len(c.Keys) < 1 || len(c.Keys) > 10 {
 		return bad
 	}
 	seen := map[string]bool{}
@@ -256,7 +257,7 @@ func (c Config) PortAllowed(p int) bool {
 }
 func KnownScope(s string) bool {
 	switch s {
-	case "deploy.read", "deploy.logs", "deploy.execute", "deploy.rollback", "deploy.lifecycle", "deploy.stop", "deploy.environment", "projects.write", "sites.write", "dns.write":
+	case "compose.admin", "deploy.read", "deploy.logs", "deploy.execute", "deploy.rollback", "deploy.lifecycle", "deploy.stop", "deploy.environment", "projects.write", "sites.write", "dns.write":
 		return true
 	}
 	return false

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-provider-records"
+description = "Enables the provider_records command without any pre-configured scope."
+commands.allow = ["provider_records"]
+
+[[permission]]
+identifier = "deny-provider-records"
+description = "Denies the provider_records command without any pre-configured scope."
+commands.deny = ["provider_records"]

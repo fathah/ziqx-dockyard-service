@@ -396,16 +396,13 @@ export default function SetupWizard({
                   disabled={busy}
                 />
                 <span>
-                  Import deployment policy
+                  Import advanced settings
                   <Help label="deployment policy">
-                    Optional approved JSON file defining allowed images, domains
-                    and service templates. Without one, setup grants inventory
-                    and log access only. Existing services are imported as
-                    production observations.
+                    Optional JSON configuration for server limits and legacy policies. New projects use Compose and .env.
                   </Help>
                 </span>
               </label>
-              {!policy && <span className="tag">Inventory and logs only</span>}
+              <span className="tag">Compose management</span>
             </>
           )}
           {step === 2 && plan && (
@@ -442,7 +439,7 @@ export default function SetupWizard({
                 <dd>
                   {plan.inventory_only
                     ? "Inventory and logs"
-                    : "Your approved deployment policy"}
+                    : "Compose management · full server privileges"}
                 </dd>
                 <dt>Agent checksum</dt>
                 <dd className="mono">{plan.binary_sha256}</dd>

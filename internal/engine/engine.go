@@ -82,7 +82,7 @@ func (e *Engine) Initialize() error {
 		if err := p.ValidateTarget(); err != nil {
 			return err
 		}
-		if TemplateHash(e.Config.Templates[p.Template]) != p.TemplateRevision {
+		if !p.NativeCompose() && TemplateHash(e.Config.Templates[p.Template]) != p.TemplateRevision {
 			return errors.New("existing project template changed; restore the pinned template")
 		}
 		seen := map[string]bool{}
@@ -354,7 +354,7 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 			}
 		}
 	}
-	if p.State == "running" {
+	if p.State == "running" && !p.NativeCompose() {
 		active, ok := p.Current()
 		if !ok {
 			return model.Uncertain("STATE_DIVERGED")
@@ -393,12 +393,15 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 			return model.Uncertain("CANDIDATE_SLOT_NOT_REUSABLE")
 		}
 	}
-	free, err := e.Docker.PortFree(ctx, p.Port(slot))
-	if err != nil {
-		return err
-	}
-	if !free {
-		return model.Fail("PORT_IN_USE")
+	var err error
+	if p.Port(slot) > 0 {
+		free, checkErr := e.Docker.PortFree(ctx, p.Port(slot))
+		if checkErr != nil {
+			return checkErr
+		}
+		if !free {
+			return model.Fail("PORT_IN_USE")
+		}
 	}
 	if err = e.phase(j, "candidate_intent"); err != nil {
 		return err
@@ -440,7 +443,7 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 		j.Warning = "ENVIRONMENT_MIRROR_FAILED"
 	}
 	// The running slots use immutable files; this is only an operator mirror.
-	if _, b, readErr := runtime.ReleaseCompose(e.Config, *p, r); readErr != nil {
+	if b, readErr := runtime.ComposeMirror(e.Config, *p, r); readErr != nil {
 		j.Warning = "COMPOSE_MIRROR_FAILED"
 	} else if writeErr := secure.Atomic(filepath.Join(e.Config.ProjectsRoot, p.ID, "compose.yml"), b, 0600); writeErr != nil {
 		j.Warning = "COMPOSE_MIRROR_FAILED"

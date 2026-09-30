@@ -94,6 +94,9 @@ func composeBytes(c config.Config, p model.Project) ([]byte, error) {
 	return json.MarshalIndent(v, "", "  ")
 }
 func Compose(c config.Config, p model.Project) error {
+	if p.NativeCompose() {
+		return secure.PrivateDir(projectDir(c, p.ID))
+	}
 	b, e := composeBytes(c, p)
 	if e != nil {
 		return e
@@ -108,6 +111,11 @@ func Compose(c config.Config, p model.Project) error {
 	return secure.Atomic(filepath.Join(dir, "compose.yml"), b, 0600)
 }
 func Binding(c config.Config, p model.Project, slot string, r model.Release) error {
+	if p.NativeCompose() {
+		if _, _, err := nativeRelease(c, p, r); err != nil {
+			return err
+		}
+	}
 	env := envPath(c, p.ID, r.Environment)
 	if _, e := os.Lstat(env); e != nil {
 		return e
@@ -117,7 +125,7 @@ func Binding(c config.Config, p model.Project, slot string, r model.Release) err
 }
 
 func bindingBytes(c config.Config, p model.Project, slot string, r model.Release) []byte {
-	return []byte(fmt.Sprintf("DOCKYARD_IMAGE=%s\nDOCKYARD_PORT=%d\nDOCKYARD_ENV=%s\nDOCKYARD_ENV_DIR=%s\n", r.Image, p.Port(slot), envPath(c, p.ID, r.Environment), filepath.Join(projectDir(c, p.ID), "env", r.Environment)))
+	return []byte(fmt.Sprintf("DOCKYARD_COMPOSE_PROJECT=dy-%s-%s-%s\nDOCKYARD_IMAGE=%s\nDOCKYARD_PORT=%d\nDOCKYARD_ENV=%s\nDOCKYARD_ENV_DIR=%s\n", c.ServerID, p.ID, slot, r.Image, p.Port(slot), envPath(c, p.ID, r.Environment), filepath.Join(projectDir(c, p.ID), "env", r.Environment)))
 }
 
 func Snippet(p model.Project, slot string) []byte {

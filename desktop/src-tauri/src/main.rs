@@ -4,6 +4,7 @@
 compile_error!("Dockyard Desktop currently requires macOS Keychain and LocalAuthentication");
 mod native;
 mod protocol;
+mod providers;
 mod setup;
 mod setup_error;
 mod terminal;
@@ -104,6 +105,7 @@ struct Control {
     generation: Arc<AtomicU64>,
     inner: Arc<Mutex<Inner>>,
     native_prompt: Arc<AtomicBool>,
+    provider_gate: Arc<Mutex<()>>,
     setup: Arc<Mutex<Option<setup::Plan>>>,
     away: Arc<SyncMutex<AwayTimer>>,
     terminal: Arc<SyncMutex<Option<terminal::Handle>>>,
@@ -119,6 +121,7 @@ impl Control {
                 profile: None,
             })),
             native_prompt: Arc::new(AtomicBool::new(false)),
+            provider_gate: Arc::new(Mutex::new(())),
             setup: Arc::new(Mutex::new(None)),
             away: Arc::new(SyncMutex::new(AwayTimer::default())),
             terminal: Arc::new(SyncMutex::new(None)),
@@ -293,7 +296,7 @@ async fn setup_install(
     let saved=native_task(&c,move || {
         native::authenticate()?;
         if native::load_optional()?.is_some() {return Err("A saved enrollment exists; resume it instead".into());}
-        let mode=if plan.policy.is_some() {"Your approved deployment policy"} else {"Inventory access only; deployments require an approved root policy"};
+        let mode="Compose management with full server privileges";
         let review=format!("Install Dockyard on {}:{} (Ubuntu {})\nSSH: {}\n\n{}\nInstall missing Docker/Compose/Caddy dependencies; preserve existing Compose files.\nBack up and validate Caddy before adding its private admin socket and managed import.\nInstall a 24/7 systemd service and restricted SSH connector.\nSave generated Mac credentials in Keychain before making server changes.\nRoot password is never saved.",plan.request.server_ip,plan.request.ssh_port,plan.version,plan.host,mode);
         if rfd::MessageDialog::new().set_title("Review Ubuntu server installation").set_description(review).set_buttons(rfd::MessageButtons::OkCancel).show()!=rfd::MessageDialogResult::Ok {return Err("Installation cancelled; no server changes made".into());}
         let (enrollment,receipt)=setup::material(&handle,&plan)?;
@@ -913,6 +916,19 @@ async fn server_update_apply(
     .await
 }
 #[tauri::command]
+async fn server_compose_enable(app: tauri::AppHandle, c: State<'_, Control>) -> Result<(), String> {
+    let (ssh, lease) = terminal_authority(&c).await?;
+    let key_id = {
+        let mut inner = c.inner.lock().await;
+        session(&mut inner)?.saved.enrollment.key_id.clone()
+    };
+    native_task(&c, move || {
+        lease.check()?;
+        updater::enable_compose(&app, &ssh, &key_id)
+    })
+    .await
+}
+#[tauri::command]
 async fn server_access_check(
     app: tauri::AppHandle,
     c: State<'_, Control>,
@@ -1081,7 +1097,15 @@ fn main() {
             server_update_check,
             server_update_apply,
             server_access_check,
-            server_access_prepare
+            server_access_prepare,
+            server_compose_enable,
+            providers::provider_list,
+            providers::provider_connect,
+            providers::provider_remove,
+            providers::provider_token_page,
+            providers::provider_zones,
+            providers::provider_records,
+            providers::provider_write
         ])
         .setup(move |app| {
             tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?

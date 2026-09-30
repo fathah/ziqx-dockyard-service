@@ -29,6 +29,7 @@ class UpdateTest(unittest.TestCase):
         for name in update.NAMES:
             (self.bin / name).write_bytes(('old-' + name).encode())
             (self.stage / name).write_bytes(('new-' + name).encode())
+            (self.stage / name).chmod(0o700)
         with sqlite3.connect(self.db) as conn:
             conn.executescript("CREATE TABLE jobs(status TEXT); CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('original');")
         (self.stage / 'request.json').write_text(json.dumps({
@@ -39,7 +40,7 @@ class UpdateTest(unittest.TestCase):
             patcher = mock.patch.object(update, attr, value)
             patcher.start()
             self.addCleanup(patcher.stop)
-        for attr, value in [('directory', lambda _: None), ('regular', lambda *_: None),
+        for attr, value in [('directory', lambda _: None), ('regular', lambda path: path.stat()),
                             ('ubuntu', lambda: True), ('active', lambda: True),
                             ('healthy', lambda: True)]:
             patcher = mock.patch.object(update, attr, value)

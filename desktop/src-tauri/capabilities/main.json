@@ -31,6 +31,14 @@
     "allow-server-update-check",
     "allow-server-update-apply",
     "allow-server-access-check",
-    "allow-server-access-prepare"
+    "allow-server-access-prepare",
+    "allow-server-compose-enable",
+    "allow-provider-list",
+    "allow-provider-connect",
+    "allow-provider-remove",
+    "allow-provider-token-page",
+    "allow-provider-zones",
+    "allow-provider-records",
+    "allow-provider-write"
   ]
 }

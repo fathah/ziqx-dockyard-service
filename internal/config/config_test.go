@@ -21,12 +21,11 @@ func TestRootPolicyBoundaries(t *testing.T) {
 		t.Fatal("resolved sample invalid", err)
 	}
 	for name, mutate := range map[string]func(*Config){
-		"wildcard listener":     func(c *Config) { c.Listen = "0.0.0.0:9123" },
-		"public listener":       func(c *Config) { c.Listen = "203.0.113.10:9123" },
-		"overlapping roots":     func(c *Config) { c.StateDir = "/docker/state" },
-		"unsafe binding path":   func(c *Config) { c.ProjectsRoot = "/docker/${INJECT}" },
-		"empty hostname policy": func(c *Config) { c.AllowedDomains = nil },
-		"unbounded queue":       func(c *Config) { c.MaxQueuedJobs = 1000000 },
+		"wildcard listener":   func(c *Config) { c.Listen = "0.0.0.0:9123" },
+		"public listener":     func(c *Config) { c.Listen = "203.0.113.10:9123" },
+		"overlapping roots":   func(c *Config) { c.StateDir = "/docker/state" },
+		"unsafe binding path": func(c *Config) { c.ProjectsRoot = "/docker/${INJECT}" },
+		"unbounded queue":     func(c *Config) { c.MaxQueuedJobs = 1000000 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			copy := c
@@ -35,6 +34,11 @@ func TestRootPolicyBoundaries(t *testing.T) {
 				t.Fatal("invalid root policy accepted")
 			}
 		})
+	}
+	c.Templates = nil
+	c.AllowedDomains = nil
+	if err := c.Validate(); err != nil {
+		t.Fatal("Compose-only config should not require templates or domain allowlists", err)
 	}
 }
 

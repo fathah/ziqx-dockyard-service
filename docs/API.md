@@ -20,11 +20,11 @@ The agent defaults to `https://127.0.0.1:9123`; it can bind an explicitly config
 | GET | `/v1/jobs/{job_id}` | `deploy.read` | Job outcome/phases/warnings; key must allow its project |
 | GET | `/v1/ports/next` | `projects.write` | Next free allowed port; advisory, not a reservation |
 | GET | `/v1/audit?after=0` | `deploy.read` plus all-project access | Next 100 transactional audit events |
-| POST | `/v1/projects` | `projects.write` | Create approved project files, reserve ports/domain, install maintenance route |
+| POST | `/v1/projects` | `projects.write` | Create project files, reserve ports/domain, install maintenance route |
 | PUT | `/v1/projects/{id}/routes` | `sites.write` | Replace assigned domain list; update ports while stopped |
 | POST | `/v1/projects/{id}/dns` | `dns.write` | Create a Cloudflare record for an already assigned subdomain |
 | POST | `/v1/projects/{id}/deploy` | `deploy.execute`; also `deploy.environment` when new environments supplied | Validate Compose YAML, pull/start all services, health-gate stack, switch route, drain previous slot |
-| POST | `/v1/projects/{id}/rollback` | `deploy.rollback` | Activate a retained exact image/environment pair |
+| POST | `/v1/projects/{id}/rollback` | `deploy.rollback` | Activate a retained Compose/environment configuration |
 | POST | `/v1/projects/{id}/restart` | `deploy.execute` | Rolling in blue-green mode; downtime in single-slot mode |
 | POST | `/v1/projects/{id}/stop` | `deploy.stop` | Confirmed maintenance route, drain, then stop identified services |
 | POST | `/v1/projects/{id}/start` | `deploy.lifecycle` | Restore the recorded release from stopped state |
@@ -37,43 +37,21 @@ Mutations require `Content-Type: application/json`, stable `Idempotency-Key` and
 
 ## Create and deploy
 
-```json
-{
-  "id": "demo",
-  "app_id": "demo",
-  "environment": "production",
-  "template_id": "web-node",
-  "domains": ["demo.example.com"],
-  "zerodowntime": true,
-  "port": 3001,
-  "secondary_port": 3002
-}
-```
-
-Creation requires `app_id` and an explicit `environment` (`development`, `staging` or `production`). One project is allowed per app/environment; each has a distinct project ID and resources. Omit ports to allocate from the local policy pool. Optional `zerodowntime` must be a literal boolean: it defaults to true for production and false otherwise; true is rejected for development/staging. Existing `/docker/demo` directories cannot be adopted or overwritten. Creation installs a maintenance response and reaches `awaiting_release`; it does not start an image.
-
-After the creation job succeeds, submit Compose YAML as a JSON string:
+New projects omit `template_id` and require a server-wide credential explicitly granted `compose.admin`, in addition to normal signed action scopes. This grants root-equivalent Docker control. Domains are optional; single-instance is the default in every environment.
 
 ```json
-{
-  "environment": "production",
-  "compose_yaml": "services:\n  app:\n    image: ghcr.io/your-org/your-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-  "variables": {
-    "NODE_ENV": "production",
-    "DATABASE_URL": "provide-your-secret-value",
-    "APP_URL": "https://demo.example.com",
-    "PORT": "3000"
-  }
-}
+{"id":"demo","app_id":"demo","environment":"production","domains":[]}
 ```
 
-Every new deploy requires `compose_yaml` and an explicit `environment` matching the project; image-only requests are rejected. Missing environment returns `422 DEPLOYMENT_ENVIRONMENT_REQUIRED`; a valid different environment returns `409 DEPLOYMENT_ENVIRONMENT_MISMATCH` before YAML processing or secret writes. Clients should ask the three-choice environment question before signing. The operator CLI prompts when the body omits the choice. See [deployment environments](ENVIRONMENTS.md). The YAML is limited to 64 KiB and eight services. The service validates its strict subset before passing a normalized, hardened revision to `docker compose config --quiet`; a job is accepted only after that check passes. Pull and startup operate on all services through Docker Compose. `app` uses the project's root template; companion services name their local policy using `x-dockyard-template`.
+After the create job succeeds:
 
-Environments may be literal string maps inside each Compose service. Alternatively, `variables` supplies the full app snapshot; it cannot be combined with `services.app.environment`. Omitting both copies the current app environment to a new revision. First deploy requires a snapshot. New environment maps require `deploy.environment`. Values are write-only, single-line, up to 8192 bytes each, and obey the service template's allowed/required keys. Dollar signs/quotes remain literal through raw env files.
+```json
+{"environment":"production","compose_yaml":"services:\n  web:\n    image: nginx:${TAG}\n    ports: [\"8080:80\"]\n","env_file":"TAG=alpine\n"}
+```
 
-The [Compose policy](COMPOSE.md) specifies all supported fields and includes a multi-service app/database example. Named volumes require single-slot mode and locally approved mount targets. Stateless stacks can use blue-green deployment. Every service must pass ownership, image, environment, health and mount/port identity checks before Caddy switches traffic to `app`.
+Docker Compose validates the YAML and `.env` inputs before admission. Each is limited to 64 KiB; signed JSON bodies must fit the 128 KiB request limit. Referenced files and build contexts must exist on the VPS. `env_file` contains raw dotenv contents; omission reuses the current snapshot. Compose-mode deployments always require `deploy.environment`. No template, mandatory `app` service, registry allowlist or image digest is required.
 
-Files include immutable `compose/cmp-<sha256>.yml` revisions, `blue.env`/`green.env` bindings, app secret files under `env/`, and private companion environment directories. After activation, `compose.yml` and `.env` mirror the release for operators. Running slots use immutable files, so candidate changes cannot alter the serving stack. Rollback retains the exact Compose/image/environment revision; persistent data remains unchanged.
+Optional `domains`, `route_service` and `route_port` on creation enable managed Caddy routing. Only compatible stateless production stacks support `zerodowntime: true`. See [Compose deployments](COMPOSE.md) for lifecycle, blue-green, persistent-data and rollback behavior. Older projects explicitly created with `template_id` retain the [legacy policy](LEGACY_COMPOSE.md).
 
 ## Routes and DNS
 

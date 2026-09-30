@@ -29,7 +29,7 @@ The saved server IP, SSH port/fingerprint and connector key live in Keychain. Pu
 
 ## Deployment policy
 
-Default setup enables inventory/log reads. It does not authorize arbitrary submitted Compose images to control a root-capable Docker host. To enable deployment during setup, select **Import an approved deployment policy** and choose a private, mode-600 JSON file containing `templates` and `allowed_domains`, plus optional port/resource/quota policy. [The example policy](../deploy/config.example.json) documents the format; replace its example image repositories, health contracts, users and domains first. Only these policy portions are imported; credential/filesystem paths and Cloudflare settings remain installer-controlled.
+Default setup enables full Compose management for this enrolled Mac. Compose access is root-equivalent and remains behind mTLS, signed requests and Touch ID. Templates are not required; optional advanced settings can retain legacy policies and customize limits. Existing projects are imported as observations, without taking over their running containers.
 
 The advanced mode grants the dedicated Mac key all ten management scopes, covering all project IDs. Review that administrative permission in the native installation dialog. The server's `-check` command validates the resulting policy and credentials before enabling the daemon. Template edits after managed projects exist must follow the existing pin/migration boundary in [server installation](../docs/INSTALL.md).
 

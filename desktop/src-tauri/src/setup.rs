@@ -111,7 +111,7 @@ impl Plan {
             ubuntu: self.version.clone(),
             docker_installed: self.docker,
             caddy_installed: self.caddy,
-            inventory_only: self.policy.is_none(),
+            inventory_only: false,
             binary_sha256: hex::encode(Sha256::digest(binary)),
         }
     }
@@ -364,9 +364,7 @@ pub fn inspect(app: &tauri::AppHandle, request: Request) -> Result<Plan, String>
                     | "max_stack_cpus"
             )
         });
-        if !object.contains_key("templates") || !object.contains_key("allowed_domains") {
-            return Err("Policy needs approved templates and allowed_domains".into());
-        }
+
         Some(policy)
     } else {
         None
@@ -512,11 +510,11 @@ fn material_with_binaries(
             config[k] = v.clone();
         }
     } else {
-        config["allowed_domains"] = json!(["dockyard.invalid"]);
+        config["allowed_domains"] = json!([]);
         config["reserved_domains"] = json!([]);
-        config["templates"] = json!({"inventory-only":{"image_repository":"ghcr.io/dockyard/inventory-only-disabled","container_port":3000,"health_command":["false"],"readiness_path":"/health","allowed_environment":[],"required_environment":[],"user":"1000:1000","memory_mb":64,"cpus":0.1}});
+        config["templates"] = json!({});
     }
-    config["keys"] = json!([{"id":"desktop-01","secret_file":"/etc/dockyard/desktop-01.key","certificate_sha256":hex::encode(Sha256::digest(client.der())),"scopes": if plan.policy.is_some() { vec!["projects.write","sites.write","dns.write","deploy.read","deploy.logs","deploy.execute","deploy.environment","deploy.rollback","deploy.lifecycle","deploy.stop"] } else { vec!["deploy.read","deploy.logs"] },"projects":["*"]}]);
+    config["keys"] = json!([{"id":"desktop-01","secret_file":"/etc/dockyard/desktop-01.key","certificate_sha256":hex::encode(Sha256::digest(client.der())),"scopes": vec!["compose.admin","projects.write","sites.write","dns.write","deploy.read","deploy.logs","deploy.execute","deploy.environment","deploy.rollback","deploy.lifecycle","deploy.stop"],"projects":["*"]}]);
     let mut files:BTreeMap<String,Vec<u8>>=BTreeMap::from([
         ("server.crt".into(),server.pem().into_bytes()),("server.key".into(),server_key.serialize_pem().into_bytes()),
         ("control-ca.crt".into(),client_ca.pem().into_bytes()),("desktop.key".into(),format!("{}\n",enrollment.hmac_base64).into_bytes()),
@@ -905,7 +903,19 @@ mod tests {
         let config: Value = serde_json::from_slice(&file("config.json")).unwrap();
         assert_eq!(
             config["keys"][0]["scopes"],
-            json!(["deploy.read", "deploy.logs"])
+            json!([
+                "compose.admin",
+                "projects.write",
+                "sites.write",
+                "dns.write",
+                "deploy.read",
+                "deploy.logs",
+                "deploy.execute",
+                "deploy.environment",
+                "deploy.rollback",
+                "deploy.lifecycle",
+                "deploy.stop"
+            ])
         );
         assert!(config.get("cloudflare").is_none());
         let metadata: Value = serde_json::from_slice(&file("server.json")).unwrap();

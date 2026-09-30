@@ -1,100 +1,70 @@
-# User-submitted Compose deployments
+# Compose deployments
 
-Validated service metadata is indexed in SQLite. `/v1/projects/{id}/services` returns recorded slot/service/image/template/revision inventory without reading manifests. Actual lifecycle commands still verify immutable Compose files and root policy before invoking Docker. See [database storage](DATABASE.md).
+New Dockyard projects use **Docker Compose YAML and `.env` contents**. No templates, required service names, image repository allowlists, or mandatory image digests. Docker's installed Compose version validates and resolves the configuration.
 
-Every new `POST /v1/projects/{id}/deploy` requires `compose_yaml` and an explicit `environment` matching its project. Choose development, staging or production before deploying; development/staging always use one Compose instance and only production permits blue-green. See [deployment environments](ENVIRONMENTS.md). The earlier image-only request is rejected. The upstream backend signs the JSON request; this VPS service independently validates the YAML before Docker sees it. Project creation reserves domains/ports and installs maintenance; deployment supplies the actual application stack.
+## Desktop
 
-The service first parses a bounded, strict subset of Compose entirely in memory. It then constructs an immutable, hardened Compose revision, extracts environments into private files, and runs `docker compose config --quiet` on that normalized revision before accepting a job. The worker uses `docker compose pull` and `docker compose up --wait` for every service. It verifies ownership, health, image identities, environments, mounts and published ports before Caddy sends traffic to `app`.
+1. Update the VPS service using **Server details → Server software**.
+2. For an existing enrollment, select **Required server access → Compose management → Enable with Touch ID** once. New installations enable management during setup.
+3. Create a project and choose development, staging, or production.
+4. Deploy the Compose YAML and paste the `.env` contents. Leave the desktop field blank to reuse saved values on redeploy; a new project starts with no values. To clear saved values, submit a comment-only file such as `# empty`.
 
-The repository includes parser/admission/fault tests and an installed-Compose roundtrip. Live Linux container, persistence and traffic acceptance remain required.
+Dockyard assigns its own Compose project identity and ownership labels; supplied top-level `name` and `COMPOSE_PROJECT_NAME` do not override them.
 
-## Request and service policy
-
-```json
-{
-  "environment": "production",
-  "compose_yaml": "services:\n  app:\n    image: ghcr.io/your-org/your-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-  "variables": {
-    "DATABASE_URL": "provide-your-secret-value",
-    "APP_URL": "https://demo.example.com"
-  }
-}
-```
-
-Use actual approved image digests. The JSON body retains the 128 KiB limit; `compose_yaml` is at most 64 KiB in UTF-8 bytes. Supply an app environment snapshot either in `variables` or in `services.app.environment`, never both. Omitting both copies the current app environment into a new private revision; the first deploy requires a snapshot, including an explicit empty map when no variables are required. Each companion service supplies its own environment. New environment maps require `deploy.environment` as well as `deploy.execute`.
-
-Only these fields are accepted:
-
-| Location | Fields and constraints |
-| --- | --- |
-| Top level | `services` (1–8), optional `volumes` (at most 8) |
-| Every service | Required digest-pinned `image`; optional `x-dockyard-template`, `environment`, `command`, `entrypoint`, `depends_on`, `volumes`, `ports`, `expose` |
-| `app` | Required service name and Caddy target. Uses the project's selected root template. |
-| Companions | Require `x-dockyard-template` naming a locally approved root template. No published host ports. |
-| `environment` | Mapping of literal, single-line string values. Quote numbers/booleans. Per-template allowed/required keys; at most 100 keys and 8192 bytes/value. Dollar signs remain literal; no environment interpolation. |
-| `command`, `entrypoint` | Container argument arrays, at most 32 entries of 1024 bytes each. Shell-string forms are rejected. Dollar signs remain literal. These never become host shell commands. |
-| `depends_on` | Service-name list, at most 8 distinct names; no missing services/cycles. Normalized to `service_healthy` dependencies. |
-| `ports` | Optional for `app` only: one quoted container port or `127.0.0.1:<reserved blue port>:<container port>`. Target must match root policy. Agent substitutes the selected slot port; public bind forms are rejected. Prefer omitting this field. |
-| `expose` | Optional one quoted port matching the service template. Internal connections use service names on Compose's project network. |
-| Volume declaration | Named key with an empty object, for example `data: {}`. Default local driver; no external names/options. |
-| Volume mount | `data:/approved/container/path[:ro\|rw]`. Target must appear in that service template's `allowed_volume_targets`. Single-slot projects only. |
-
-Unknown fields are rejected, including build contexts, host binds, `env_file`, host namespaces/networking, capabilities/devices, privileged mode, external resources, includes/extends, file-backed secrets/configs, profiles, custom container/project names, and caller labels. YAML aliases/anchors/merges, custom tags, duplicate keys, multiple documents, excessive nesting, and oversized node counts are also rejected. Submitted YAML is never passed directly to Compose's file loader, which can otherwise read host files ([Docker trust model](https://docs.docker.com/compose/trust-model/)).
-
-The root template supplies image repository, health command, non-root UID/GID, container port, environment policy, CPU/memory limits, and approved volume targets. The aggregate stack must fit root `max_stack_memory_mb` and `max_stack_cpus`; when omitted/zero, each defaults to the largest individual approved template limit. The sample policy explicitly permits 2048 MiB and 4 CPUs per slot. Operators must budget for both slots during overlap. Exceeding the sum returns `COMPOSE_RESOURCE_LIMIT`. Every generated service has a read-only root filesystem, bounded `/tmp`, dropped capabilities, no-new-privileges, PID/logging limits, and agent ownership labels. Images must work under this policy; implicit image-declared anonymous volumes are rejected during identity checks. Root policy changes affecting a recorded slot must be restored before operations can continue.
-
-## Multiple services and persistent data
-
-This single-slot example requires an operator-approved `postgres` template in addition to `web-node`:
+Domains are optional. To use Caddy, provide domains, the web service name, and its container port when creating the project. Dockyard assigns a loopback host port for that service. With no domains, your Compose ports are used as supplied. Caddy routes and allocated ports remain subject to ownership/conflict checks.
 
 ```yaml
 services:
-  app:
-    image: ghcr.io/your-org/your-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-    environment:
-      NODE_ENV: "production"
-      DATABASE_URL: "postgresql://app:example-only-secret@db:5432/app"
-      APP_URL: "https://demo.example.com"
-    depends_on: [db]
-  db:
-    x-dockyard-template: postgres
-    image: ghcr.io/your-org/your-postgres@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-    environment:
-      POSTGRES_DB: "app"
-      POSTGRES_USER: "app"
-      POSTGRES_PASSWORD: "example-only-secret"
-    volumes: ["data:/var/lib/postgresql/data"]
+  web:
+    image: nginx:${NGINX_TAG}
+    ports:
+      - "8080:80"
+  database:
+    image: postgres:17
+    env_file: .env
+    volumes:
+      - database:/var/lib/postgresql/data
 volumes:
-  data: {}
+  database: {}
 ```
 
-An illustrative root template to adapt to your prepared image:
+```dotenv
+NGINX_TAG=alpine
+POSTGRES_PASSWORD=replace-with-your-secret
+```
+
+Build contexts, bind sources, includes, configs, and additional secret/env files must already exist on the VPS. Relative paths resolve from `/docker/<project-id>`. Dockyard uploads the Compose and `.env` inputs; it does not upload a source tree. Use Docker healthchecks for application readiness. Without them, Compose waits for services to run, which does not prove application readiness.
+
+A successful deployment mirrors the submitted source into `/docker/<project-id>/compose.yml` and `.env`. Docker runs private, verified revisions. Normal API reads expose safe service metadata from SQLite; environment values and resolved source are write-only.
+
+## Authorization
+
+Full Compose can mount the Docker socket, host directories, or run privileged services. It grants **root-equivalent control of the VPS**. Only a server-wide credential explicitly granted `compose.admin` can create or mutate Compose projects. Existing action scopes, mTLS, HMAC signatures, replay protection, and desktop Touch ID still apply. Project-scoped credentials cannot gain this capability. Template-mode policy remains enforced for older projects.
+
+Fresh desktop setup grants this access. For existing servers, the desktop's Touch ID action validates the updated configuration, saves a private backup, and restarts Dockyard. If startup fails it restores the previous configuration. Containers and Caddy are not restarted by that action.
+
+## Environments and blue-green
+
+Single-instance deployment is the default in every environment. It supports ordinary Compose features, including databases and persistent volumes. Updating that stack can cause downtime. Docker storage is retained; Dockyard does not run `down --volumes`.
+
+Production can opt into blue-green with a Caddy route. Both copies must run independently: no shared volumes, external/named shared networks, fixed container names, extra host ports, or host namespace sharing. Every service needs a healthcheck. If incompatible, use a single instance. Image-declared persistent mounts also prevent a blue-green traffic switch. Compose validity alone cannot guarantee zero downtime.
+
+Rollback reuses the saved Compose/environment configuration. It does not roll back volume contents, database migrations, external files, or mutable image tags. Pin a digest if exact image repeatability is needed.
+
+## API
+
+Create without `template_id`:
 
 ```json
-{
-  "image_repository": "ghcr.io/your-org/your-postgres",
-  "container_port": 5432,
-  "health_command": ["pg_isready", "-h", "127.0.0.1"],
-  "readiness_path": "/unused-for-companion",
-  "allowed_environment": ["POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"],
-  "required_environment": ["POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD"],
-  "user": "999:999",
-  "memory_mb": 512,
-  "cpus": 1,
-  "allowed_volume_targets": ["/var/lib/postgresql/data"]
-}
+{"id":"demo-production","app_id":"demo","environment":"production","domains":[]}
 ```
 
-The database image must initialize/run as that UID with its data in the approved volume and temporary writes in `/tmp`. An arbitrary stock image may need preparation. Only `app` receives HTTP readiness probes; all services require the configured Docker healthcheck.
+Then submit to `/v1/projects/demo-production/deploy`:
 
-Create this project with `zerodowntime: false`. Named volumes keep their Compose project identity across deploy/restart/start/rollback, and the service never removes them. Existing volumes must have matching Compose ownership labels, the local driver, and no driver options. Backups and schema migrations are operator responsibilities; rolling back containers does not roll back database data. Changing service/volume names can create new storage or leave retained resources, so keep persistent topology stable. A failed partial stack start may require local recovery before its slot can be reused.
+```json
+{"environment":"production","compose_yaml":"services:\n  web:\n    image: nginx:${TAG}\n    ports: [\"8080:80\"]\n","env_file":"TAG=alpine\n"}
+```
 
-With `zerodowntime: true`, the complete stateless stack runs under separate blue/green Compose project names. Companion services are duplicated too; workloads must tolerate overlap. Persistent volume declarations/mounts are rejected with `COMPOSE_PERSISTENT_BLUE_GREEN`. Use a separately managed shared database for stateless blue-green apps. Shared persistent-service orchestration within a blue-green project is not implemented.
+`env_file` contains raw file contents. Omitting it reuses the current snapshot; `""` supplies an empty `.env`. Input limits are 64 KiB each, within the HTTP body limit. Refer to `/docs` for signed headers and job polling.
 
-## Files, rollback and logs
-
-Immutable normalized Compose files are stored at `/docker/<id>/compose/cmp-<sha256>.yml`. They use JSON syntax, which Docker accepts as YAML. Their digest is verified before Compose commands, and every service template has a recorded policy hash. Slot bindings select the exact release's Compose and environment revisions. `compose.yml` and `.env` are operator mirrors updated after successful activation; containers use immutable files. Verified `compose.legacy.yml` preserves old recorded releases for restart/rollback.
-
-Primary environments live at `env/env-<id>.env`; companion files are under `env/env-<id>/<service>.env`. They are private and are absent from job/audit/read responses. Logs redact retained values from every service. Select a service with `GET /v1/projects/<id>/logs?service=db&slot=active`; default service is `app`. A service must belong to the selected slot's recorded revision.
-
-Admission retains conservative limits: 500 entries at the top of the environment directory (companion directories also count), 500 Compose revisions, and 500 activations per project. Failed staging can leave private orphan files counted toward these limits. Automatic retention and cleanup of removed services/volumes are deferred; stop preserves data and does not run Compose down or prune.
+Existing template-managed projects keep their previous behavior; see [legacy Compose policy](LEGACY_COMPOSE.md). Existing VPS inventory still needs a separate takeover/traffic migration implementation before Dockyard can manage it in place. Migration assessment no longer requires templates or pinned images.

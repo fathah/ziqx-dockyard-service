@@ -136,6 +136,21 @@ fn password_prompt(
     server: String,
     purpose: &'static str,
 ) -> Result<Zeroizing<String>, String> {
+    secure_prompt(app, "Connect to your Ubuntu server", format!("Root SSH password for {server}. {purpose} The SSH fingerprint has already been reviewed."), "Root password", "Connect")
+}
+
+pub fn cloudflare_token(app: &tauri::AppHandle) -> Result<Zeroizing<String>, String> {
+    secure_prompt(app, "Connect Cloudflare", "Paste a user API token with Zone Read and DNS Edit permissions for the domains you want to manage. Saved only in this Mac’s Keychain.".into(), "Cloudflare API token", "Connect")
+}
+
+#[allow(deprecated)]
+fn secure_prompt(
+    app: &tauri::AppHandle,
+    title: &'static str,
+    detail: String,
+    placeholder: &'static str,
+    action: &'static str,
+) -> Result<Zeroizing<String>, String> {
     let (tx, rx) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         use cocoa::foundation::{NSPoint, NSRect, NSSize};
@@ -148,13 +163,13 @@ fn password_prompt(
                 msg_send![class!(NSString), stringWithUTF8String:text.as_ptr()]
             };
             let alert: *mut Object = msg_send![class!(NSAlert), new];
-            let _: () = msg_send![alert, setMessageText:ns("Connect to your Ubuntu server")];
-            let _: () = msg_send![alert, setInformativeText:ns(&format!("Root SSH password for {server}. {purpose} The SSH fingerprint has already been reviewed."))];
-            let _: *mut Object = msg_send![alert, addButtonWithTitle:ns("Connect")];
+            let _: () = msg_send![alert, setMessageText:ns(title)];
+            let _: () = msg_send![alert, setInformativeText:ns(&detail)];
+            let _: *mut Object = msg_send![alert, addButtonWithTitle:ns(action)];
             let _: *mut Object = msg_send![alert, addButtonWithTitle:ns("Cancel")];
             let field: *mut Object = msg_send![class!(NSSecureTextField), alloc];
             let field: *mut Object = msg_send![field, initWithFrame:NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(360.0, 28.0))];
-            let _: () = msg_send![field, setPlaceholderString:ns("Root password")];
+            let _: () = msg_send![field, setPlaceholderString:ns(placeholder)];
             let _: () = msg_send![alert, setAccessoryView:field];
             let window: *mut Object = msg_send![alert, window];
             let _: bool = msg_send![window, makeFirstResponder:field];
@@ -164,8 +179,8 @@ fn password_prompt(
                 let value: *mut Object = msg_send![field, stringValue];
                 let ptr: *const std::ffi::c_char = msg_send![value, UTF8String];
                 let password = Zeroizing::new(std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned());
-                if password.is_empty() || password.len() > 1024 { Err("Enter a root password up to 1024 bytes".into()) } else { Ok(password) }
-            } else { Err("SSH connection cancelled".into()) };
+                if password.is_empty() || password.len() > 1024 { Err("Enter a value up to 1024 bytes".into()) } else { Ok(password) }
+            } else { Err("Connection cancelled".into()) };
             let _: () = msg_send![field, setStringValue:ns("")];
             let _: () = msg_send![field, release];
             let _: () = msg_send![alert, release];

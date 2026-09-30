@@ -367,6 +367,9 @@ var composeRevision = regexp.MustCompile(`^cmp-[0-9a-f]{64}$`)
 
 // ReleaseCompose proves the entire revision before any Compose command.
 func ReleaseCompose(c config.Config, p model.Project, r model.Release) (string, []byte, error) {
+	if p.NativeCompose() {
+		return nativeRelease(c, p, r)
+	}
 	if r.Compose == "" {
 		want, err := composeBytes(c, p)
 		path := filepath.Join(projectDir(c, p.ID), "compose.legacy.yml")
@@ -415,6 +418,9 @@ func releaseServices(c config.Config, p model.Project, r model.Release) (map[str
 	_, b, err := ReleaseCompose(c, p, r)
 	if err != nil {
 		return nil, err
+	}
+	if p.NativeCompose() {
+		return nativeServices(b)
 	}
 	var document struct {
 		Services map[string]runtimeService `json:"services"`

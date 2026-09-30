@@ -1,0 +1,308 @@
+.provider-section-heading,
+.provider-dialog-heading,
+.dns-toolbar,
+.dns-row-actions,
+.dns-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.provider-section-heading,
+.provider-dialog-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.provider-section-heading h2,
+.provider-dialog-heading h2 {
+  margin: 0;
+}
+.provider-settings {
+  max-width: 1100px;
+}
+.provider-account-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 0;
+  border-bottom: 1px solid #e4e9e1;
+  flex-wrap: wrap;
+}
+.provider-account-row > div {
+  flex: 1;
+  min-width: 160px;
+}
+.provider-account-row p {
+  font-size: 13px;
+  margin: 6px 0 0;
+  color: #596e60;
+}
+.provider-cloud {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  background: #fff2df;
+  color: #bd671b;
+  border-radius: 12px;
+}
+.provider-coming {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 24px;
+  color: #596e60;
+}
+.provider-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 12px;
+  padding: 44px 20px;
+  color: #596e60;
+}
+.provider-empty h2,
+.provider-empty h3,
+.provider-empty p {
+  margin: 0;
+}
+.provider-dialog {
+  width: min(580px, calc(100vw - 64px));
+  max-height: calc(100dvh - 64px);
+  overflow: auto;
+  padding: 28px;
+  border: 1px solid #dae3d7;
+  border-radius: 20px;
+  color: #243c30;
+  background: #fff;
+  box-shadow: 0 24px 80px #173b3140;
+}
+.provider-dialog::backdrop {
+  background: #173b3170;
+}
+.provider-dialog-heading {
+  margin-bottom: 24px;
+}
+.provider-dialog h2 {
+  font-size: 23px;
+}
+.provider-dialog p {
+  line-height: 1.6;
+}
+.provider-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+.provider-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 16px 0;
+  min-width: 0;
+}
+.provider-field input,
+.provider-field select,
+.provider-field textarea,
+.dns-search {
+  padding: 11px 13px;
+  font: inherit;
+  font-weight: 450;
+  color: #263e31;
+  background: #fff;
+  border: 1px solid #cdd8c8;
+  border-radius: 8px;
+  width: 100%;
+  min-width: 0;
+}
+.provider-field textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+.provider-connect-step {
+  display: flex;
+  gap: 14px;
+  margin-top: 24px;
+}
+.provider-connect-step > span {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #eff4e8;
+}
+.provider-connect-step p {
+  font-size: 14px;
+  color: #596e60;
+  margin: 8px 0 12px;
+}
+.provider-error {
+  background: #fff4ee;
+  color: #934122;
+  border: 1px solid #edc5b4;
+  border-radius: 8px;
+  padding: 14px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.provider-notice {
+  background: #faf5e4;
+  color: #775a24;
+  padding: 12px;
+  border-radius: 8px;
+}
+.provider-skeleton {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 24px 0;
+  border-bottom: 1px solid #edf0e8;
+}
+.provider-skeleton > div {
+  flex: 1;
+}
+.dns-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 28px;
+}
+.dns-toolbar {
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.dns-toolbar .provider-field {
+  width: 320px;
+  margin: 0;
+}
+.dns-zone-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border: 0;
+  border-bottom: 1px solid #e4e9e1;
+  padding: 22px 4px;
+  background: transparent;
+  color: #284535;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.dns-zone-row:hover {
+  background: #f5f8f1;
+}
+.dns-zone-row > span:first-of-type {
+  flex: 1;
+}
+.dns-zone-row small {
+  display: block;
+  margin-top: 6px;
+  color: #5c7062;
+}
+.dns-zone-heading {
+  margin: 20px 0;
+}
+.dns-zone-heading .muted {
+  display: block;
+  margin-top: 8px;
+}
+.dns-search {
+  max-width: 300px;
+  margin: 8px 0 16px;
+}
+.dns-table-wrap {
+  overflow-x: auto;
+}
+.dns-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 14px;
+}
+.dns-table th {
+  color: #5c7062;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  text-align: left;
+}
+.dns-table td,
+.dns-table th {
+  padding: 16px 10px;
+  border-bottom: 1px solid #e4e9e1;
+  vertical-align: middle;
+}
+.dns-table td:nth-child(2) {
+  width: 55%;
+}
+.dns-table td:nth-child(2) strong {
+  overflow-wrap: anywhere;
+}
+.dns-content {
+  color: #5c7062;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 600px;
+  margin-top: 6px;
+  white-space: pre-wrap;
+  font-size: 13px;
+}
+.dns-pagination {
+  justify-content: flex-end;
+  font-size: 13px;
+  color: #5c7062;
+  margin-top: 20px;
+}
+.dns-pagination > span:first-child {
+  margin-right: auto;
+}
+.dns-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 14px;
+}
+.dns-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+  font-size: 14px;
+}
+.dns-nameservers {
+  margin-top: 20px;
+  font-size: 13px;
+  color: #5c7062;
+}
+.dns-nameservers summary {
+  cursor: pointer;
+}
+.provider-settings .badge,
+.dns-zone-row .badge,
+.dns-table .badge {
+  display: inline-flex;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: #edf3e9;
+  color: #436044;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.dns-table .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.provider-field input:not([type="checkbox"]),
+.provider-field textarea,
+.provider-field select {
+  margin: 0;
+}

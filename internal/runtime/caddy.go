@@ -71,6 +71,11 @@ func (c Caddy) coherent(ctx context.Context) (any, error) {
 	return live, nil
 }
 func (c Caddy) Ensure(ctx context.Context, p model.Project) error {
+	if p.NativeCompose() && len(p.Domains) == 0 {
+		if _, err := os.Lstat(filepath.Join(c.Config.CaddySites, p.ID+".caddy")); os.IsNotExist(err) {
+			return nil
+		}
+	}
 	b, e := os.ReadFile(filepath.Join(c.Config.CaddySites, p.ID+".caddy"))
 	if e != nil || string(b) != string(Snippet(p, routeSlot(p))) {
 		return model.Uncertain("STATE_DIVERGED")
@@ -98,6 +103,9 @@ func matches(pattern, host string) bool {
 
 // Observe accepts only an exact generated snippet and matching live configuration.
 func (c Caddy) Observe(ctx context.Context, p model.Project) (string, error) {
+	if p.NativeCompose() && len(p.Domains) == 0 {
+		return "", model.Uncertain("COMPOSE_RECOVERY_REQUIRES_INSPECTION")
+	}
 	if _, err := c.coherent(ctx); err != nil {
 		return "", err
 	}
@@ -137,6 +145,9 @@ func hosts(v any, out *[]string) {
 	}
 }
 func (c Caddy) DomainsAvailable(ctx context.Context, domains, owned []string) error {
+	if len(domains) == 0 {
+		return nil
+	}
 	live, e := c.coherent(ctx)
 	if e != nil {
 		return e
@@ -165,6 +176,11 @@ func (c Caddy) DomainsAvailable(ctx context.Context, domains, owned []string) er
 // Set modifies only a generated snippet. The shared worker serializes all reloads.
 // A reload result is classified against live JSON; a timeout never implies rollback.
 func (c Caddy) Set(ctx context.Context, p model.Project, slot string) error {
+	if p.NativeCompose() && len(p.Domains) == 0 {
+		if _, err := os.Lstat(filepath.Join(c.Config.CaddySites, p.ID+".caddy")); os.IsNotExist(err) {
+			return nil
+		}
+	}
 	previous, e := c.coherent(ctx)
 	if e != nil {
 		return e

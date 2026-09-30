@@ -7,6 +7,10 @@ export type Release = {
   created_at: string;
 };
 export type Project = {
+  mode?: "compose";
+  route_service?: string;
+  route_port?: number;
+  readiness_path?: string;
   id: string;
   app_id: string;
   environment: Environment;

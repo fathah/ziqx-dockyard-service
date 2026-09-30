@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-provider-token-page"
+description = "Enables the provider_token_page command without any pre-configured scope."
+commands.allow = ["provider_token_page"]
+
+[[permission]]
+identifier = "deny-provider-token-page"
+description = "Denies the provider_token_page command without any pre-configured scope."
+commands.deny = ["provider_token_page"]

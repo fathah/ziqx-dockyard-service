@@ -38,7 +38,6 @@
       "secret_file": "/etc/dockyard/control-01.key",
       "certificate_sha256": "REPLACE_WITH_CLIENT_CERTIFICATE_DER_SHA256_LOWERCASE_HEX",
       "scopes": [
-        "compose.admin",
         "projects.write",
         "sites.write",
         "dns.write",
@@ -55,7 +54,30 @@
       ]
     }
   ],
-  "templates": {},
+  "templates": {
+    "web-node": {
+      "image_repository": "ghcr.io/your-org/your-app",
+      "container_port": 3000,
+      "health_command": [
+        "node",
+        "/app/healthcheck.js"
+      ],
+      "readiness_path": "/health/ready",
+      "allowed_environment": [
+        "NODE_ENV",
+        "DATABASE_URL",
+        "APP_URL",
+        "PORT"
+      ],
+      "required_environment": [
+        "DATABASE_URL",
+        "APP_URL"
+      ],
+      "user": "1000:1000",
+      "memory_mb": 512,
+      "cpus": 1
+    }
+  },
   "cloudflare": {
     "token_file": "/etc/dockyard/cloudflare.token",
     "zones": {

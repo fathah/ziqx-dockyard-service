@@ -1,3 +1,9 @@
+# Compose mode update — 2026-09-30
+
+Version 0.3.0 adds full Compose projects using Docker's validator and raw `.env` inputs. Templates are optional legacy compatibility. Explicit server-wide `compose.admin` authority is required because full Compose grants root-equivalent control. Desktop setup grants it for new servers; existing servers have a Touch ID enable action with configuration validation, backup and rollback. Production blue-green remains opt-in for compatible stateless stacks. Existing-container takeover remains unimplemented.
+
+The historical status below describes the legacy template mode and earlier acceptance checks. See [current Compose behavior](COMPOSE.md).
+
 # Implementation status — 2026-09-29
 
 The project has moved from documents only to an initial Go service implementation. This is a staging candidate, not an approved production release.

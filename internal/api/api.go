@@ -382,8 +382,22 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		service := q["service"]
 		if service == "" {
 			service = "app"
+			if project.NativeCompose() {
+				service = project.RouteService
+				if service == "" {
+					items, err := e.Store.Services(id)
+					if err == nil {
+						for _, item := range items {
+							if item.Slot == slot {
+								service = item.Name
+								break
+							}
+						}
+					}
+				}
+			}
 		}
-		if !config.ID.MatchString(service) {
+		if (!project.NativeCompose() && !config.ID.MatchString(service)) || (project.NativeCompose() && !config.ServiceName.MatchString(service)) {
 			problem(w, 400, "REQUEST_INVALID", p.RequestID)
 			return
 		}
@@ -444,20 +458,67 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 }
 
 type createRequest struct {
-	ID          string   `json:"id"`
-	AppID       string   `json:"app_id"`
-	Environment string   `json:"environment"`
-	Template    string   `json:"template_id"`
-	Domains     []string `json:"domains"`
-	Zero        *bool    `json:"zerodowntime"`
-	Port        int      `json:"port,omitempty"`
-	Secondary   int      `json:"secondary_port,omitempty"`
+	ID            string   `json:"id"`
+	AppID         string   `json:"app_id"`
+	Environment   string   `json:"environment"`
+	Template      string   `json:"template_id"`
+	Domains       []string `json:"domains"`
+	Zero          *bool    `json:"zerodowntime"`
+	Port          int      `json:"port,omitempty"`
+	Secondary     int      `json:"secondary_port,omitempty"`
+	RouteService  string   `json:"route_service,omitempty"`
+	RoutePort     int      `json:"route_port,omitempty"`
+	ReadinessPath string   `json:"readiness_path,omitempty"`
 }
 type deployRequest struct {
 	Environment string            `json:"environment"`
 	Compose     string            `json:"compose_yaml"`
 	Variables   map[string]string `json:"variables,omitempty"`
+	EnvFile     *string           `json:"env_file,omitempty"`
 }
+
+// Full Compose can mount the host or run privileged services. It is only
+// available to an explicitly enabled, server-wide administrator credential.
+func (a *API) nativeAuthority(w http.ResponseWriter, p auth.Principal) bool {
+	for _, key := range a.Engine.Config.Keys {
+		if key.ID == p.KeyID && p.Allows("*") {
+			for _, scope := range key.Scopes {
+				if scope == "compose.admin" {
+					return true
+				}
+			}
+		}
+	}
+	problem(w, 403, "COMPOSE_ACCESS_REQUIRED", p.RequestID)
+	return false
+}
+
+func (a *API) nativeDomains(domains []string, id string) error {
+	if len(domains) > 10 {
+		return model.Fail("HOSTNAME_INVALID")
+	}
+	seen := map[string]bool{}
+	for _, host := range domains {
+		if !config.Hostname(host) || seen[host] {
+			return model.Fail("HOSTNAME_INVALID")
+		}
+		seen[host] = true
+		for _, reserved := range a.Engine.Config.ReservedDomains {
+			if host == reserved || strings.HasSuffix(host, "."+reserved) {
+				return model.Fail("HOSTNAME_NOT_ALLOWED")
+			}
+		}
+		owner, err := a.Engine.Store.DomainOwner(host)
+		if err != nil {
+			return err
+		}
+		if owner != "" && owner != id {
+			return model.Fail("DOMAIN_IN_USE")
+		}
+	}
+	return nil
+}
+
 type routesRequest struct {
 	Domains   []string `json:"domains"`
 	Port      int      `json:"port,omitempty"`
@@ -563,6 +624,15 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 	if !require(w, principal, scope, id) {
 		return
 	}
+	if action == "project_create" && create.Template == "" {
+		if !a.nativeAuthority(w, principal) {
+			return
+		}
+	} else if existing, err := e.Store.Project(id); err == nil && existing.NativeCompose() {
+		if !a.nativeAuthority(w, principal) {
+			return
+		}
+	}
 	e.Admission.Lock()
 	defer e.Admission.Unlock()
 	fingerprint := auth.Fingerprint(a.FingerprintKey, e.Config.ServerID, r, body)
@@ -603,7 +673,8 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 			problem(w, 400, "REQUEST_INVALID", request)
 			return
 		}
-		zero := create.Environment == model.Production
+		native := create.Template == ""
+		zero := create.Environment == model.Production && !native
 		if create.Zero != nil {
 			zero = *create.Zero
 		}
@@ -629,12 +700,20 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 			fail(w, err, request)
 			return
 		}
+		if create.Domains == nil {
+			create.Domains = []string{}
+		}
 		t, ok := e.Config.Templates[create.Template]
-		if !ok {
+		if !ok && !native {
 			problem(w, 400, "TEMPLATE_INVALID", request)
 			return
 		}
-		if err = a.domains(create.Domains, id); err != nil {
+		if native {
+			err = a.nativeDomains(create.Domains, id)
+		} else {
+			err = a.domains(create.Domains, id)
+		}
+		if err != nil {
 			fail(w, err, request)
 			return
 		}
@@ -642,10 +721,17 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 			fail(w, err, request)
 			return
 		}
-		blue, err := a.port(r.Context(), create.Port, id, map[int]bool{})
-		if err != nil {
-			fail(w, err, request)
+		if native && (len(create.Domains) > 0 && (!config.ServiceName.MatchString(create.RouteService) || create.RoutePort < 1 || create.RoutePort > 65535) || len(create.Domains) == 0 && (zero || create.RouteService != "" || create.RoutePort != 0 || create.Port != 0 || create.Secondary != 0) || create.ReadinessPath != "" && (!strings.HasPrefix(create.ReadinessPath, "/") || strings.ContainsAny(create.ReadinessPath, "?#\r\n"))) {
+			problem(w, 400, "COMPOSE_ROUTE_INVALID", request)
 			return
+		}
+		blue := 0
+		if !native || len(create.Domains) > 0 {
+			blue, err = a.port(r.Context(), create.Port, id, map[int]bool{})
+			if err != nil {
+				fail(w, err, request)
+				return
+			}
 		}
 		green := 0
 		if zero {
@@ -659,6 +745,13 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 			return
 		}
 		p := model.Project{ID: id, AppID: create.AppID, Environment: create.Environment, Template: create.Template, TemplateRevision: engine.TemplateHash(t), Domains: create.Domains, ZeroDowntime: zero, BluePort: blue, GreenPort: green, State: "provisioning", Slots: map[string]model.Release{}, Releases: []model.Release{}}
+		if native {
+			p.Mode = "compose"
+			p.TemplateRevision = ""
+			p.RouteService = create.RouteService
+			p.RoutePort = create.RoutePort
+			p.ReadinessPath = create.ReadinessPath
+		}
 		// Refuse to adopt or overwrite an existing /docker directory.
 		if err = os.Mkdir(filepath.Join(e.Config.ProjectsRoot, id), 0700); err != nil {
 			problem(w, 409, "PROJECT_DIRECTORY_EXISTS", request)
@@ -684,7 +777,7 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 			problem(w, 409, "HISTORY_LIMIT", request)
 			return
 		}
-		if engine.TemplateHash(e.Config.Templates[p.Template]) != p.TemplateRevision {
+		if !p.NativeCompose() && engine.TemplateHash(e.Config.Templates[p.Template]) != p.TemplateRevision {
 			problem(w, 409, "TEMPLATE_CHANGED", request)
 			return
 		}
@@ -705,6 +798,54 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 			}
 			if input.Environment != p.Environment {
 				problem(w, 409, "DEPLOYMENT_ENVIRONMENT_MISMATCH", request)
+				return
+			}
+			if p.NativeCompose() {
+				if input.Variables != nil {
+					problem(w, 400, "USE_ENV_FILE", request)
+					return
+				}
+				if !require(w, principal, "deploy.environment", id) {
+					return
+				}
+				dotenv := ""
+				if input.EnvFile != nil {
+					dotenv = *input.EnvFile
+				} else if current, ok := p.Current(); ok {
+					b, readErr := os.ReadFile(filepath.Join(e.Config.ProjectsRoot, id, "env", current.Environment+".env"))
+					if readErr != nil {
+						fail(w, model.Fail("ENVIRONMENT_UNAVAILABLE"), request)
+						return
+					}
+					dotenv = string(b)
+				}
+				preparer, ok := e.Docker.(interface {
+					PrepareNative(context.Context, model.Project, string, string) (model.Release, error)
+				})
+				if !ok {
+					fail(w, model.Fail("COMPOSE_UNAVAILABLE"), request)
+					return
+				}
+				release, prepareErr := preparer.PrepareNative(r.Context(), p, input.Compose, dotenv)
+				if prepareErr != nil {
+					fail(w, prepareErr, request)
+					return
+				}
+				release.ID = state.NewID("rel-")
+				release.Created = time.Now().UTC()
+				j.Input.Release = &release
+				if err = e.Docker.Validate(r.Context(), p, release); err != nil {
+					fail(w, err, request)
+					return
+				}
+				if err = runtime.IndexCompose(e.Config, e.Store, p, release); err != nil {
+					fail(w, err, request)
+					return
+				}
+				break
+			}
+			if input.EnvFile != nil {
+				problem(w, 400, "LEGACY_PROJECT_REQUIRES_VARIABLES", request)
 				return
 			}
 			plan, parseErr := runtime.ParseCompose(e.Config, p, input.Compose)
@@ -831,9 +972,24 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 				problem(w, 400, "REQUEST_INVALID", request)
 				return
 			}
-			if err = a.domains(input.Domains, id); err != nil {
+			if p.NativeCompose() {
+				if p.RouteService == "" && (len(input.Domains) > 0 || input.Port != 0 || input.Secondary != 0) {
+					problem(w, 400, "COMPOSE_ROUTE_NOT_CONFIGURED", request)
+					return
+				}
+				err = a.nativeDomains(input.Domains, id)
+				if p.ZeroDowntime && len(input.Domains) == 0 {
+					err = model.Fail("COMPOSE_BLUE_GREEN_ROUTE_REQUIRED")
+				}
+			} else {
+				err = a.domains(input.Domains, id)
+			}
+			if err != nil {
 				fail(w, err, request)
 				return
+			}
+			if input.Domains == nil {
+				input.Domains = []string{}
 			}
 			p.Domains = input.Domains
 			if input.Port != 0 && input.Port != p.BluePort || input.Secondary != 0 && input.Secondary != p.GreenPort {

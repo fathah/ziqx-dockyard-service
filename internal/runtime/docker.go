@@ -37,8 +37,9 @@ type Container struct {
 		} `json:"Healthcheck"`
 	} `json:"Config"`
 	State struct {
-		Running bool `json:"Running"`
-		Health  *struct {
+		Running  bool `json:"Running"`
+		ExitCode int  `json:"ExitCode"`
+		Health   *struct {
 			Status string `json:"Status"`
 		} `json:"Health"`
 	} `json:"State"`
@@ -96,6 +97,9 @@ func (d Docker) Validate(ctx context.Context, p model.Project, r model.Release) 
 	return nil
 }
 func (d Docker) Pull(ctx context.Context, p model.Project, r model.Release) error {
+	if p.NativeCompose() {
+		return nil
+	} // Compose up honors image/build/pull_policy.
 	if err := d.releaseCommand(ctx, p, r, "pull"); err != nil {
 		var fault *model.Fault
 		if errors.As(err, &fault) {
@@ -106,6 +110,13 @@ func (d Docker) Pull(ctx context.Context, p model.Project, r model.Release) erro
 	return nil
 }
 func (d Docker) Start(ctx context.Context, p model.Project, slot string) error {
+	if p.NativeCompose() {
+		_, err := d.command(ctx, p, slot, "up", "--detach", "--force-recreate", "--wait", "--wait-timeout", strconv.Itoa(d.Config.HealthSeconds))
+		if err != nil {
+			return model.Fail("CONTAINER_START_FAILED")
+		}
+		return nil
+	}
 	if err := d.checkVolumes(ctx, p, slot, false); err != nil {
 		return err
 	}
@@ -153,6 +164,9 @@ func (d Docker) inspectService(ctx context.Context, p model.Project, slot, servi
 	return c, nil
 }
 func (d Docker) Healthy(ctx context.Context, p model.Project, slot string, r model.Release) error {
+	if p.NativeCompose() {
+		return d.nativeHealthy(ctx, p, slot, r)
+	}
 	services, err := d.services(p, r)
 	if err != nil {
 		return err
@@ -256,6 +270,24 @@ func (d Docker) Healthy(ctx context.Context, p model.Project, slot string, r mod
 	return nil
 }
 func (d Docker) Stop(ctx context.Context, p model.Project, slot string) error {
+	if p.NativeCompose() {
+		if _, err := d.nativeContainers(ctx, p, slot); err != nil {
+			return err
+		}
+		if _, err := d.command(ctx, p, slot, "stop", "--timeout", "30"); err != nil {
+			return model.Fail("CONTAINER_STOP_FAILED")
+		}
+		containers, err := d.nativeContainers(ctx, p, slot)
+		if err != nil {
+			return err
+		}
+		for _, c := range containers {
+			if c.State.Running {
+				return model.Uncertain("CONTAINER_STOP_FAILED")
+			}
+		}
+		return nil
+	}
 	services, err := d.services(p, p.Slots[slot])
 	if err != nil {
 		return err
@@ -285,7 +317,11 @@ func (d Docker) Logs(ctx context.Context, p model.Project, slot, service string,
 	if _, exists := services[service]; !exists {
 		return nil, false, model.Fail("REQUEST_INVALID")
 	}
-	if _, e := d.inspectService(ctx, p, slot, service); e != nil {
+	if p.NativeCompose() {
+		if _, err := d.nativeContainers(ctx, p, slot); err != nil {
+			return nil, false, err
+		}
+	} else if _, e := d.inspectService(ctx, p, slot, service); e != nil {
 		return nil, false, e
 	}
 	res, e := d.command(ctx, p, slot, "logs", "--no-color", "--timestamps", "--tail", strconv.Itoa(tail), "--since", since, service)
@@ -311,7 +347,7 @@ func (d Docker) Logs(ctx context.Context, p model.Project, slot, service string,
 			}
 			return nil
 		}
-		if strings.HasSuffix(entry.Name(), ".env") {
+		if strings.HasSuffix(entry.Name(), ".env") || strings.HasSuffix(entry.Name(), ".secrets.json") {
 			files = append(files, path)
 			if len(files) > 4000 {
 				return model.Fail("LOG_REDACTION_LIMIT")
@@ -329,6 +365,23 @@ func (d Docker) Logs(ctx context.Context, p model.Project, slot, service string,
 		b, e := os.ReadFile(file)
 		if e != nil {
 			return nil, false, model.Fail("LOGS_UNAVAILABLE")
+		}
+		if strings.HasSuffix(file, ".secrets.json") {
+			var values []string
+			if json.Unmarshal(b, &values) != nil {
+				return nil, false, model.Fail("LOGS_UNAVAILABLE")
+			}
+			for _, v := range values {
+				if v != "" && !unique[v] {
+					unique[v] = true
+					secrets = append(secrets, v)
+					secretBytes += len(v)
+				}
+			}
+			if len(unique) > 5000 || secretBytes > 1<<20 {
+				return nil, false, model.Fail("LOG_REDACTION_LIMIT")
+			}
+			continue
 		}
 		for _, line := range strings.Split(string(b), "\n") {
 			_, v, ok := strings.Cut(line, "=")

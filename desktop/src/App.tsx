@@ -42,6 +42,7 @@ import toast from "react-hot-toast";
 import * as api from "./api";
 import SetupWizard from "./SetupWizard";
 import TerminalPage from "./TerminalPage";
+import { DomainProviderSettings, ProviderDomains } from "./DomainProviders";
 import Help from "./Help";
 import { demoInventory, demoJobs, demoProjects } from "./demo";
 import dockyardIcon from "../src-tauri/icons/icon.png";
@@ -65,7 +66,8 @@ type Page =
   | "inventory"
   | "audit"
   | "security"
-  | "terminal";
+  | "terminal"
+  | "settings";
 type Modal =
   | { kind: "create" }
   | { kind: "deploy" | "routes" | "stop" | "rollback"; project: Project }
@@ -78,6 +80,7 @@ const nav = [
   { id: "inventory", label: "VPS inventory", icon: Database },
   { id: "audit", label: "Audit trail", icon: History },
   { id: "terminal", label: "Terminal", icon: Terminal },
+  { id: "settings", label: "Settings", icon: Settings2 },
 ] as const;
 const environments: Environment[] = ["production", "staging", "development"];
 const labels: Record<Environment, string> = {
@@ -291,6 +294,7 @@ function App() {
   const [sessionLoadFailed, setSessionLoadFailed] = useState(false);
   const [hasEnrollment, setHasEnrollment] = useState(false);
   const [page, setPage] = useState<Page>("projects");
+  const [domainProvider, setDomainProvider] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [inventory, setInventory] = useState<Inventory | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -769,7 +773,10 @@ function App() {
               inventory={shownInventory}
               preview={preview}
               back={() => setSelected(null)}
-              openServerDetails={() => { setSelected(null); setPage("security"); }}
+              openServerDetails={() => {
+                setSelected(null);
+                setPage("security");
+              }}
             />
           ) : page === "projects" ? (
             <Projects
@@ -794,16 +801,32 @@ function App() {
               refresh={refresh}
               report={report}
             />
-          ) : page === "domains" ? (
-            <Domains
-              projects={shownProjects}
-              inventory={shownInventory}
-              loading={initialWorkspaceLoading}
-              select={(id) => {
-                setPage("projects");
-                setSelected(id);
+          ) : page === "settings" ? (
+            <DomainProviderSettings
+              preview={preview}
+              manage={(id) => {
+                setDomainProvider(id);
+                setPage("domains");
               }}
-              open={setModal}
+            />
+          ) : page === "domains" ? (
+            <ProviderDomains
+              initialProvider={domainProvider}
+              preview={preview}
+              serverIP={session.profile?.server_ip}
+              settings={() => setPage("settings")}
+              routes={
+                <Domains
+                  projects={shownProjects}
+                  inventory={shownInventory}
+                  loading={initialWorkspaceLoading}
+                  select={(id) => {
+                    setPage("projects");
+                    setSelected(id);
+                  }}
+                  open={setModal}
+                />
+              }
             />
           ) : page === "inventory" ? (
             <InventoryView
@@ -1322,7 +1345,9 @@ function ProjectDetail({
   }>();
   const [logs, setLogs] = useState("");
   const [truncated, setTruncated] = useState(false);
-  const [service, setService] = useState("app");
+  const [service, setService] = useState(
+    p.mode === "compose" ? (p.route_service ?? "") : "app",
+  );
   const [slot, setSlot] = useState("active");
   const [since, setSince] = useState("30m");
   const [busy, setBusy] = useState(false);
@@ -1364,7 +1389,15 @@ function ProjectDetail({
         view: "services",
       })
       .then((d) => {
-        if (!cancelled) setServices(d.services ?? []);
+        if (!cancelled) {
+          const items = d.services ?? [];
+          setServices(items);
+          setService((current) =>
+            items.some((item) => item.name === current)
+              ? current
+              : (items[0]?.name ?? ""),
+          );
+        }
       })
       .catch((e) => {
         if (!cancelled) report(e);
@@ -1475,7 +1508,7 @@ function ProjectDetail({
         </span>
         <span>
           <FileCode2 size={15} />
-          {p.template_id}
+          {p.mode === "compose" ? "Docker Compose" : p.template_id}
         </span>
         <span>
           <Globe2 size={15} />
@@ -1598,7 +1631,7 @@ function ProjectDetail({
                 <p className="mono">{s.image}</p>
               </div>
               <Tag>{s.slot}</Tag>
-              <Tag>{s.template_id}</Tag>
+              {s.template_id && <Tag>{s.template_id}</Tag>}
             </div>
           ))}
           {!services.length && !servicesLoading && (
@@ -2100,7 +2133,10 @@ function ObservedProjectDetail({
           project={project}
           preview={preview}
           close={() => setMigrationOpen(false)}
-          openServerDetails={() => { setMigrationOpen(false); openServerDetails(); }}
+          openServerDetails={() => {
+            setMigrationOpen(false);
+            openServerDetails();
+          }}
         />
       )}
     </>
@@ -2113,7 +2149,8 @@ const migrationLabels: Record<string, string> = {
   SINGLE_COMPOSE_FILE:
     "Multiple Compose files or overrides need a reviewed merge.",
   PROJECT_ID_SUPPORTED: "Project name must fit Dockyard's naming rules.",
-  NO_MANUAL_CADDY_CUTOVER: "A live Caddy route needs a reviewed traffic switch.",
+  NO_MANUAL_CADDY_CUTOVER:
+    "A live Caddy route needs a reviewed traffic switch.",
   NO_EXISTING_PUBLISHED_PORTS:
     "A live published port needs a replacement port and traffic switch.",
   APPROVED_TEMPLATES_CONFIGURED:
@@ -2172,15 +2209,29 @@ function MigrationReview({
     null,
   );
   const [error, setError] = useState("");
-  const blocked = assessment?.checks.filter((check) => check.status === "blocked") ?? [];
-  const hasRoute = blocked.some((check) => check.code === "NO_MANUAL_CADDY_CUTOVER");
-  const hasPort = blocked.some((check) => check.code === "NO_EXISTING_PUBLISHED_PORTS");
-  const needsTemplates = blocked.some((check) => check.code === "APPROVED_TEMPLATES_CONFIGURED");
-  const needsImage = !needsTemplates && blocked.some((check) => check.code === "APP_TEMPLATE_UNAMBIGUOUS");
-  const sourceIssues = blocked.filter((check) => ![
-    "NO_MANUAL_CADDY_CUTOVER", "NO_EXISTING_PUBLISHED_PORTS",
-    "APPROVED_TEMPLATES_CONFIGURED", "APP_TEMPLATE_UNAMBIGUOUS",
-  ].includes(check.code));
+  const blocked =
+    assessment?.checks.filter((check) => check.status === "blocked") ?? [];
+  const hasRoute = blocked.some(
+    (check) => check.code === "NO_MANUAL_CADDY_CUTOVER",
+  );
+  const hasPort = blocked.some(
+    (check) => check.code === "NO_EXISTING_PUBLISHED_PORTS",
+  );
+  const needsTemplates = blocked.some(
+    (check) => check.code === "APPROVED_TEMPLATES_CONFIGURED",
+  );
+  const needsImage =
+    !needsTemplates &&
+    blocked.some((check) => check.code === "APP_TEMPLATE_UNAMBIGUOUS");
+  const sourceIssues = blocked.filter(
+    (check) =>
+      ![
+        "NO_MANUAL_CADDY_CUTOVER",
+        "NO_EXISTING_PUBLISHED_PORTS",
+        "APPROVED_TEMPLATES_CONFIGURED",
+        "APP_TEMPLATE_UNAMBIGUOUS",
+      ].includes(check.code),
+  );
   useEffect(() => {
     if (preview) return;
     let active = true;
@@ -2208,7 +2259,7 @@ function MigrationReview({
         <div className="modal-heading">
           <div>
             <span className="eyebrow">Existing project</span>
-          <h2>Migration plan for {project.name}</h2>
+            <h2>Migration plan for {project.name}</h2>
           </div>
           <button className="icon-button" aria-label="Close" onClick={close}>
             <X size={19} />
@@ -2216,8 +2267,8 @@ function MigrationReview({
         </div>
         <div className="wizard-body">
           <p className="migration-intro">
-            Dockyard should prepare a replacement, check it, switch traffic,
-            and keep the original stack available for rollback.
+            Dockyard should prepare a replacement, check it, switch traffic, and
+            keep the original stack available for rollback.
           </p>
           {preview && (
             <div className="alert pending">
@@ -2228,7 +2279,11 @@ function MigrationReview({
             <div className="alert pending migration-error" role="alert">
               <strong>Migration check unavailable</strong>
               <span>{migrationCheckError(error)}</span>
-              {error.includes("HTTP_404: NOT_FOUND") && <button className="button" onClick={openServerDetails}>Open Server details <ArrowRight size={15} /></button>}
+              {error.includes("HTTP_404: NOT_FOUND") && (
+                <button className="button" onClick={openServerDetails}>
+                  Open Server details <ArrowRight size={15} />
+                </button>
+              )}
               <details>
                 <summary>Technical details</summary>
                 <code>{error}</code>
@@ -2241,43 +2296,79 @@ function MigrationReview({
           {assessment && (
             <>
               <div className="migration-result">
-                <strong>{assessment.execution_available ? "Ready for review" : "Migration is not available in this version"}</strong>
+                <strong>
+                  {assessment.execution_available
+                    ? "Ready for review"
+                    : "Migration is not available in this version"}
+                </strong>
               </div>
-              {(hasRoute || hasPort) && <div className="migration-plan-step">
-                <span className="migration-plan-number">1</span>
-                <div>
-                  <strong>Dockyard must move live traffic</strong>
-                  <p>Start the managed stack on a free local port, verify its health, then switch the reviewed Caddy route. Keep the original containers and route backup for rollback. This cutover job has not been built yet.</p>
-                  <div className="migration-plan-tags">
-                    {hasRoute && <Tag>Caddy route detected</Tag>}
-                    {hasPort && <Tag>Published port in use</Tag>}
+              {(hasRoute || hasPort) && (
+                <div className="migration-plan-step">
+                  <span className="migration-plan-number">1</span>
+                  <div>
+                    <strong>Dockyard must move live traffic</strong>
+                    <p>
+                      Start the managed stack on a free local port, verify its
+                      health, then switch the reviewed Caddy route. Keep the
+                      original containers and route backup for rollback. This
+                      cutover job has not been built yet.
+                    </p>
+                    <div className="migration-plan-tags">
+                      {hasRoute && <Tag>Caddy route detected</Tag>}
+                      {hasPort && <Tag>Published port in use</Tag>}
+                    </div>
                   </div>
                 </div>
-              </div>}
-              {(needsTemplates || needsImage) && <div className="migration-plan-step">
-                <span className="migration-plan-number">2</span>
-                <div>
-                  <strong>Review the deployment policy</strong>
-                  {needsTemplates && <p>The VPS currently has an inventory-only policy. A managed deployment needs approved templates for its services: image repositories, health checks, non-root users, resource limits, and allowed environment variables. Dockyard cannot safely guess these from a running container.</p>}
-                  {needsImage && <p>The app image needs an immutable SHA-256 digest and must match exactly one approved template. Choose the image and template before starting a replacement.</p>}
+              )}
+              {(needsTemplates || needsImage) && (
+                <div className="migration-plan-step">
+                  <span className="migration-plan-number">2</span>
+                  <div>
+                    <strong>Update the Dockyard server</strong>
+                    <p>
+                      This server uses the older template policy. New projects
+                      use Compose and .env without templates.
+                    </p>
+                    <button className="button" onClick={openServerDetails}>
+                      Open Server details <ArrowRight size={15} />
+                    </button>
+                  </div>
                 </div>
-              </div>}
-              {sourceIssues.length > 0 && <div className="migration-plan-step">
-                <span className="migration-plan-number">3</span>
-                <div>
-                  <strong>Resolve source and data requirements</strong>
-                  {sourceIssues.map((check) => <div className="migration-plan-issue" key={check.code}>
-                    <strong>{migrationLabels[check.code] ?? check.code}</strong>
-                    {migrationNextSteps[check.code] && <p>{migrationNextSteps[check.code]}</p>}
-                  </div>)}
+              )}
+              {sourceIssues.length > 0 && (
+                <div className="migration-plan-step">
+                  <span className="migration-plan-number">3</span>
+                  <div>
+                    <strong>Resolve source and data requirements</strong>
+                    {sourceIssues.map((check) => (
+                      <div className="migration-plan-issue" key={check.code}>
+                        <strong>
+                          {migrationLabels[check.code] ?? check.code}
+                        </strong>
+                        {migrationNextSteps[check.code] && (
+                          <p>{migrationNextSteps[check.code]}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>}
-              {!blocked.length && <div className="migration-plan-step">
-                <Check size={18} />
-                <div><strong>Source checks passed</strong><p>The migration job is still required to take over this project.</p></div>
-              </div>}
+              )}
+              {!blocked.length && (
+                <div className="migration-plan-step">
+                  <Check size={18} />
+                  <div>
+                    <strong>Source checks passed</strong>
+                    <p>
+                      The migration job is still required to take over this
+                      project.
+                    </p>
+                  </div>
+                </div>
+              )}
               <div className="alert pending">
-                This review makes no changes. Dockyard cannot take over this stack until the migration job is implemented; your files, routes, and containers are unchanged.
+                This review makes no changes. Dockyard cannot take over this
+                stack until the migration job is implemented; your files,
+                routes, and containers are unchanged.
               </div>
             </>
           )}
@@ -2695,9 +2786,13 @@ function ServerAccess() {
   async function check() {
     setBusy(true);
     setError("");
-    try { setReport(await api.checkServerAccess()); }
-    catch (e) { setError(String(e)); }
-    finally { setBusy(false); }
+    try {
+      setReport(await api.checkServerAccess());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   }
   async function prepare() {
     setBusy(true);
@@ -2705,35 +2800,132 @@ function ServerAccess() {
     try {
       const next = await api.prepareServerAccess();
       setReport(next);
-      if (next.update_directory === "ready") toast.success("Updater access is ready.");
-    } catch (e) { setError(String(e)); }
-    finally { setBusy(false); }
+      if (next.update_directory === "ready")
+        toast.success("Updater access is ready.");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   }
-  const rows = report ? [
-    ["Root SSH", report.root_ssh, "Full server access for this Mac's pinned SSH connection."],
-    ["Updater folder", report.update_directory === "ready", "A private, root-owned directory holds temporary update files."],
-    ["Installed binaries", report.installed_binaries, "Dockyard binaries must be root-owned and executable."],
-    ["SQLite database", report.database, "The updater needs access to back up the Dockyard database."],
-    ["Dockyard service", report.service_active, "The service must be running before an update."],
-  ] as const : [];
-  return <section className="panel server-access">
-    <div className="server-updater-heading">
-      <h2>Required server access</h2>
-      <button className="button" disabled={busy} onClick={() => void check()}><RefreshCw size={16} />{busy ? "Checking…" : "Check access"}</button>
-    </div>
-    {report && <>
-      <div className="server-access-grid">
-        {rows.map(([label, allowed, detail]) => <div className="server-access-row" key={label}>
-          <span>{label} <Help label={label}>{detail}</Help></span>
-          <Tag tone={allowed ? "green" : "neutral"}>{allowed ? "Ready" : label === "Updater folder" && report.update_directory === "can_prepare" ? "Needs setup" : "Needs review"}</Tag>
-        </div>)}
+  const rows = report
+    ? ([
+        [
+          "Root SSH",
+          report.root_ssh,
+          "Full server access for this Mac's pinned SSH connection.",
+        ],
+        [
+          "Updater folder",
+          report.update_directory === "ready",
+          "A private, root-owned directory holds temporary update files.",
+        ],
+        [
+          "Installed binaries",
+          report.installed_binaries,
+          "Dockyard binaries must be root-owned and executable.",
+        ],
+        [
+          "SQLite database",
+          report.database,
+          "The updater needs access to back up the Dockyard database.",
+        ],
+        [
+          "Dockyard service",
+          report.service_active,
+          "The service must be running before an update.",
+        ],
+      ] as const)
+    : [];
+  return (
+    <section className="panel server-access">
+      <div className="server-updater-heading">
+        <h2>Required server access</h2>
+        <button className="button" disabled={busy} onClick={() => void check()}>
+          <RefreshCw size={16} />
+          {busy ? "Checking…" : "Check access"}
+        </button>
       </div>
-      {report.update_directory === "can_prepare" && <button className="button primary" disabled={busy} onClick={() => void prepare()}>Prepare updater access with Touch ID</button>}
-      {report.update_directory === "manual_review" && <p className="muted">Review ownership and permissions for /var/lib/dockyard-desktop-updates on the VPS.</p>}
-      {(!report.installed_binaries || !report.database || !report.service_active) && <p className="muted">Review the flagged VPS items before updating. Dockyard will not change binaries, database permissions, or services from this check.</p>}
-    </>}
-    {error && <div className="alert error" role="alert">{error}</div>}
-  </section>;
+      <div className="server-access-row">
+        <span>
+          Compose management{" "}
+          <Help label="Compose management">
+            Allows this Mac to deploy Compose stacks with full server
+            privileges. Update the server before enabling access. Dockyard
+            restarts briefly.
+          </Help>
+        </span>
+        <button
+          className="button"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setError("");
+            try {
+              await api.enableComposeManagement();
+              toast.success("Compose management enabled.");
+            } catch (e) {
+              setError(String(e));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Enable with Touch ID
+        </button>
+      </div>
+      {report && (
+        <>
+          <div className="server-access-grid">
+            {rows.map(([label, allowed, detail]) => (
+              <div className="server-access-row" key={label}>
+                <span>
+                  {label} <Help label={label}>{detail}</Help>
+                </span>
+                <Tag tone={allowed ? "green" : "neutral"}>
+                  {allowed
+                    ? "Ready"
+                    : label === "Updater folder" &&
+                        report.update_directory === "can_prepare"
+                      ? "Needs setup"
+                      : "Needs review"}
+                </Tag>
+              </div>
+            ))}
+          </div>
+          {report.update_directory === "can_prepare" && (
+            <button
+              className="button primary"
+              disabled={busy}
+              onClick={() => void prepare()}
+            >
+              Prepare updater access with Touch ID
+            </button>
+          )}
+          {report.update_directory === "manual_review" && (
+            <p className="muted">
+              Review ownership and permissions for
+              /var/lib/dockyard-desktop-updates on the VPS.
+            </p>
+          )}
+          {(!report.installed_binaries ||
+            !report.database ||
+            !report.service_active) && (
+            <p className="muted">
+              Review the flagged VPS items before updating. Dockyard will not
+              change binaries, database permissions, or services from this
+              check.
+            </p>
+          )}
+        </>
+      )}
+      {error && (
+        <div className="alert error" role="alert">
+          {error}
+        </div>
+      )}
+    </section>
+  );
 }
 function ServerUpdater() {
   const [preview, setPreview] = useState<api.ServerUpdatePreview | null>(null);
@@ -2744,9 +2936,13 @@ function ServerUpdater() {
     setBusy(true);
     setError("");
     setReview(false);
-    try { setPreview(await api.checkServerUpdate()); }
-    catch (e) { setError(String(e)); }
-    finally { setBusy(false); }
+    try {
+      setPreview(await api.checkServerUpdate());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   }
   async function update() {
     if (!preview) return;
@@ -2754,11 +2950,32 @@ function ServerUpdater() {
     setError("");
     try {
       const version = await api.applyServerUpdate(preview);
-      toast.success(version === "unversioned" ? `Dockyard service updated to bundled build ${preview.source_commit.slice(0, 12)}.` : `Dockyard service updated to v${version}.`);
+      toast.success(
+        version === "unversioned"
+          ? `Dockyard service updated to bundled build ${preview.source_commit.slice(0, 12)}.`
+          : `Dockyard service updated to v${version}.`,
+      );
       setReview(false);
-      setPreview({ ...preview, installed_dockyard: preview.candidate_dockyard, installed_dockyardctl: preview.candidate_dockyardctl, installed_version: preview.candidate_version === "unversioned" ? null : preview.candidate_version, installed_commit: preview.candidate_version === "unversioned" ? null : preview.source_commit, version_status: "current", update_available: false });
-    } catch (e) { setError(String(e)); }
-    finally { setBusy(false); }
+      setPreview({
+        ...preview,
+        installed_dockyard: preview.candidate_dockyard,
+        installed_dockyardctl: preview.candidate_dockyardctl,
+        installed_version:
+          preview.candidate_version === "unversioned"
+            ? null
+            : preview.candidate_version,
+        installed_commit:
+          preview.candidate_version === "unversioned"
+            ? null
+            : preview.source_commit,
+        version_status: "current",
+        update_available: false,
+      });
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   }
   async function forgetPassword() {
     setBusy(true);
@@ -2766,30 +2983,152 @@ function ServerUpdater() {
     try {
       await api.forgetRootPassword();
       toast.success("Saved root password removed from Keychain.");
-    } catch (e) { setError(String(e)); }
-    finally { setBusy(false); }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
   }
-  return <section className="panel server-updater">
-    <div className="server-updater-heading">
-      <div><h2>Server software</h2><p className="muted">Check the VPS against the verified Ubuntu build in this Mac app.</p></div>
-      <button className="button" disabled={busy} onClick={() => void check()}><RefreshCw size={16} />{busy ? "Working…" : "Check version"}</button>
-    </div>
-    {preview && <div className="server-updater-status">
-      <Tag tone={preview.version_status === "current" ? "green" : "neutral"}>{preview.version_status === "current" ? "Up to date" : preview.version_status === "server_newer" ? "VPS is newer" : preview.version_status === "same_version_different_build" ? "Same version, different build" : preview.version_status === "bundle_unversioned" ? "Bundle needs rebuild" : preview.version_status === "legacy_bundle" ? "Unversioned update" : "Update available"}</Tag>
-      <span>VPS: {preview.installed_version ? `v${preview.installed_version}` : "Version unavailable"}</span>
-      <span>Bundled: {preview.candidate_version === "unversioned" ? "Version unavailable" : `v${preview.candidate_version}`}</span>
-      {preview.update_available && !review && <button className="button primary" disabled={busy} onClick={() => setReview(true)}>Update server <ArrowRight size={15} /></button>}
-    </div>}
-    {preview?.version_status === "bundle_unversioned" && <p className="muted">This Mac app contains an older, unversioned Ubuntu binary. Bundle the current Go build to enable in-app updates.</p>}
-    {review && preview && <div className="server-updater-review">
-      <h3>Update Dockyard on your VPS?</h3>
-      <p>{preview.candidate_version === "unversioned" ? "This older bundle has no version number. Check its source commit before installing; the control service will restart briefly." : "The control service will restart briefly. Containers and Caddy will continue; Dockyard keeps a database and binary backup for rollback."}</p>
-      <div className="server-updater-hashes"><span>Installed version</span><strong>{preview.installed_version ? `v${preview.installed_version}` : "Unavailable (older build)"}</strong><span>New build</span><strong>{preview.candidate_version === "unversioned" ? `Unversioned · ${preview.source_commit.slice(0, 12)}` : `v${preview.candidate_version}`}</strong></div>
-      <div className="controls"><button className="button primary" disabled={busy} onClick={() => void update()}>{busy ? "Updating…" : "Confirm update with Touch ID"}</button><button className="button" disabled={busy} onClick={() => setReview(false)}>Cancel</button></div>
-    </div>}
-    <button className="text-button server-updater-forget" disabled={busy} onClick={() => void forgetPassword()}>Forget saved root password</button>
-    {error && <div className="alert error" role="alert">{error}</div>}
-  </section>;
+  return (
+    <section className="panel server-updater">
+      <div className="server-updater-heading">
+        <div>
+          <h2>Server software</h2>
+          <p className="muted">
+            Check the VPS against the verified Ubuntu build in this Mac app.
+          </p>
+        </div>
+        <button className="button" disabled={busy} onClick={() => void check()}>
+          <RefreshCw size={16} />
+          {busy ? "Working…" : "Check version"}
+        </button>
+      </div>
+      {preview && (
+        <div className="server-updater-status">
+          <Tag
+            tone={preview.version_status === "current" ? "green" : "neutral"}
+          >
+            {preview.version_status === "current"
+              ? "Up to date"
+              : preview.version_status === "server_newer"
+                ? "VPS is newer"
+                : preview.version_status === "same_version_different_build"
+                  ? "Same version, different build"
+                  : preview.version_status === "bundle_unversioned"
+                    ? "Bundle needs rebuild"
+                    : preview.version_status === "legacy_bundle"
+                      ? "Unversioned update"
+                      : "Update available"}
+          </Tag>
+          <span>
+            VPS:{" "}
+            {preview.installed_version
+              ? `v${preview.installed_version}`
+              : "Version unavailable"}
+          </span>
+          <span>
+            Bundled:{" "}
+            {preview.candidate_version === "unversioned"
+              ? "Version unavailable"
+              : `v${preview.candidate_version}`}
+          </span>
+          {preview.update_available && !review && (
+            <button
+              className="button primary"
+              disabled={busy}
+              onClick={() => setReview(true)}
+            >
+              Update server <ArrowRight size={15} />
+            </button>
+          )}
+        </div>
+      )}
+      {preview?.version_status === "bundle_unversioned" && (
+        <p className="muted">
+          This Mac app contains an older, unversioned Ubuntu binary. Bundle the
+          current Go build to enable in-app updates.
+        </p>
+      )}
+      {review && preview && (
+        <div className="server-updater-review">
+          <h3>Update Dockyard on your VPS?</h3>
+          <p>
+            {preview.candidate_version === "unversioned"
+              ? "This older bundle has no version number. Check its source commit before installing; the control service will restart briefly."
+              : "The control service will restart briefly. Containers and Caddy will continue; Dockyard keeps a database and binary backup for rollback."}
+          </p>
+          <div className="server-updater-hashes">
+            <span>Installed version</span>
+            <strong>
+              {preview.installed_version
+                ? `v${preview.installed_version}`
+                : "Unavailable (older build)"}
+            </strong>
+            <span>New build</span>
+            <strong>
+              {preview.candidate_version === "unversioned"
+                ? `Unversioned · ${preview.source_commit.slice(0, 12)}`
+                : `v${preview.candidate_version}`}
+            </strong>
+          </div>
+          <div className="controls">
+            <button
+              className="button primary"
+              disabled={busy}
+              onClick={() => void update()}
+            >
+              {busy ? "Updating…" : "Confirm update with Touch ID"}
+            </button>
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => setReview(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      <button
+        className="text-button server-updater-forget"
+        disabled={busy}
+        onClick={() => void forgetPassword()}
+      >
+        Forget saved root password
+      </button>
+      {error && (
+        <div className="alert error" role="alert">
+          {error}
+        </div>
+      )}
+    </section>
+  );
+}
+function composeError(error: unknown): string {
+  const message = String(error);
+  const explanations: Record<string, string> = {
+    COMPOSE_ACCESS_REQUIRED:
+      "Enable Compose management in Server details first.",
+    COMPOSE_VALIDATION_FAILED:
+      "Docker Compose could not validate this stack. Check YAML, required .env values, and referenced files on the VPS.",
+    COMPOSE_INVALID:
+      "Docker Compose could not validate the resolved configuration. Check the Compose file and referenced files on the VPS.",
+    COMPOSE_ROUTE_SERVICE_MISSING:
+      "The web service chosen for Caddy is missing from this Compose file.",
+    COMPOSE_ROUTE_INVALID:
+      "Choose a web service and its container port when assigning domains.",
+    COMPOSE_BLUE_GREEN_INCOMPATIBLE:
+      "This stack cannot run two independent copies. Use a single instance for shared storage, host ports or fixed container names.",
+    COMPOSE_BLUE_GREEN_HEALTHCHECK_REQUIRED:
+      "Add a healthcheck to every service for blue–green deployment, or use a single instance.",
+    COMPOSE_NO_ACTIVE_SERVICES:
+      "No active services were found. Check your Compose profiles and .env settings.",
+  };
+  return (
+    Object.entries(explanations).find(([code]) =>
+      message.includes(code),
+    )?.[1] ?? message
+  );
 }
 function OperationModal({
   modal: m,
@@ -2813,11 +3152,12 @@ function OperationModal({
   const [env, setEnv] = useState<Environment | "">("");
   const [projectID, setProjectID] = useState(p?.id ?? "");
   const [appID, setAppID] = useState("");
-  const [template, setTemplate] = useState("");
+  const [routeService, setRouteService] = useState("web");
+  const [routePort, setRoutePort] = useState("80");
   const [domains, setDomains] = useState(p?.domains.join("\n") ?? "");
   const [blue, setBlue] = useState("");
   const [green, setGreen] = useState("");
-  const [zero, setZero] = useState(true);
+  const [zero, setZero] = useState(false);
   const [compose, setCompose] = useState("");
   const [variables, setVariables] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -2866,14 +3206,16 @@ function OperationModal({
             id: projectID,
             app_id: appID,
             environment: env,
-            template_id: template,
+            ...(domains.trim()
+              ? { route_service: routeService, route_port: Number(routePort) }
+              : {}),
             domains: domains
               .split(/[\n,]+/)
               .map((s) => s.trim())
               .filter(Boolean),
-            zerodowntime: env === "production" && zero,
-            ...(blue ? { port: Number(blue) } : {}),
-            ...(env === "production" && zero && green
+            zerodowntime: env === "production" && zero && !!domains.trim(),
+            ...(blue && domains.trim() ? { port: Number(blue) } : {}),
+            ...(env === "production" && zero && domains.trim() && green
               ? { secondary_port: Number(green) }
               : {}),
           },
@@ -2884,7 +3226,7 @@ function OperationModal({
             "Create this application environment before deploying.",
           );
         let vars: unknown;
-        if (variables.trim()) {
+        if (target.mode !== "compose" && variables.trim()) {
           vars = JSON.parse(variables);
           if (
             !vars ||
@@ -2902,7 +3244,13 @@ function OperationModal({
           data: {
             environment: env,
             compose_yaml: compose,
-            ...(vars !== undefined ? { variables: vars } : {}),
+            ...(target.mode === "compose"
+              ? variables
+                ? { env_file: variables }
+                : {}
+              : vars !== undefined
+                ? { variables: vars }
+                : {}),
           },
         };
       } else if (m.kind === "routes")
@@ -2914,7 +3262,7 @@ function OperationModal({
               .split(/[\n,]+/)
               .map((s) => s.trim())
               .filter(Boolean),
-            ...(blue ? { port: Number(blue) } : {}),
+            ...(blue && domains.trim() ? { port: Number(blue) } : {}),
             ...(green ? { secondary_port: Number(green) } : {}),
           },
         };
@@ -2930,7 +3278,7 @@ function OperationModal({
       setVariables("");
       setCompose("");
     } catch (e) {
-      setError(String(e));
+      setError(composeError(e));
     } finally {
       setBusy(false);
     }
@@ -3065,22 +3413,6 @@ function OperationModal({
                       />
                     </label>
                   </div>
-                  <label htmlFor="approved-template">
-                    <span className="field-title">
-                      Server template
-                      <Help label="server templates">
-                        Use a template approved by the VPS administrator. It
-                        defines the allowed images and service settings.
-                      </Help>
-                    </span>
-                    <input
-                      id="approved-template"
-                      required
-                      placeholder="web-node"
-                      value={template}
-                      onChange={(e) => setTemplate(e.target.value)}
-                    />
-                  </label>
                 </>
               )}
               {(m.kind === "create" || m.kind === "routes") && (
@@ -3089,96 +3421,130 @@ function OperationModal({
                     <span className="field-title">
                       Domains
                       <Help label="project domains">
-                        Enter one domain per line. Each must be permitted by the
-                        server policy.
+                        Optional: enter one domain per line to route traffic
+                        through Caddy. Without domains, Compose controls
+                        published ports.
                       </Help>
                     </span>
                     <textarea
                       id="project-domains"
-                      required
+                      required={p?.mode !== "compose" && m.kind === "routes"}
                       rows={3}
                       placeholder="app.example.com"
                       value={domains}
                       onChange={(e) => setDomains(e.target.value)}
                     />
                   </label>
-                  {env === "production" && m.kind === "create" && (
-                    <label className="checkbox-label">
-                      <input
-                        type="checkbox"
-                        checked={zero}
-                        onChange={(e) => setZero(e.target.checked)}
-                      />
-                      <span>
-                        <strong>Blue–green deployment</strong>
-                        <Help label="blue–green deployment">
-                          Production deploys into the alternate slot, then
-                          switches traffic after health checks pass. This
-                          requires stateless stacks; persistent volumes use a
-                          single instance.
-                        </Help>
-                      </span>
-                    </label>
-                  )}
-                  <div className="form-grid">
-                    <label>
-                      Primary port <small>(optional)</small>
-                      <input
-                        type="number"
-                        min={1024}
-                        max={65535}
-                        placeholder={
-                          p ? String(p.blue_port) : "Allocate automatically"
-                        }
-                        value={blue}
-                        onChange={(e) => setBlue(e.target.value)}
-                      />
-                    </label>
-                    {((m.kind === "routes" && p?.zerodowntime) ||
-                      (m.kind === "create" &&
-                        env === "production" &&
-                        zero)) && (
+                  {domains.trim() && m.kind === "create" && (
+                    <div className="form-grid">
                       <label>
-                        Secondary port <small>(optional)</small>
+                        Web service
                         <input
-                          type="number"
-                          min={1024}
-                          max={65535}
-                          placeholder={
-                            p ? String(p.green_port) : "Allocate automatically"
-                          }
-                          value={green}
-                          onChange={(e) => setGreen(e.target.value)}
+                          required
+                          value={routeService}
+                          onChange={(e) => setRouteService(e.target.value)}
+                          placeholder="web"
                         />
                       </label>
+                      <label>
+                        Container port
+                        <input
+                          required
+                          type="number"
+                          min={1}
+                          max={65535}
+                          value={routePort}
+                          onChange={(e) => setRoutePort(e.target.value)}
+                        />
+                      </label>
+                    </div>
+                  )}
+                  {domains.trim() &&
+                    env === "production" &&
+                    m.kind === "create" && (
+                      <label className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={zero}
+                          onChange={(e) => setZero(e.target.checked)}
+                        />
+                        <span>
+                          <strong>Blue–green deployment</strong>
+                          <Help label="blue–green deployment">
+                            Production deploys into the alternate slot, then
+                            switches traffic after health checks pass. This
+                            requires stateless stacks; persistent volumes use a
+                            single instance.
+                          </Help>
+                        </span>
+                      </label>
                     )}
-                  </div>
-                  <button
-                    type="button"
-                    className="text-button"
-                    disabled={preview || busy}
-                    onClick={async () => {
-                      try {
-                        const d = await api.read<{ port: number }>({
-                          kind: "port",
-                        });
-                        setSuggestion(d.port);
-                      } catch (e) {
-                        setError(String(e));
-                      }
-                    }}
-                  >
-                    <Search size={14} />
-                    Check next available port
-                  </button>
-                  {suggestion && (
-                    <p className="muted">
-                      Available port: {suggestion}
-                      <Help label="port availability">
-                        This is a suggestion. The agent reserves the port when
-                        accepting the job.
-                      </Help>
-                    </p>
+                  {domains.trim() && (
+                    <>
+                      {" "}
+                      <div className="form-grid">
+                        <label>
+                          Primary port <small>(optional)</small>
+                          <input
+                            type="number"
+                            min={1024}
+                            max={65535}
+                            placeholder={
+                              p ? String(p.blue_port) : "Allocate automatically"
+                            }
+                            value={blue}
+                            onChange={(e) => setBlue(e.target.value)}
+                          />
+                        </label>
+                        {((m.kind === "routes" && p?.zerodowntime) ||
+                          (m.kind === "create" &&
+                            env === "production" &&
+                            zero)) && (
+                          <label>
+                            Secondary port <small>(optional)</small>
+                            <input
+                              type="number"
+                              min={1024}
+                              max={65535}
+                              placeholder={
+                                p
+                                  ? String(p.green_port)
+                                  : "Allocate automatically"
+                              }
+                              value={green}
+                              onChange={(e) => setGreen(e.target.value)}
+                            />
+                          </label>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="text-button"
+                        disabled={preview || busy}
+                        onClick={async () => {
+                          try {
+                            const d = await api.read<{ port: number }>({
+                              kind: "port",
+                            });
+                            setSuggestion(d.port);
+                          } catch (e) {
+                            setError(String(e));
+                          }
+                        }}
+                      >
+                        <Search size={14} />
+                        Check next available port
+                      </button>
+                      {suggestion && (
+                        <p className="muted">
+                          Available port: {suggestion}
+                          <Help label="port availability">
+                            This is a suggestion. The agent reserves the port
+                            when accepting the job.
+                          </Help>
+                        </p>
+                      )}
+                    </>
                   )}
                 </>
               )}
@@ -3201,10 +3567,9 @@ function OperationModal({
                     <span className="field-title">
                       <label htmlFor="compose">Docker Compose YAML</label>
                       <Help label="Compose requirements">
-                        The VPS validates all services against its policy. Use
-                        1–8 services with an app service and approved digest
-                        images. Build contexts, privileged containers and host
-                        mounts are blocked.
+                        {target?.mode === "compose"
+                          ? "Docker Compose validates your stack. Referenced build contexts and files must already exist on the VPS. Blue–green requires isolated services with health checks."
+                          : "This older project uses its existing server template policy."}
                       </Help>
                     </span>
                     <button
@@ -3231,7 +3596,9 @@ function OperationModal({
                     spellCheck={false}
                     rows={12}
                     placeholder={
-                      "services:\n  app:\n    image: ghcr.io/your-org/your-app@sha256:<approved-digest>\n  worker:\n    x-dockyard-template: worker-node\n    image: ghcr.io/your-org/worker@sha256:<approved-digest>\n"
+                      target?.mode === "compose"
+                        ? 'services:\n  web:\n    image: nginx:alpine\n    ports:\n      - "8080:80"\n'
+                        : "services:\n  app:\n    image: ghcr.io/your-org/your-app@sha256:<digest>\n"
                     }
                     value={compose}
                     onChange={(e) => setCompose(e.target.value)}
@@ -3246,11 +3613,13 @@ function OperationModal({
                   </div>
                   <label htmlFor="app-variables">
                     <span className="field-title">
-                      Environment variables <small>(optional JSON)</small>
+                      {target?.mode === "compose"
+                        ? ".env"
+                        : "Environment variables (JSON)"}
                       <Help label="environment variables">
-                        Leave blank to use the Compose environment or current
-                        snapshot. For a first deployment without variables,
-                        enter {}. Do not also set services.app.environment.
+                        {target?.mode === "compose"
+                          ? "Paste .env contents, or leave blank to reuse saved values. For a new project, blank means no values. Enter # empty to replace the saved file with an empty environment."
+                          : "Leave blank to reuse the current snapshot. Enter {} for an empty environment."}
                       </Help>
                     </span>
                     <textarea
@@ -3258,7 +3627,11 @@ function OperationModal({
                       className="code-editor short"
                       rows={3}
                       spellCheck={false}
-                      placeholder={'{"APP_URL": "https://app.example.com"}'}
+                      placeholder={
+                        target?.mode === "compose"
+                          ? "APP_URL=https://app.example.com"
+                          : '{"APP_URL": "https://app.example.com"}'
+                      }
                       value={variables}
                       onChange={(e) => setVariables(e.target.value)}
                     />

@@ -11,6 +11,10 @@ type Release struct {
 }
 
 type Project struct {
+	Mode             string             `json:"mode,omitempty"`
+	RouteService     string             `json:"route_service,omitempty"`
+	RoutePort        int                `json:"route_port,omitempty"`
+	ReadinessPath    string             `json:"readiness_path,omitempty"`
 	ID               string             `json:"id"`
 	AppID            string             `json:"app_id"`
 	Environment      string             `json:"environment"`
@@ -27,6 +31,8 @@ type Project struct {
 	DNS              []string           `json:"dns_records,omitempty"`
 	RecoveryDrain    bool               `json:"recovery_drain_pending,omitempty"`
 }
+
+func (p Project) NativeCompose() bool { return p.Mode == "compose" }
 
 const (
 	Development = "development"

@@ -112,7 +112,9 @@ impl Enrollment {
 pub enum Read {
     Projects {},
     Inventory {},
-    Migration { project: String },
+    Migration {
+        project: String,
+    },
     Audit {
         after: u64,
     },
@@ -144,7 +146,7 @@ impl Read {
             Self::Port {} => ("/v1/ports/next".into(), "projects.write"),
             Self::Project { project, view } if id(project) && matches!(view.as_str(), "status" | "releases" | "services" | "domains") =>
                 (format!("/v1/projects/{project}/{view}"), "deploy.read"),
-            Self::Logs { project, service, slot, tail, since } if id(project) && id(service)
+            Self::Logs { project, service, slot, tail, since } if id(project) && service_name(service)
                 && matches!(slot.as_str(), "active" | "inactive" | "blue" | "green") && (1..=2000).contains(tail)
                 && matches!(since.as_str(), "5m" | "30m" | "1h" | "24h") =>
                 (format!("/v1/projects/{project}/logs?service={service}&slot={slot}&tail={tail}&since={since}"), "deploy.logs"),
@@ -160,7 +162,14 @@ pub struct Create {
     pub id: String,
     pub app_id: String,
     pub environment: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub template_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_service: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness_path: Option<String>,
     pub domains: Vec<String>,
     pub zerodowntime: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -175,6 +184,8 @@ pub struct Deploy {
     pub compose_yaml: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variables: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_file: Option<String>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -251,15 +262,28 @@ fn domains_ok(d: &[String]) -> bool {
                 })
         })
 }
+fn service_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 128
+        && s.as_bytes()[0].is_ascii_alphanumeric()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
 impl Mutation {
     pub fn plan(self) -> Result<Operation, String> {
         let (method, project, action, scopes, body) = match self {
             Self::Create { data } => {
                 if !id(&data.id)
                     || !id(&data.app_id)
-                    || !id(&data.template_id)
+                    || (!data.template_id.is_empty() && !id(&data.template_id))
                     || !environment(&data.environment)
-                    || !domains_ok(&data.domains)
+                    || (!(data.domains.is_empty() && data.template_id.is_empty())
+                        && !domains_ok(&data.domains))
+                    || data
+                        .route_service
+                        .as_ref()
+                        .is_some_and(|s| !service_name(s))
+                    || data.route_port == Some(0)
                     || (data.environment != "production"
                         && (data.zerodowntime || data.secondary_port.is_some()))
                 {
@@ -277,6 +301,10 @@ impl Mutation {
                 if !environment(&data.environment)
                     || data.compose_yaml.is_empty()
                     || data.compose_yaml.len() > 65536
+                    || data
+                        .env_file
+                        .as_ref()
+                        .is_some_and(|s| s.len() > 65536 || s.contains('\0'))
                     || data.variables.as_ref().is_some_and(|v| {
                         v.len() > 100 || v.iter().any(|(k, val)| k.len() > 64 || val.len() > 8192)
                     })
@@ -288,6 +316,9 @@ impl Mutation {
                 }
                 let body = serde_json::to_string(&data);
                 data.compose_yaml.zeroize();
+                if let Some(env) = data.env_file.as_mut() {
+                    env.zeroize();
+                }
                 if let Some(v) = data.variables.as_mut() {
                     v.values_mut().for_each(Zeroize::zeroize);
                 }
@@ -300,7 +331,7 @@ impl Mutation {
                 )
             }
             Self::Routes { project, data } => {
-                if !domains_ok(&data.domains) {
+                if !data.domains.is_empty() && !domains_ok(&data.domains) {
                     return Err("Invalid domains".into());
                 }
                 (
@@ -499,12 +530,35 @@ mod tests {
         .is_err());
     }
     #[test]
+    fn full_compose_inputs_keep_dotenv_and_need_no_template() {
+        let create: Mutation = serde_json::from_value(serde_json::json!({"action":"create","data":{"id":"demo","app_id":"demo","environment":"production","domains":[],"zerodowntime":false}})).unwrap();
+        let plan = create.plan().unwrap();
+        assert!(!plan.body.contains("template_id"));
+        let deploy: Mutation = serde_json::from_value(serde_json::json!({"action":"deploy","project":"demo","data":{"environment":"production","compose_yaml":"services:\n  web:\n    image: nginx:alpine\n","env_file":"PASSWORD='a$HOME'\n"}})).unwrap();
+        let plan = deploy.plan().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&plan.body).unwrap();
+        assert_eq!(body["env_file"], "PASSWORD='a$HOME'\n");
+        assert!(plan.scopes.contains("deploy.environment"));
+        assert!(Read::Logs {
+            project: "demo".into(),
+            service: "web_API.v2".into(),
+            slot: "active".into(),
+            tail: 200,
+            since: "30m".into()
+        }
+        .target()
+        .is_ok());
+    }
+    #[test]
     fn staging_cannot_be_blue_green() {
         let data = Create {
             id: "demo".into(),
             app_id: "demo".into(),
             environment: "staging".into(),
             template_id: "web".into(),
+            route_service: None,
+            route_port: None,
+            readiness_path: None,
             domains: vec!["app.example.com".into()],
             zerodowntime: true,
             port: None,

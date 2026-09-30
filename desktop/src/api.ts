@@ -48,3 +48,5 @@ export type ServerAccessReport = {
 };
 export const checkServerAccess = () => invoke<ServerAccessReport>("server_access_check");
 export const prepareServerAccess = () => invoke<ServerAccessReport>("server_access_prepare");
+
+export const enableComposeManagement = () => invoke<void>("server_compose_enable");

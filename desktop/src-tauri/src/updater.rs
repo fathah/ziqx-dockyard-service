@@ -274,8 +274,10 @@ fn command(session: &Session, cmd: &str, timeout: u32) -> Result<String, String>
     Ok(output)
 }
 fn inspect_access(session: &Session) -> Result<AccessReport, String> {
-    let output = command(session, ACCESS_CHECK, 15000)
-        .map_err(|_| "Could not check updater access. Confirm Python 3 and root SSH are available on the VPS".to_owned())?;
+    let output = command(session, ACCESS_CHECK, 15000).map_err(|_| {
+        "Could not check updater access. Confirm Python 3 and root SSH are available on the VPS"
+            .to_owned()
+    })?;
     let raw: RawAccess =
         serde_json::from_str(output.trim()).map_err(|_| "VPS returned an invalid access check")?;
     Ok(access_report(raw))
@@ -511,4 +513,31 @@ mod tests {
         raw.stage.kind = "other".into();
         assert_eq!(access_report(raw).update_directory, "manual_review");
     }
+}
+
+pub fn enable_compose(app: &AppHandle, identity: &SshIdentity, key_id: &str) -> Result<(), String> {
+    if key_id.is_empty()
+        || key_id.len() > 48
+        || !key_id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    {
+        return Err("Invalid enrolled credential".into());
+    }
+    let session = ssh(app, identity, "Allow this Mac to deploy Docker Compose stacks with full server privileges. Dockyard will restart briefly.")?;
+    let script = include_str!("../../updater/compose_access.py").replace('\'', "'\"'\"'");
+    let output = command(
+        &session,
+        &format!("python3 -c '{}' '{}'", script, key_id),
+        180000,
+    )?;
+    let value: serde_json::Value =
+        serde_json::from_str(output.trim()).map_err(|_| "Invalid Compose access response")?;
+    if value["enabled"] == true {
+        return Ok(());
+    }
+    Err(value["error"]
+        .as_str()
+        .unwrap_or("Could not enable Compose management")
+        .to_owned())
 }

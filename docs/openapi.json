@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Ziqx Dockyard Service API",
-    "version": "0.5.0",
+    "version": "0.3.0",
     "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
     "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, service, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved."
   },
@@ -110,7 +110,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Creates approved /docker/<id> files, reserves domains/ports and installs maintenance. Existing directories are rejected. Omit ports to allocate. A nonzero secondary_port requires zerodowntime=true and differs from port. Wait for success before first deployment. Requires app_id and an explicit environment choice. App/environment is unique and immutable; deploy the same app in the three environments through distinct project IDs. Production defaults to blue-green; development/staging reserve a single slot. Blue-green true outside production returns BLUE_GREEN_PRODUCTION_ONLY; duplicate app/environment returns APP_ENVIRONMENT_EXISTS. Missing environment returns HTTP 422 DEPLOYMENT_ENVIRONMENT_REQUIRED.",
+        "description": "Full Compose projects require an explicitly configured compose.admin grant and projects: [\"*\"] for the authenticated key, in addition to the signed operation scopes. Full Compose grants root-equivalent server control. Creates /docker/<id> files, reserves domains/ports and installs maintenance. Existing directories are rejected. Omit ports to allocate. A nonzero secondary_port requires zerodowntime=true and differs from port. Wait for success before first deployment. Requires app_id and an explicit environment choice. App/environment is unique and immutable; deploy the same app in the three environments through distinct project IDs. Full Compose projects default to a single instance; compatible production stacks can opt into blue-green. Legacy template projects keep their production default. Blue-green true outside production returns BLUE_GREEN_PRODUCTION_ONLY; duplicate app/environment returns APP_ENVIRONMENT_EXISTS. Missing environment returns HTTP 422 DEPLOYMENT_ENVIRONMENT_REQUIRED.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -467,11 +467,10 @@
           {
             "name": "service",
             "in": "query",
-            "description": "Service belonging to this slot\u2019s recorded Compose revision. Unknown service names are rejected.",
+            "description": "Service in the selected revision. Defaults to the configured route service or first recorded service for Compose projects; app for legacy projects.",
             "schema": {
               "type": "string",
-              "default": "app",
-              "pattern": "^[a-z][a-z0-9-]{0,47}$"
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$"
             }
           }
         ],
@@ -905,7 +904,7 @@
         "tags": [
           "Deployments"
         ],
-        "description": "Requires user-supplied Compose YAML. The service validates a strict subset in memory before invoking Compose config --quiet on an immutable, policy-enforced model. Pulls and starts all services with Docker Compose, verifies every service before switching Caddy, then drains the preceding slot. Stopped projects require start. Persistent named volumes require single-slot mode. Inline service environments or non-null variables require deploy.environment. Requires an explicit environment matching the project. Missing choice returns HTTP 422 DEPLOYMENT_ENVIRONMENT_REQUIRED; a different valid choice returns HTTP 409 DEPLOYMENT_ENVIRONMENT_MISMATCH before Compose processing or secret writes. Clients should ask the environment question before sending the signed request.",
+        "description": "Requires Compose YAML and an explicit environment matching the project. Full Compose mode requires a server-wide key with a configured compose.admin grant, plus signed deploy.execute and deploy.environment scopes. Docker Compose validates and resolves YAML and raw env_file contents before a durable job is accepted. Referenced external files must exist on the VPS. The job starts the stack and verifies running/healthy state; optional Caddy routing switches after those checks. Single-instance deployment can interrupt service; blue-green is production-only and requires independent stateless stacks with healthchecks. Full Compose can deploy to stopped projects. Legacy template projects retain their existing restricted validation and require start first. Missing environment returns 422 DEPLOYMENT_ENVIRONMENT_REQUIRED; a mismatched environment returns 409 DEPLOYMENT_ENVIRONMENT_MISMATCH.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -1732,7 +1731,7 @@
         "tags": [
           "Projects"
         ],
-        "description": "Requires deploy.read and all-project access. Reads cached inventory and at most one root-owned Compose source file to check strict policy compatibility. Returns only fixed check codes and a source hash, never YAML or environment values. This is read-only preflight: no migration execution endpoint exists yet.",
+        "description": "Requires deploy.read and all-project access. Checks cached inventory, source trust/presence and existing routes/ports requiring cutover. Returns fixed check codes and a source hash without source or environment values. Does not require templates or image digests. Read-only: no migration execution endpoint exists yet.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -2090,8 +2089,7 @@
           },
           "image": {
             "type": "string",
-            "pattern": "^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$",
-            "description": "Must use the template's exact allowed GHCR repository."
+            "description": "Legacy primary image; empty for full Compose releases. Use the services endpoint for per-service images."
           },
           "environment_revision": {
             "type": "string",
@@ -2125,19 +2123,18 @@
           },
           "template_id": {
             "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{0,47}$",
-            "maxLength": 48
+            "description": "Legacy projects only; empty for Compose projects."
           },
           "template_revision": {
             "type": "string",
-            "pattern": "^[0-9a-f]{64}$"
+            "description": "Legacy projects only; empty for Compose projects."
           },
           "domains": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Hostname"
             },
-            "minItems": 1,
+            "minItems": 0,
             "maxItems": 10,
             "uniqueItems": true
           },
@@ -2146,7 +2143,7 @@
           },
           "blue_port": {
             "type": "integer",
-            "minimum": 1024,
+            "minimum": 0,
             "maximum": 65535
           },
           "green_port": {
@@ -2205,20 +2202,42 @@
           },
           "environment": {
             "$ref": "#/components/schemas/DeploymentEnvironment"
+          },
+          "route_service": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$",
+            "description": "Optional Caddy target service. Required with domains for Compose projects."
+          },
+          "route_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "description": "Container TCP port for Caddy."
+          },
+          "readiness_path": {
+            "type": "string",
+            "description": "Optional HTTP path on the routed service for readiness checks."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "compose"
+            ],
+            "description": "Full Compose mode. Absent on legacy template projects."
           }
         },
         "required": [
           "id",
-          "template_id",
-          "template_revision",
-          "domains",
           "zerodowntime",
           "blue_port",
           "state",
           "slots",
           "releases",
           "app_id",
-          "environment"
+          "environment",
+          "template_id",
+          "template_revision",
+          "domains"
         ],
         "additionalProperties": false
       },
@@ -2489,20 +2508,21 @@
           "template_id": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9-]{0,47}$",
-            "maxLength": 48
+            "maxLength": 48,
+            "description": "Legacy template mode only. Omit to use full Docker Compose."
           },
           "domains": {
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Hostname"
             },
-            "minItems": 1,
+            "minItems": 0,
             "maxItems": 10,
             "uniqueItems": true
           },
           "zerodowntime": {
             "type": "boolean",
-            "description": "Optional. Defaults true for production and false for development/staging. True is rejected outside production. Production may explicitly use false for persistent-volume stacks."
+            "description": "Defaults false for Compose projects. Only production allows true, with Caddy routing, independent stateless services and explicit healthchecks. Legacy template projects default true in production."
           },
           "port": {
             "oneOf": [
@@ -2540,28 +2560,35 @@
           },
           "environment": {
             "$ref": "#/components/schemas/DeploymentEnvironment"
+          },
+          "route_service": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$",
+            "description": "Optional Caddy target service. Required with domains for Compose projects."
+          },
+          "route_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "description": "Container TCP port for Caddy."
+          },
+          "readiness_path": {
+            "type": "string",
+            "description": "Optional HTTP path on the routed service for readiness checks."
           }
         },
         "required": [
           "id",
-          "template_id",
-          "domains",
           "app_id",
           "environment"
         ],
         "additionalProperties": false,
         "examples": [
           {
-            "id": "demo",
-            "template_id": "web-node",
-            "domains": [
-              "demo.example.com"
-            ],
-            "zerodowntime": true,
-            "port": 3001,
-            "secondary_port": 3002,
+            "id": "demo-production",
             "app_id": "demo",
-            "environment": "production"
+            "environment": "production",
+            "domains": []
           }
         ],
         "allOf": [
@@ -2611,20 +2638,23 @@
               "maxLength": 8192,
               "pattern": "^[^\\r\\n\\u0000]*$"
             },
-            "description": "Full write-only app environment snapshot. May be supplied either here or as services.app.environment, never both. Single-line literal string values, up to 8192 UTF-8 bytes; root template allowed/required keys apply. Omit both to copy the current app environment into a new revision; first deploy requires a snapshot. Companion environments are supplied within Compose YAML. New values require deploy.environment."
+            "description": "Legacy template projects only. New Compose projects use env_file contents."
           },
           "compose_yaml": {
             "type": "string",
             "minLength": 1,
             "maxLength": 65536,
             "writeOnly": true,
-            "description": "Required UTF-8 Compose YAML, maximum 64 KiB in bytes. Strict allow-list; services.app is the Caddy target. Up to 8 services; companions declare x-dockyard-template. Every image uses its approved repository and immutable digest. Only services and managed named volumes are accepted at the top level. See the Compose policy documentation for supported fields. Backend policy validation happens before Docker Compose config --quiet on the normalized model. Inline environment maps require deploy.environment.",
-            "x-compose-schema": {
-              "$ref": "#/components/schemas/ComposeDocument"
-            }
+            "description": "Compose YAML, maximum 64 KiB UTF-8. Full Compose projects use the installed Docker Compose validator and accept multiple services, image tags/digests, builds, mounts, networks and volumes. Referenced external files must exist on the VPS. No template or app service requirement. Blue-green has additional compatibility checks."
           },
           "environment": {
             "$ref": "#/components/schemas/DeploymentEnvironment"
+          },
+          "env_file": {
+            "type": "string",
+            "maxLength": 65536,
+            "writeOnly": true,
+            "description": "Raw .env file contents, not a filesystem path. Up to 64 KiB in UTF-8. Used for Compose interpolation and env_file: .env. Omit to reuse the current snapshot, or supply an empty string to clear. Full Compose mode only; requires deploy.environment."
           }
         },
         "required": [
@@ -2634,12 +2664,9 @@
         "additionalProperties": false,
         "examples": [
           {
-            "compose_yaml": "services:\n  app:\n    image: ghcr.io/your-org/your-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-            "variables": {
-              "DATABASE_URL": "example-only-secret",
-              "APP_URL": "https://demo.example.com"
-            },
-            "environment": "production"
+            "environment": "production",
+            "compose_yaml": "services:\n  web:\n    image: nginx:${TAG}\n    ports: [\"8080:80\"]\n",
+            "env_file": "TAG=alpine\n"
           }
         ]
       },
@@ -2850,7 +2877,7 @@
           "services"
         ],
         "additionalProperties": false,
-        "description": "Schema for the strict Compose subset inside compose_yaml, before agent normalization. YAML anchors/aliases/custom tags/duplicates and multiple documents are rejected. Runtime policy adds constraints beyond this schema. Aggregate memory/CPU sums must fit root stack budgets; omitted budgets default to the largest individual template limits.",
+        "description": "Legacy template-mode subset only. Full Compose projects use the installed Docker Compose schema.",
         "properties": {
           "services": {
             "type": "object",
@@ -2911,8 +2938,7 @@
           },
           "image": {
             "type": "string",
-            "pattern": "^ghcr\\.io/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$",
-            "description": "Must use the template's exact allowed GHCR repository."
+            "description": "Recorded image reference; empty when only a build context is supplied."
           },
           "template_id": {
             "type": "string"

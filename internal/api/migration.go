@@ -6,13 +6,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/ziqx/ziqx-dockyard-service/internal/config"
 	"github.com/ziqx/ziqx-dockyard-service/internal/engine"
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
-	"github.com/ziqx/ziqx-dockyard-service/internal/runtime"
 	"github.com/ziqx/ziqx-dockyard-service/internal/secure"
 )
 
@@ -91,16 +89,6 @@ func migrationAssessment(e *engine.Engine, id string) (MigrationAssessment, bool
 		ports += len(service.PublishedPorts)
 	}
 	add("NO_EXISTING_PUBLISHED_PORTS", ports == 0)
-	// The current desktop installer deliberately provisions inventory-only
-	// credentials and a non-deployment placeholder template. Do not suggest
-	// eligibility when the host has no approved application template.
-	approved := false
-	for id := range e.Config.Templates {
-		if id != "inventory-only" {
-			approved = true
-		}
-	}
-	add("APPROVED_TEMPLATES_CONFIGURED", approved)
 	if p.Present && len(p.ComposeFiles) == 1 && migrationComposeName(p.ComposeFiles[0]) && config.ID.MatchString(p.Name) {
 		path := filepath.Join(e.Config.ProjectsRoot, p.Name, p.ComposeFiles[0])
 		st, statErr := os.Lstat(path)
@@ -120,32 +108,7 @@ func migrationAssessment(e *engine.Engine, id string) (MigrationAssessment, bool
 				if readErr == nil && len(b) <= 64<<10 {
 					hash := sha256.Sum256(b)
 					result.SourceSHA256 = hex.EncodeToString(hash[:])
-					appImage := ""
-					for _, service := range p.Services {
-						if service.Name == "app" {
-							appImage = service.Image
-						}
-					}
-					matches := []string{}
-					for id, t := range e.Config.Templates {
-						if id != "inventory-only" && strings.HasPrefix(appImage, t.ImageRepository+"@sha256:") {
-							matches = append(matches, id)
-						}
-					}
-					// Without an approved template, an image cannot be matched to
-					// one. Keep the policy prerequisite as the only actionable
-					// finding instead of reporting a misleading second failure.
-					if approved {
-						add("APP_TEMPLATE_UNAMBIGUOUS", len(matches) == 1)
-					}
-					if len(matches) == 1 {
-						candidate := model.Project{ID: p.Name, Template: matches[0], Environment: model.Production}
-						plan, parseErr := runtime.ParseCompose(e.Config, candidate, string(b))
-						add("COMPOSE_POLICY_COMPATIBLE", parseErr == nil)
-						if parseErr == nil {
-							add("STATELESS_STACK", len(plan.Volumes) == 0)
-						}
-					}
+
 				} else {
 					add("SOURCE_FILE_READABLE", false)
 				}
