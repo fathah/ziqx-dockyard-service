@@ -7,6 +7,8 @@ export type Release = {
   created_at: string;
 };
 export type Project = {
+  adoption?: { source_name: string; compose_project: string };
+  external_domains?: string[];
   mode?: "compose";
   route_service?: string;
   route_port?: number;
@@ -65,6 +67,8 @@ export type Inventory = {
   warnings: string[];
 };
 export type MigrationAssessment = {
+  strategy?: string;
+  service_count?: number;
   project_id: string;
   status: "blocked" | "candidate";
   source_sha256?: string;

@@ -47,7 +47,21 @@ func (s *Store) Inventory() (model.Inventory, error) {
 		return v, err
 	}
 	err = json.Unmarshal(b, &v)
-	return v, err
+	if err != nil {
+		return v, err
+	}
+	ps, err := s.Projects()
+	if err != nil {
+		return v, err
+	}
+	for i := range v.Projects {
+		for _, p := range ps {
+			if v.Projects[i].ID == p.ID {
+				v.Projects[i].Managed = true
+			}
+		}
+	}
+	return v, nil
 }
 
 // Preserve each last successful source on failed scans. Observed ports remain

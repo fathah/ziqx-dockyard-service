@@ -39,8 +39,7 @@ func (d Docker) nativeContainers(ctx context.Context, p model.Project, slot stri
 		expected[id] = true
 	}
 	for _, c := range containers {
-		labels := c.Config.Labels
-		if !expected[c.ID] || labels["io.ziqx.dockyard.server"] != d.Config.ServerID || labels["io.ziqx.dockyard.project"] != p.ID || labels["com.docker.compose.project"] != "dy-"+d.Config.ServerID+"-"+p.ID+"-"+slot {
+		if !expected[c.ID] || !d.ownsNative(p, slot, c) {
 			return nil, model.Uncertain("CONTAINER_OWNERSHIP_UNKNOWN")
 		}
 		delete(expected, c.ID)

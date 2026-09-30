@@ -154,6 +154,11 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		problem(w, 400, "REQUEST_INVALID", p.RequestID)
 		return
 	}
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/"), "/")
+	if r.Method == "POST" && len(parts) == 3 && parts[0] == "inventory" && parts[2] == "migrate" {
+		a.adopt(w, r, p, body, parts[1])
+		return
+	}
 	a.mutate(w, r, p, body)
 }
 func require(w http.ResponseWriter, p auth.Principal, scope, id string) bool {
@@ -201,7 +206,7 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 			problem(w, 400, "REQUEST_INVALID", p.RequestID)
 			return
 		}
-		assessment, found, err := migrationAssessment(e, parts[1])
+		assessment, found, err := migrationAssessment(r.Context(), e, parts[1])
 		if err != nil {
 			fail(w, err, p.RequestID)
 			return
@@ -967,6 +972,10 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 				return
 			}
 		case "routes_update":
+			if p.Adoption != nil {
+				problem(w, 409, "ADOPTED_ROUTES_PRESERVED", request)
+				return
+			}
 			var input routesRequest
 			if secure.Decode(body, &input) != nil {
 				problem(w, 400, "REQUEST_INVALID", request)

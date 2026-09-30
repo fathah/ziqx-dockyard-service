@@ -78,7 +78,7 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	for _, raw := range object(paths["services"]) {
 		for _, entry := range array(object(raw)["env_file"]) {
 			file := object(entry)
-			if path, ok := file["path"].(string); ok && filepath.Clean(path) == filepath.Join(dir, ".env") {
+			if path, ok := file["path"].(string); ok && filepath.Clean(path) == filepath.Join(d.workingDir(p), ".env") {
 				file["path"] = envPath(d.Config, p.ID, env)
 			}
 		}

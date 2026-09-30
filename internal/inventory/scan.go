@@ -108,6 +108,9 @@ func (s Scanner) projects(ctx context.Context, v *model.Inventory, managed []mod
 	known := map[string]model.Project{}
 	for _, p := range managed {
 		known[p.ID] = p
+		if p.Adoption != nil {
+			known[p.Adoption.SourceName] = p
+		}
 	}
 	total := 0
 	for _, entry := range entries {
@@ -125,6 +128,9 @@ func (s Scanner) projects(ctx context.Context, v *model.Inventory, managed []mod
 		id := "existing-" + hex.EncodeToString(hash[:12])
 		p := model.ExistingProject{ID: id, Name: name, Environment: model.Production, Present: true, ComposeFiles: []string{}, Services: []model.ExistingService{}, Warnings: []string{}}
 		if own, ok := known[name]; ok {
+			if own.Adoption != nil && name == own.ID {
+				continue
+			}
 			p.ID = own.ID
 			p.Environment = own.Environment
 			p.Managed = true

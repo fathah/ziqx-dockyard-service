@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Ziqx Dockyard Service API",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
     "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, service, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved."
   },
@@ -1727,11 +1727,11 @@
     "/v1/inventory/{id}/migration": {
       "get": {
         "operationId": "assessExistingMigration",
-        "summary": "Assess an observed Compose stack for safe-first migration",
+        "summary": "Review adoption of an existing Compose project",
         "tags": [
           "Projects"
         ],
-        "description": "Requires deploy.read and all-project access. Checks cached inventory, source trust/presence and existing routes/ports requiring cutover. Returns fixed check codes and a source hash without source or environment values. Does not require templates or image digests. Read-only: no migration execution endpoint exists yet.",
+        "description": "Requires deploy.read and all-project access. Reads live Docker Compose configuration and verifies the exact container IDs, project name, source files and working directory. Returns a review hash without Compose source or environment values. Does not change containers, volumes, ports or Caddy routes.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -1757,7 +1757,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Read-only migration eligibility checks; execution_available is currently false.",
+            "description": "Adoption review; execution_available is true when live checks pass.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1795,6 +1795,99 @@
           "deploy.read"
         ],
         "x-requires-all-projects": true
+      }
+    },
+    "/v1/inventory/{id}/migrate": {
+      "post": {
+        "operationId": "adoptExistingProject",
+        "summary": "Adopt a reviewed existing Compose project in place",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Requires projects.write, deploy.environment, credential compose.admin and all-project access. Revalidates source_sha256 before acceptance; changed sources return MIGRATION_SOURCE_CHANGED. Stores private Compose/environment snapshots in /docker/<inventory-id> and binds exact existing container ownership. Returns a durable metadata job. Preserves original source files, Compose project name, volumes, ports and Caddy routes. Future redeploys are single-instance and can interrupt service; existing Caddy routes are not edited by this project.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "x-required-scopes": [
+          "deploy.environment",
+          "projects.write"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "source_sha256"
+                ],
+                "properties": {
+                  "source_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Adoption accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        }
       }
     }
   },
@@ -2048,7 +2141,8 @@
           "rollback",
           "restart",
           "start",
-          "stop"
+          "stop",
+          "project_adopt"
         ]
       },
       "AcceptedJob": {
@@ -2224,6 +2318,42 @@
               "compose"
             ],
             "description": "Full Compose mode. Absent on legacy template projects."
+          },
+          "adoption": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "source_name": {
+                "type": "string"
+              },
+              "compose_project": {
+                "type": "string"
+              },
+              "config_files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "container_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "source_name",
+              "compose_project",
+              "config_files",
+              "container_ids"
+            ]
+          },
+          "external_domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -3244,8 +3374,17 @@
             }
           },
           "execution_available": {
-            "type": "boolean",
-            "const": false
+            "type": "boolean"
+          },
+          "strategy": {
+            "type": "string",
+            "enum": [
+              "adopt_in_place"
+            ]
+          },
+          "service_count": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }

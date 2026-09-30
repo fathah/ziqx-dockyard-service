@@ -1,131 +1,217 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"io"
+	"context"
+	"database/sql"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/ziqx/ziqx-dockyard-service/internal/auth"
 	"github.com/ziqx/ziqx-dockyard-service/internal/config"
 	"github.com/ziqx/ziqx-dockyard-service/internal/engine"
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
+	"github.com/ziqx/ziqx-dockyard-service/internal/runtime"
 	"github.com/ziqx/ziqx-dockyard-service/internal/secure"
+	"github.com/ziqx/ziqx-dockyard-service/internal/state"
 )
 
-// MigrationAssessment contains only fixed status codes and safe inventory
-// metadata. Neither Compose source nor environment values leave the server.
 type MigrationAssessment struct {
 	ProjectID          string           `json:"project_id"`
 	Status             string           `json:"status"`
 	SourceSHA256       string           `json:"source_sha256,omitempty"`
 	Checks             []MigrationCheck `json:"checks"`
 	ExecutionAvailable bool             `json:"execution_available"`
+	Strategy           string           `json:"strategy,omitempty"`
+	ServiceCount       int              `json:"service_count,omitempty"`
 }
-
 type MigrationCheck struct {
 	Code   string `json:"code"`
 	Status string `json:"status"`
 }
-
-func migrationComposeName(name string) bool {
-	switch name {
-	case "compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml":
-		return true
-	}
-	return false
+type adoptionDocker interface {
+	PlanAdoption(context.Context, string) (runtime.AdoptionPlan, error)
+	PrepareNative(context.Context, model.Project, string, string) (model.Release, error)
 }
 
-func migrationAssessment(e *engine.Engine, id string) (MigrationAssessment, bool, error) {
-	result := MigrationAssessment{ProjectID: id, Status: "blocked", Checks: []MigrationCheck{}}
-	add := func(code string, pass bool) {
-		status := "blocked"
-		if pass {
-			status = "passed"
-		}
-		result.Checks = append(result.Checks, MigrationCheck{Code: code, Status: status})
-	}
+func observedProject(e *engine.Engine, id string) (*model.ExistingProject, error) {
 	v, err := e.Store.Inventory()
 	if err != nil {
+		return nil, err
+	}
+	for _, p := range v.Projects {
+		if p.ID == id && !p.Managed {
+			return &p, nil
+		}
+	}
+	return nil, nil
+}
+func migrationAssessment(ctx context.Context, e *engine.Engine, id string) (MigrationAssessment, bool, error) {
+	result := MigrationAssessment{ProjectID: id, Status: "blocked", Checks: []MigrationCheck{}, Strategy: "adopt_in_place"}
+	p, err := observedProject(e, id)
+	if err != nil || p == nil {
 		return result, false, err
 	}
-	var p *model.ExistingProject
-	for i := range v.Projects {
-		if v.Projects[i].ID == id && !v.Projects[i].Managed {
-			p = &v.Projects[i]
-			break
-		}
+	d, ok := e.Docker.(adoptionDocker)
+	if !ok {
+		result.Checks = append(result.Checks, MigrationCheck{"MIGRATION_UNAVAILABLE", "blocked"})
+		return result, true, nil
 	}
-	if p == nil {
-		return result, false, nil
+	plan, err := d.PlanAdoption(ctx, p.Name)
+	if err != nil {
+		result.Checks = append(result.Checks, MigrationCheck{safeMigrationError(err), "blocked"})
+		return result, true, nil
 	}
-	sourceFailed := false
-	for _, warning := range v.Warnings {
-		if warning != "PROJECT_METADATA_INCOMPLETE" {
-			sourceFailed = true
-		}
-	}
-	fresh := v.ProjectsObservedAt != nil && v.CaddyObservedAt != nil && v.DockerObservedAt != nil &&
-		time.Since(*v.ProjectsObservedAt) < 10*time.Minute &&
-		time.Since(*v.CaddyObservedAt) < 10*time.Minute &&
-		time.Since(*v.DockerObservedAt) < 10*time.Minute && !sourceFailed
-	add("INVENTORY_FRESH", fresh)
-	add("SOURCE_PRESENT", p.Present)
-	add("SOURCE_METADATA_COMPLETE", len(p.Warnings) == 0)
-	add("SINGLE_COMPOSE_FILE", len(p.ComposeFiles) == 1 && migrationComposeName(p.ComposeFiles[0]))
-	add("PROJECT_ID_SUPPORTED", config.ID.MatchString(p.Name))
-	manualRoutes := 0
-	for _, site := range v.Sites {
-		for _, projectID := range site.ProjectIDs {
-			if projectID == id {
-				manualRoutes++
-			}
-		}
-	}
-	add("NO_MANUAL_CADDY_CUTOVER", manualRoutes == 0)
-	ports := 0
-	for _, service := range p.Services {
-		ports += len(service.PublishedPorts)
-	}
-	add("NO_EXISTING_PUBLISHED_PORTS", ports == 0)
-	if p.Present && len(p.ComposeFiles) == 1 && migrationComposeName(p.ComposeFiles[0]) && config.ID.MatchString(p.Name) {
-		path := filepath.Join(e.Config.ProjectsRoot, p.Name, p.ComposeFiles[0])
-		st, statErr := os.Lstat(path)
-		trusted := statErr == nil && st.Mode().IsRegular() && st.Size() <= 64<<10 && secure.Check(path, false) == nil
-		add("SOURCE_FILE_TRUSTED", trusted)
-		if trusted {
-			f, openErr := os.Open(path)
-			if openErr == nil {
-				opened, statErr := f.Stat()
-				if statErr != nil || !os.SameFile(st, opened) {
-					f.Close()
-					add("SOURCE_FILE_READABLE", false)
-					return result, true, nil
-				}
-				b, readErr := io.ReadAll(io.LimitReader(f, (64<<10)+1))
-				f.Close()
-				if readErr == nil && len(b) <= 64<<10 {
-					hash := sha256.Sum256(b)
-					result.SourceSHA256 = hex.EncodeToString(hash[:])
-
-				} else {
-					add("SOURCE_FILE_READABLE", false)
-				}
-			} else {
-				add("SOURCE_FILE_READABLE", false)
-			}
-		}
-	}
+	result.SourceSHA256 = plan.SHA256
+	result.ServiceCount = plan.Services
 	result.Status = "candidate"
-	for _, check := range result.Checks {
-		if check.Status != "passed" {
-			result.Status = "blocked"
-			break
+	result.ExecutionAvailable = true
+	result.Checks = append(result.Checks, MigrationCheck{"EXISTING_STACK_VERIFIED", "passed"}, MigrationCheck{"EXISTING_TRAFFIC_PRESERVED", "passed"})
+	return result, true, nil
+}
+func safeMigrationError(err error) string {
+	if f, ok := err.(*model.Fault); ok {
+		return f.Code
+	}
+	return "MIGRATION_CHECK_FAILED"
+}
+
+// Adoption snapshots configuration and records existing Compose ownership.
+// There are no Docker mutations or Caddy changes in this operation.
+func (a *API) adopt(w http.ResponseWriter, r *http.Request, principal auth.Principal, body []byte, id string) {
+	if !config.ID.MatchString(id) || !strings.HasPrefix(id, "existing-") {
+		problem(w, 400, "REQUEST_INVALID", principal.RequestID)
+		return
+	}
+	if !require(w, principal, "projects.write", id) || !require(w, principal, "deploy.environment", id) || !a.nativeAuthority(w, principal) {
+		return
+	}
+	var input struct {
+		SourceSHA256 string `json:"source_sha256"`
+	}
+	if secure.Decode(body, &input) != nil || len(input.SourceSHA256) != 64 || strings.Trim(input.SourceSHA256, "0123456789abcdef") != "" {
+		problem(w, 400, "REQUEST_INVALID", principal.RequestID)
+		return
+	}
+	e := a.Engine
+	e.Admission.Lock()
+	defer e.Admission.Unlock()
+	fingerprint := auth.Fingerprint(a.FingerprintKey, e.Config.ServerID, r, body)
+	job, replayed, err := e.Store.Replay(principal.Idempotency, principal.RequestID, fingerprint)
+	if err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	if replayed {
+		accepted(w, job)
+		return
+	}
+	if !e.Ready() {
+		problem(w, 503, "RECOVERY_REQUIRED", principal.RequestID)
+		return
+	}
+	if _, err = e.Store.Project(id); err == nil {
+		problem(w, 409, "PROJECT_EXISTS", principal.RequestID)
+		return
+	} else if err != sql.ErrNoRows {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	source, err := observedProject(e, id)
+	if err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	if source == nil {
+		problem(w, 404, "PROJECT_NOT_FOUND", principal.RequestID)
+		return
+	}
+	d, ok := e.Docker.(adoptionDocker)
+	if !ok {
+		problem(w, 409, "MIGRATION_UNAVAILABLE", principal.RequestID)
+		return
+	}
+	plan, err := d.PlanAdoption(r.Context(), source.Name)
+	if err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	if plan.SHA256 != input.SourceSHA256 {
+		problem(w, 409, "MIGRATION_SOURCE_CHANGED", principal.RequestID)
+		return
+	}
+	if owner, err := e.Store.TargetOwner(source.Name, model.Production); err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	} else if owner != "" {
+		problem(w, 409, "APP_ENVIRONMENT_EXISTS", principal.RequestID)
+		return
+	}
+	if err = e.Store.Capacity(e.Config.MaxQueuedJobs, e.Config.MaxProjects, true); err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	p := model.Project{ID: id, AppID: source.Name, Environment: model.Production, Mode: "compose", Adoption: &plan.Identity, Domains: []string{}, State: "provisioning", Active: "blue", Slots: map[string]model.Release{}, Releases: []model.Release{}}
+	v, err := e.Store.Inventory()
+	if err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	for _, site := range v.Sites {
+		for _, pid := range site.ProjectIDs {
+			if pid == id {
+				p.ExternalDomains = append(p.ExternalDomains, site.HostMatcher)
+			}
 		}
 	}
-	// A safe preflight is necessary but insufficient for takeover. The durable
-	// parallel deployment and traffic-cutover job is not implemented yet.
-	result.ExecutionAvailable = false
-	return result, true, nil
+	dir := filepath.Join(e.Config.ProjectsRoot, id)
+	if err = os.Mkdir(dir, 0700); err != nil {
+		problem(w, 409, "PROJECT_DIRECTORY_EXISTS", principal.RequestID)
+		return
+	}
+	acceptedProject := false
+	defer func() {
+		if !acceptedProject {
+			os.RemoveAll(dir)
+		}
+	}() // Only our newly created private snapshot directory.
+	release, err := d.PrepareNative(r.Context(), p, plan.Source, plan.Dotenv)
+	if err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	release.ID = state.NewID("rel-")
+	release.Created = time.Now().UTC()
+	p.Slots["blue"] = release
+	p.Releases = []model.Release{release}
+	if err = runtime.Binding(e.Config, p, "blue", release); err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	if err = e.Docker.Validate(r.Context(), p, release); err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	// Recheck immediately before acceptance: changed files/containers need review again.
+	current, err := d.PlanAdoption(r.Context(), source.Name)
+	if err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	if current.SHA256 != plan.SHA256 {
+		problem(w, 409, "MIGRATION_SOURCE_CHANGED", principal.RequestID)
+		return
+	}
+	target := p
+	target.State = plan.State
+	job = model.Job{ID: state.NewID("job-"), ProjectID: id, Action: "project_adopt", Status: "queued", Phase: "accepted", Actor: principal.Actor, RequestID: principal.RequestID, Created: time.Now().UTC(), Input: model.Input{Project: &target}}
+	if err = e.Store.Accept(job, &p, principal.Idempotency, fingerprint, e.Config.MaxQueuedJobs, e.Config.MaxProjects); err != nil {
+		fail(w, err, principal.RequestID)
+		return
+	}
+	acceptedProject = true
+	e.Notify()
+	accepted(w, job)
 }

@@ -52,8 +52,20 @@ type Container struct {
 	} `json:"Mounts"`
 }
 
+func (d Docker) composeName(p model.Project, slot string) string {
+	if p.Adoption != nil {
+		return p.Adoption.ComposeProject
+	}
+	return "dy-" + d.Config.ServerID + "-" + p.ID + "-" + slot
+}
+func (d Docker) workingDir(p model.Project) string {
+	if p.Adoption != nil {
+		return filepath.Join(d.Config.ProjectsRoot, p.Adoption.SourceName)
+	}
+	return projectDir(d.Config, p.ID)
+}
 func (d Docker) args(p model.Project, slot string, args ...string) []string {
-	base := []string{"compose", "--project-name", "dy-" + d.Config.ServerID + "-" + p.ID + "-" + slot, "--project-directory", projectDir(d.Config, p.ID), "--file", filepath.Join(projectDir(d.Config, p.ID), "compose.yml"), "--env-file", bindingPath(d.Config, p.ID, slot)}
+	base := []string{"compose", "--project-name", d.composeName(p, slot), "--project-directory", d.workingDir(p), "--file", filepath.Join(projectDir(d.Config, p.ID), "compose.yml"), "--env-file", bindingPath(d.Config, p.ID, slot)}
 	return append(base, args...)
 }
 func (d Docker) command(ctx context.Context, p model.Project, slot string, args ...string) (process.Result, error) {
@@ -81,7 +93,9 @@ func (d Docker) releaseCommand(ctx context.Context, p model.Project, r model.Rel
 		return model.Fail("PROJECT_FILES_FAILED")
 	}
 	argv := d.args(p, "blue", args...)
-	argv[2] = "dy-" + d.Config.ServerID + "-" + p.ID + "-validation"
+	if p.Adoption == nil {
+		argv[2] = "dy-" + d.Config.ServerID + "-" + p.ID + "-validation"
+	}
 	argv[6], argv[8] = path, f.Name()
 	_, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), argv)
 	return err

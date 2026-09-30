@@ -12,6 +12,7 @@
     "server:bundle": "bash scripts/package-server.sh",
     "desktop:build": "tauri build --bundles app --config src-tauri/tauri.local.conf.json -- --locked",
     "test": "cargo test --locked --manifest-path src-tauri/Cargo.toml",
+    "test:naming": "node --experimental-strip-types --test tests/project-naming.test.mjs",
     "format": "prettier --write src package.json tsconfig.json vite.config.ts index.html",
     "desktop:release": "tauri build --bundles app -- --locked"
   },

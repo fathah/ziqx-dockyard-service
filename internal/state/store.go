@@ -331,6 +331,11 @@ func (s *Store) InterruptRunning() error {
 		}
 		j.Status = "recovery_required"
 		j.Error = "JOB_INTERRUPTED"
+		// Adoption has no external writes; finalizing its metadata is replay-safe.
+		if j.Action == "project_adopt" {
+			j.Status = "queued"
+			j.Error = ""
+		}
 		if e = s.Update(j, nil); e != nil {
 			return e
 		}

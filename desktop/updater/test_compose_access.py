@@ -24,6 +24,7 @@ class ComposeAccessTests(unittest.TestCase):
         self.assertNotIn('compose.admin', config['keys'][1]['scopes'])
         self.assertEqual(config['keys'][0]['projects'], ['*'])
         self.assertIn('compose.admin', config['keys'][0]['scopes'])
+        self.assertIn('projects.write', config['keys'][0]['scopes'])
         self.assertEqual(config['reserved_domains'], ['control.example.com'])
         with self.assertRaises(ValueError):
             m.grant(config, 'missing')

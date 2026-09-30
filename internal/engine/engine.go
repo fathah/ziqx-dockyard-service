@@ -166,6 +166,16 @@ func (e *Engine) execute(ctx context.Context, j model.Job) {
 	}
 	if err == nil {
 		switch j.Action {
+		case "project_adopt":
+			for _, r := range p.Slots {
+				if err = runtime.IndexCompose(e.Config, e.Store, p, r); err != nil {
+					break
+				}
+			}
+			if err == nil {
+				p.State = j.Input.Project.State
+				err = e.Store.Update(j, &p)
+			}
 		case "project_create":
 			err = e.create(ctx, &j, &p)
 		case "routes_update":

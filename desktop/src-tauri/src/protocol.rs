@@ -199,6 +199,7 @@ pub struct Routes {
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Mutation {
+    Migrate { project: String, source_sha256: String },
     Create {
         data: Create,
     },
@@ -272,6 +273,12 @@ fn service_name(s: &str) -> bool {
 impl Mutation {
     pub fn plan(self) -> Result<Operation, String> {
         let (method, project, action, scopes, body) = match self {
+            Self::Migrate { project, source_sha256 } => {
+                if !project.starts_with("existing-") || source_sha256.len() != 64 || !source_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
+                    return Err("Invalid migration review".into());
+                }
+                ("POST", project, "migrate", "deploy.environment projects.write", serde_json::to_string(&serde_json::json!({"source_sha256":source_sha256})))
+            }
             Self::Create { data } => {
                 if !id(&data.id)
                     || !id(&data.app_id)
@@ -412,7 +419,9 @@ impl Mutation {
         }
         Ok(Operation {
             method: method.into(),
-            target: if action == "create" {
+            target: if action == "migrate" {
+                format!("/v1/inventory/{project}/migrate")
+            } else if action == "create" {
                 "/v1/projects".into()
             } else {
                 format!("/v1/projects/{project}/{action}")
@@ -463,6 +472,14 @@ mod tests {
             hmac_base64: STANDARD.encode([42u8; 32]),
             ssh: None,
         }
+    }
+    #[test]
+    fn migration_is_bound_to_exact_review_and_scopes() {
+        let op = Mutation::Migrate { project: "existing-abc".into(), source_sha256: "a".repeat(64) }.plan().unwrap();
+        assert_eq!(op.target, "/v1/inventory/existing-abc/migrate");
+        assert_eq!(op.scopes, "deploy.environment projects.write");
+        assert!(Mutation::Migrate { project: "existing-abc".into(), source_sha256: "x".repeat(64) }.plan().is_err());
+        assert!(Mutation::Migrate { project: "../other".into(), source_sha256: "a".repeat(64) }.plan().is_err());
     }
     #[test]
     fn origins_cannot_leak_credentials() {

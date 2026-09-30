@@ -54,6 +54,8 @@ struct Session {
     api_origin: String,
     _tunnel: Option<setup::Tunnel>,
 }
+const AWAY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
 #[derive(Default)]
 struct AwayTimer {
     prompt_epoch: u64,
@@ -84,10 +86,10 @@ impl AwayTimer {
     fn observe(&mut self, focused: bool, now: Instant, wall: SystemTime) -> bool {
         // A long polling gap means the Mac slept or the app was suspended.
         let suspended = self.last_sample.is_some_and(|(mono, real)| {
-            now.saturating_duration_since(mono) >= Duration::from_secs(5)
+            now.saturating_duration_since(mono) >= AWAY_TIMEOUT
                 || wall
                     .duration_since(real)
-                    .is_ok_and(|gap| gap >= Duration::from_secs(5))
+                    .is_ok_and(|gap| gap >= AWAY_TIMEOUT)
         });
         self.last_sample = Some((now, wall));
         let expired = !self.locked
@@ -103,7 +105,7 @@ impl AwayTimer {
             self.deadline = None;
             self.locked = false;
         } else if self.deadline.is_none() && !self.locked {
-            let grace = Duration::from_secs(5);
+            let grace = AWAY_TIMEOUT;
             self.deadline = Some((now + grace, wall + grace));
         }
         expired
@@ -619,6 +621,7 @@ fn validate_pending(op: &Operation) -> Result<(), String> {
     let body: Value = serde_json::from_str(&op.body).map_err(|_| "Invalid saved operation")?;
     let value = match op.action.as_str() {
         "create" => json!({"action":"create","data":body}),
+        "migrate" => json!({"action":"migrate","project":op.project,"source_sha256":body.get("source_sha256")}),
         "deploy" | "routes" => json!({"action":op.action,"project":op.project,"data":body}),
         "stop" => {
             json!({"action":"stop","project":op.project,"confirmation":body.get("confirmation")})
@@ -818,6 +821,7 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         "\nPayload SHA-256:\n{}\n\nThis changes services on your VPS.",
         hex::encode(sha2::Sha256::digest(op.body.as_bytes()))
     ));
+    if op.action == "migrate" { review.push_str("\nAdopt the reviewed existing Compose stack into Dockyard. Containers, ports and Caddy routes stay in place. Future deployments use a single instance."); }
     let sensitive = op.action != "create";
     let approved = native_task(&c, move || {
         let approved = native::with_prompt(|| {
@@ -1386,7 +1390,7 @@ mod transport_tests {
             now + Duration::from_secs(31),
             wall + Duration::from_secs(31)
         ));
-        for sec in 32..36 {
+        for sec in 32..331 {
             assert!(!timer.sample(
                 false,
                 false,
@@ -1399,8 +1403,8 @@ mod transport_tests {
             false,
             false,
             1,
-            now + Duration::from_secs(36),
-            wall + Duration::from_secs(36)
+            now + Duration::from_secs(331),
+            wall + Duration::from_secs(331)
         ));
     }
     #[test]
@@ -1410,25 +1414,25 @@ mod transport_tests {
         assert!(!timer.observe(true, now, wall));
         assert!(timer.observe(
             true,
-            now + Duration::from_secs(20),
-            wall + Duration::from_secs(20)
+            now + Duration::from_secs(301),
+            wall + Duration::from_secs(301)
         ));
     }
     #[test]
-    fn returning_within_five_seconds_preserves_session_and_restarts_next_absence() {
+    fn returning_within_five_minutes_preserves_session_and_restarts_next_absence() {
         let (now, wall) = (Instant::now(), SystemTime::now());
         let mut timer = AwayTimer::default();
         assert!(!timer.observe(false, now, wall));
-        let later = Duration::from_secs(4);
+        let later = Duration::from_secs(299);
         assert!(!timer.observe(true, now + later, wall + later));
         assert!(timer.deadline.is_none());
-        let next = Duration::from_secs(4);
+        let next = Duration::from_secs(299);
         assert!(!timer.observe(false, now + next, wall + next));
         assert!(!timer.observe(false, now + next + later, wall + next + later));
         assert!(timer.observe(
             false,
-            now + next + Duration::from_secs(5),
-            wall + next + Duration::from_secs(5)
+            now + next + Duration::from_secs(300),
+            wall + next + Duration::from_secs(300)
         ));
     }
     #[test]
@@ -1436,11 +1440,11 @@ mod transport_tests {
         let (now, wall) = (Instant::now(), SystemTime::now());
         let mut timer = AwayTimer::default();
         timer.observe(false, now, wall);
-        for seconds in 1..5 {
+        for seconds in 1..300 {
             let d = Duration::from_secs(seconds);
             assert!(!timer.observe(false, now + d, wall + d));
         }
-        let d = Duration::from_secs(6);
+        let d = Duration::from_secs(301);
         assert!(timer.observe(true, now + d, wall + d));
         assert!(!timer.observe(true, now + d, wall + d));
         let mut timer = AwayTimer::default();
@@ -1451,7 +1455,7 @@ mod transport_tests {
     #[test]
     fn background_lock_covers_sleep_and_backward_clock_changes() {
         let (now, wall) = (Instant::now(), SystemTime::now());
-        let elapsed = Duration::from_secs(6);
+        let elapsed = Duration::from_secs(301);
         let mut timer = AwayTimer::default();
         timer.observe(false, now, wall);
         assert!(timer.observe(true, now + Duration::from_secs(1), wall + elapsed));

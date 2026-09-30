@@ -44,6 +44,7 @@ import SetupWizard from "./SetupWizard";
 import TerminalPage from "./TerminalPage";
 import { DomainProviderSettings, ProviderDomains } from "./DomainProviders";
 import Help from "./Help";
+import { projectIdentity } from "./projectNaming";
 import { demoInventory, demoJobs, demoProjects } from "./demo";
 import dockyardIcon from "../src-tauri/icons/icon.png";
 import type {
@@ -772,6 +773,7 @@ function App() {
               project={observedProject}
               inventory={shownInventory}
               preview={preview}
+              perform={perform}
               back={() => setSelected(null)}
               openServerDetails={() => {
                 setSelected(null);
@@ -865,6 +867,9 @@ function App() {
         <OperationModal
           modal={modal}
           projects={shownProjects}
+          observedIDs={(shownInventory?.projects ?? [])
+            .filter((p) => !p.managed)
+            .map((p) => p.id)}
           preview={preview}
           close={() => setModal(null)}
           perform={perform}
@@ -1233,7 +1238,9 @@ function Projects({
                     </span>
                   </span>
                   <span className="route-label">
-                    <span>{p.domains[0] ?? "No domain"}</span>
+                    <span>
+                      {p.domains[0] ?? p.external_domains?.[0] ?? "No domain"}
+                    </span>
                     <small>
                       :{p.active_slot === "green" ? p.green_port : p.blue_port}
                       {p.domains.length > 1
@@ -1489,7 +1496,8 @@ function ProjectDetail({
             </Tag>
           </h1>
           <p>
-            {p.domains.join(" · ")} <span className="mono">/{p.id}</span>
+            {[...p.domains, ...(p.external_domains ?? [])].join(" · ")}{" "}
+            <span className="mono">/{p.id}</span>
           </p>
         </div>
         <button
@@ -1512,7 +1520,7 @@ function ProjectDetail({
         </span>
         <span>
           <Globe2 size={15} />
-          {p.domains.length} domains
+          {p.domains.length + (p.external_domains?.length ?? 0)} domains
         </span>
       </div>
       <div className="tabs">
@@ -1526,6 +1534,12 @@ function ProjectDetail({
           </button>
         ))}
       </div>
+      {p.adoption && (
+        <p className="alert pending">
+          Managed in place · Caddy routes remain in the existing Caddyfile.
+          Redeploys use one instance.
+        </p>
+      )}
       {tab === "overview" && (
         <div className="detail-grid">
           <section className="panel">
@@ -1764,6 +1778,7 @@ function ProjectDetail({
             <h2>Domains & Caddy</h2>
             <button
               className="button small"
+              disabled={!!p.adoption}
               onClick={() => open({ kind: "routes", project: p })}
             >
               Edit routes <Settings2 size={14} />
@@ -1772,6 +1787,15 @@ function ProjectDetail({
           {dnsLoading && (
             <SkeletonRows count={3} label="Loading project domains" />
           )}
+          {(p.external_domains ?? []).map((hostname) => (
+            <div className="domain-row" key={hostname}>
+              <Globe2 size={20} />
+              <div>
+                <strong>{hostname}</strong>
+                <p>Existing Caddyfile route · preserved</p>
+              </div>
+            </div>
+          ))}
           {dns.map((d) => (
             <div className="domain-row" key={d.hostname}>
               <Globe2 size={20} />
@@ -2001,6 +2025,7 @@ function Domains({
               <Tag>{labels[p.environment]}</Tag>
               <button
                 className="button small"
+                disabled={!!p.adoption}
                 onClick={() => open({ kind: "routes", project: p })}
               >
                 Edit route
@@ -2037,12 +2062,14 @@ function ObservedProjectDetail({
   project,
   inventory,
   preview,
+  perform,
   back,
   openServerDetails,
 }: {
   project: Inventory["projects"][number];
   inventory: Inventory | null;
   preview: boolean;
+  perform: (mutation: unknown) => Promise<void>;
   back: () => void;
   openServerDetails: () => void;
 }) {
@@ -2066,7 +2093,7 @@ function ObservedProjectDetail({
             className="button primary"
             onClick={() => setMigrationOpen(true)}
           >
-            Check migration <ArrowRight size={16} />
+            Migrate Now <ArrowRight size={16} />
           </button>
         </div>
       </div>
@@ -2132,6 +2159,7 @@ function ObservedProjectDetail({
         <MigrationReview
           project={project}
           preview={preview}
+          perform={perform}
           close={() => setMigrationOpen(false)}
           openServerDetails={() => {
             setMigrationOpen(false);
@@ -2164,24 +2192,6 @@ const migrationLabels: Record<string, string> = {
     "Convert unsupported Compose settings to Dockyard's secure subset.",
   STATELESS_STACK: "Persistent volumes need a separate data migration plan.",
 };
-const migrationNextSteps: Record<string, string> = {
-  INVENTORY_FRESH: "Refresh the VPS inventory, then check again.",
-  SOURCE_PRESENT: "Restore the project folder before planning a move.",
-  SOURCE_METADATA_COMPLETE:
-    "Review the Compose file and resolve the inventory warning shown on the project page.",
-  SINGLE_COMPOSE_FILE:
-    "Review and merge the active Compose files into one deployment source.",
-  PROJECT_ID_SUPPORTED:
-    "Choose a Dockyard project ID that meets its naming rules.",
-  SOURCE_FILE_TRUSTED:
-    "Review the ownership and permissions of the Compose file and its parent folders.",
-  SOURCE_FILE_READABLE:
-    "Check the Compose file on the VPS and refresh the inventory.",
-  COMPOSE_POLICY_COMPATIBLE:
-    "Review unsupported Compose settings before Dockyard can run a replacement stack.",
-  STATELESS_STACK:
-    "Plan a data backup and transfer before moving a stack with persistent volumes.",
-};
 function migrationCheckError(error: string) {
   if (error.includes("HTTP_404: NOT_FOUND")) {
     return "The Dockyard service running on this VPS does not have the migration-check endpoint. Update the VPS service to enable this check. No project files or containers were changed.";
@@ -2199,42 +2209,25 @@ function MigrationReview({
   preview,
   close,
   openServerDetails,
+  perform,
 }: {
   project: Inventory["projects"][number];
   preview: boolean;
   close: () => void;
   openServerDetails: () => void;
+  perform: (mutation: unknown) => Promise<void>;
 }) {
   const [assessment, setAssessment] = useState<MigrationAssessment | null>(
     null,
   );
   const [error, setError] = useState("");
-  const blocked =
-    assessment?.checks.filter((check) => check.status === "blocked") ?? [];
-  const hasRoute = blocked.some(
-    (check) => check.code === "NO_MANUAL_CADDY_CUTOVER",
-  );
-  const hasPort = blocked.some(
-    (check) => check.code === "NO_EXISTING_PUBLISHED_PORTS",
-  );
-  const needsTemplates = blocked.some(
-    (check) => check.code === "APPROVED_TEMPLATES_CONFIGURED",
-  );
-  const needsImage =
-    !needsTemplates &&
-    blocked.some((check) => check.code === "APP_TEMPLATE_UNAMBIGUOUS");
-  const sourceIssues = blocked.filter(
-    (check) =>
-      ![
-        "NO_MANUAL_CADDY_CUTOVER",
-        "NO_EXISTING_PUBLISHED_PORTS",
-        "APPROVED_TEMPLATES_CONFIGURED",
-        "APP_TEMPLATE_UNAMBIGUOUS",
-      ].includes(check.code),
-  );
+  const [busy, setBusy] = useState(false);
+  const [revision, setRevision] = useState(0);
   useEffect(() => {
     if (preview) return;
     let active = true;
+    setAssessment(null);
+    setError("");
     api
       .read<MigrationAssessment>({ kind: "migration", project: project.id })
       .then((value) => {
@@ -2246,29 +2239,65 @@ function MigrationReview({
     return () => {
       active = false;
     };
-  }, [preview, project.id]);
+  }, [preview, project.id, revision]);
+  const messages: Record<string, string> = {
+    PROJECT_DIRECTORY_EXISTS:
+      "The snapshot folder already exists. Check that folder on the VPS before retrying; Dockyard will not overwrite it.",
+    APP_ENVIRONMENT_EXISTS:
+      "This application's production environment is already managed. Open that project instead.",
+    PROJECT_EXISTS:
+      "This project is already managed. Close this dialog and refresh Projects.",
+    RECOVERY_REQUIRED:
+      "A previous server operation needs recovery. Review its details in Deployments before migrating.",
+    MIGRATION_UNAVAILABLE:
+      "Update the VPS service from Server details to enable adoption.",
+    MIGRATION_CONTAINERS_NOT_FOUND:
+      "No Compose containers were found for this folder. Start the existing stack, then check again.",
+    MIGRATION_COMPOSE_IDENTITY_UNKNOWN:
+      "The containers do not identify one Compose project and folder. Review their Compose labels before adoption.",
+    MIGRATION_SERVICE_MISMATCH:
+      "The Compose file and existing services differ. Reconcile the original stack, then check again.",
+    MIGRATION_SOURCE_UNSAFE:
+      "A Compose file is linked, outside the project folder, or too large. Use regular files inside the project folder.",
+    MIGRATION_SOURCE_UNREADABLE:
+      "Dockyard could not read the existing Compose files. Check their location and access on the VPS.",
+    COMPOSE_VALIDATION_FAILED:
+      "Docker could not validate the existing Compose configuration. Check its YAML and required environment values.",
+    DOCKER_UNAVAILABLE:
+      "Docker could not be reached. Check the Docker service in Server details.",
+    PROJECT_ID_SUPPORTED:
+      "The project folder name must use lowercase letters, numbers and hyphens, starting with a letter.",
+  };
+  const blocked =
+    assessment?.checks.filter((c) => c.status === "blocked") ?? [];
+  const oldServer = !!assessment && assessment.strategy !== "adopt_in_place";
   return (
-    <div className="modal-backdrop" onClick={close}>
+    <div className="modal-backdrop">
       <section
-        className="modal wide migration-modal"
+        className="modal wide migration-modal operation-modal"
         role="dialog"
         aria-modal="true"
         aria-label={`Migrate ${project.name}`}
-        onClick={(event) => event.stopPropagation()}
       >
         <div className="modal-heading">
           <div>
             <span className="eyebrow">Existing project</span>
-            <h2>Migration plan for {project.name}</h2>
+            <h2>Manage {project.name} with Dockyard</h2>
           </div>
-          <button className="icon-button" aria-label="Close" onClick={close}>
+          <button
+            className="icon-button"
+            disabled={busy}
+            aria-label="Close"
+            onClick={close}
+          >
             <X size={19} />
           </button>
         </div>
         <div className="wizard-body">
-          <p className="migration-intro">
-            Dockyard should prepare a replacement, check it, switch traffic, and
-            keep the original stack available for rollback.
+          <p>
+            Keep the current containers, volumes, ports and Caddy routes.
+            Dockyard will save a configuration snapshot and manage this Compose
+            project in place.
           </p>
           {preview && (
             <div className="alert pending">
@@ -2276,107 +2305,104 @@ function MigrationReview({
             </div>
           )}
           {error && (
-            <div className="alert pending migration-error" role="alert">
-              <strong>Migration check unavailable</strong>
-              <span>{migrationCheckError(error)}</span>
-              {error.includes("HTTP_404: NOT_FOUND") && (
-                <button className="button" onClick={openServerDetails}>
-                  Open Server details <ArrowRight size={15} />
-                </button>
-              )}
-              <details>
-                <summary>Technical details</summary>
-                <code>{error}</code>
-              </details>
+            <div className="alert error" role="alert">
+              {error.includes("MIGRATION_SOURCE_CHANGED")
+                ? "The stack changed since this review. Check again before migrating."
+                : error.includes("SCOPE_REQUIRED") ||
+                    error.includes("COMPOSE_ACCESS_REQUIRED")
+                  ? "Enable Compose management in Server details, then try again."
+                  : (messages[error.split(": ").at(-1) ?? ""] ??
+                    migrationCheckError(error))}
             </div>
           )}
           {!preview && !error && !assessment && (
-            <SkeletonRows count={4} label="Checking migration requirements" />
+            <SkeletonRows count={3} label="Checking existing stack" />
           )}
-          {assessment && (
+          {oldServer && (
+            <div className="alert pending">
+              Update the VPS service to version 0.4.0 or later to migrate
+              existing projects.
+            </div>
+          )}
+          {!oldServer && assessment && (
             <>
-              <div className="migration-result">
-                <strong>
-                  {assessment.execution_available
-                    ? "Ready for review"
-                    : "Migration is not available in this version"}
-                </strong>
-              </div>
-              {(hasRoute || hasPort) && (
-                <div className="migration-plan-step">
-                  <span className="migration-plan-number">1</span>
-                  <div>
-                    <strong>Dockyard must move live traffic</strong>
-                    <p>
-                      Start the managed stack on a free local port, verify its
-                      health, then switch the reviewed Caddy route. Keep the
-                      original containers and route backup for rollback. This
-                      cutover job has not been built yet.
-                    </p>
-                    <div className="migration-plan-tags">
-                      {hasRoute && <Tag>Caddy route detected</Tag>}
-                      {hasPort && <Tag>Published port in use</Tag>}
-                    </div>
-                  </div>
+              {assessment.execution_available ? (
+                <div className="migration-result">
+                  <strong>
+                    Ready to migrate · {assessment.service_count} services
+                  </strong>
+                  <Check size={20} />
                 </div>
-              )}
-              {(needsTemplates || needsImage) && (
-                <div className="migration-plan-step">
-                  <span className="migration-plan-number">2</span>
-                  <div>
-                    <strong>Update the Dockyard server</strong>
-                    <p>
-                      This server uses the older template policy. New projects
-                      use Compose and .env without templates.
-                    </p>
-                    <button className="button" onClick={openServerDetails}>
-                      Open Server details <ArrowRight size={15} />
-                    </button>
+              ) : (
+                blocked.map((check) => (
+                  <div className="alert pending" key={check.code}>
+                    {messages[check.code] ??
+                      migrationLabels[check.code] ??
+                      "The stack could not be verified. Check the server connection and try again."}
                   </div>
-                </div>
+                ))
               )}
-              {sourceIssues.length > 0 && (
-                <div className="migration-plan-step">
-                  <span className="migration-plan-number">3</span>
-                  <div>
-                    <strong>Resolve source and data requirements</strong>
-                    {sourceIssues.map((check) => (
-                      <div className="migration-plan-issue" key={check.code}>
-                        <strong>
-                          {migrationLabels[check.code] ?? check.code}
-                        </strong>
-                        {migrationNextSteps[check.code] && (
-                          <p>{migrationNextSteps[check.code]}</p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {!blocked.length && (
-                <div className="migration-plan-step">
-                  <Check size={18} />
-                  <div>
-                    <strong>Source checks passed</strong>
-                    <p>
-                      The migration job is still required to take over this
-                      project.
-                    </p>
-                  </div>
-                </div>
-              )}
-              <div className="alert pending">
-                This review makes no changes. Dockyard cannot take over this
-                stack until the migration job is implemented; your files,
-                routes, and containers are unchanged.
-              </div>
+              <p>
+                After migration: deploy Compose, start, stop, restart and view
+                logs. Existing Caddy routes stay in their current file.
+                Redeploys use a single instance and may briefly interrupt
+                service.
+              </p>
             </>
           )}
         </div>
         <div className="modal-footer">
-          <button className="button" onClick={close}>
+          <button className="button" disabled={busy} onClick={close}>
             Close
           </button>
+          {assessment?.execution_available &&
+          assessment.source_sha256 &&
+          !oldServer ? (
+            <button
+              className="button primary"
+              disabled={busy || preview || !!error}
+              onClick={async () => {
+                setBusy(true);
+                setError("");
+                try {
+                  await perform({
+                    action: "migrate",
+                    project: project.id,
+                    source_sha256: assessment.source_sha256,
+                  });
+                  close();
+                } catch (e) {
+                  setError(String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <Fingerprint size={18} />
+              {busy ? "Migrating…" : "Migrate with Touch ID"}
+            </button>
+          ) : null}
+          {(oldServer ||
+            error.includes("HTTP_404") ||
+            error.includes("SCOPE_REQUIRED") ||
+            error.includes("COMPOSE_ACCESS_REQUIRED")) && (
+            <button
+              className="button primary"
+              disabled={busy}
+              onClick={openServerDetails}
+            >
+              Server details <ArrowRight size={15} />
+            </button>
+          )}
+          {!preview && (error || (!oldServer && blocked.length > 0)) && (
+            <button
+              className="button"
+              disabled={busy}
+              onClick={() => setRevision((n) => n + 1)}
+            >
+              Check again <RefreshCw size={15} />
+            </button>
+          )}
         </div>
       </section>
     </div>
@@ -2748,7 +2774,7 @@ function Security({
             {
               icon: LockKeyhole,
               title: "Touch ID & Keychain",
-              text: "Touch ID unlocks the app. It stays unlocked while active and locks after five seconds away. Sensitive changes require a fresh scan.",
+              text: "Touch ID unlocks the app. It stays unlocked while active and locks after five minutes away. Sensitive changes require a fresh scan.",
             },
             {
               icon: History,
@@ -3107,6 +3133,10 @@ function ServerUpdater() {
 function composeError(error: unknown): string {
   const message = String(error);
   const explanations: Record<string, string> = {
+    ADOPTED_ROUTES_PRESERVED:
+      "This project keeps its existing Caddy routes. Update those routes in the server Caddyfile.",
+    SCOPE_REQUIRED:
+      "This Mac does not have permission for this project. Enable Compose management in Server details to allow access.",
     COMPOSE_ACCESS_REQUIRED:
       "Enable Compose management in Server details first.",
     COMPOSE_VALIDATION_FAILED:
@@ -3133,6 +3163,7 @@ function composeError(error: unknown): string {
 function OperationModal({
   modal: m,
   projects,
+  observedIDs,
   preview,
   close,
   perform,
@@ -3140,6 +3171,7 @@ function OperationModal({
 }: {
   modal: NonNullable<Modal>;
   projects: Project[];
+  observedIDs: string[];
   preview: boolean;
   close: () => void;
   perform: (m: unknown) => Promise<void>;
@@ -3150,8 +3182,16 @@ function OperationModal({
     m.kind === "create" || m.kind === "deploy" ? 0 : 1,
   );
   const [env, setEnv] = useState<Environment | "">("");
-  const [projectID, setProjectID] = useState(p?.id ?? "");
-  const [appID, setAppID] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [nameConflicts, setNameConflicts] = useState<
+    Pick<Project, "id" | "app_id" | "environment">[]
+  >([]);
+  const identity = projectIdentity(
+    projectName,
+    env,
+    [...projects, ...nameConflicts],
+    observedIDs,
+  );
   const [routeService, setRouteService] = useState("web");
   const [routePort, setRoutePort] = useState("80");
   const [domains, setDomains] = useState(p?.domains.join("\n") ?? "");
@@ -3164,6 +3204,7 @@ function OperationModal({
   const [release, setRelease] = useState(p?.releases.at(-1)?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [accessRequired, setAccessRequired] = useState(false);
   const [suggestion, setSuggestion] = useState<number>();
   const name =
     m.kind === "create"
@@ -3181,13 +3222,6 @@ function OperationModal({
       : p;
   function choose(e: Environment) {
     setEnv(e);
-    if (m.kind === "create") setProjectID(appID ? `${appID}-${e}` : "");
-    if (m.kind === "deploy") {
-      const t = projects.find(
-        (x) => x.app_id === p?.app_id && x.environment === e,
-      );
-      setProjectID(t?.id ?? "");
-    }
   }
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -3199,12 +3233,14 @@ function OperationModal({
     setError("");
     try {
       let mutation: unknown;
-      if (m.kind === "create")
+      if (m.kind === "create") {
+        if (!identity)
+          throw new Error("Enter a project name and choose an environment.");
         mutation = {
           action: "create",
           data: {
-            id: projectID,
-            app_id: appID,
+            id: identity.id,
+            app_id: identity.app_id,
             environment: env,
             ...(domains.trim()
               ? { route_service: routeService, route_port: Number(routePort) }
@@ -3220,7 +3256,7 @@ function OperationModal({
               : {}),
           },
         };
-      else if (m.kind === "deploy") {
+      } else if (m.kind === "deploy") {
         if (!target)
           throw new Error(
             "Create this application environment before deploying.",
@@ -3278,7 +3314,30 @@ function OperationModal({
       setVariables("");
       setCompose("");
     } catch (e) {
-      setError(composeError(e));
+      if (
+        m.kind === "create" &&
+        /SCOPE_REQUIRED|COMPOSE_ACCESS_REQUIRED/.test(String(e))
+      ) {
+        setAccessRequired(true);
+        setError(
+          "This Mac is not allowed to create projects on this server yet.",
+        );
+      } else if (
+        m.kind === "create" &&
+        identity &&
+        env &&
+        /APP_ENVIRONMENT_EXISTS|PROJECT_EXISTS|PROJECT_DIRECTORY_EXISTS/.test(
+          String(e),
+        )
+      ) {
+        setNameConflicts((items) => [
+          ...items,
+          { ...identity, environment: env },
+        ]);
+        setError(
+          "That name was just taken on the server. A new available name is ready below; review and submit again.",
+        );
+      } else setError(composeError(e));
     } finally {
       setBusy(false);
     }
@@ -3293,7 +3352,7 @@ function OperationModal({
   return (
     <div className="modal-backdrop">
       <section
-        className={`modal ${m.kind === "deploy" ? "wide" : ""}`}
+        className={`modal operation-modal ${m.kind === "deploy" ? "wide" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
@@ -3386,33 +3445,66 @@ function OperationModal({
                   {error}
                 </div>
               )}
+              {accessRequired && m.kind === "create" && (
+                <div className="project-access-recovery">
+                  <button
+                    type="button"
+                    className="button primary"
+                    disabled={busy || preview}
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        await api.enableComposeManagement();
+                        setAccessRequired(false);
+                        setError("");
+                        toast.success(
+                          "Access enabled. You can submit this project now.",
+                        );
+                      } catch (e) {
+                        setError(String(e));
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    <Fingerprint size={18} /> Enable access with Touch ID
+                  </button>
+                  <Help label="enable project access">
+                    Grants this Mac full Compose management on the server using
+                    root SSH. Dockyard restarts briefly; running containers stay
+                    up.
+                  </Help>
+                </div>
+              )}
               {m.kind === "create" && (
                 <>
-                  <div className="form-grid">
-                    <label>
-                      Application ID
-                      <input
-                        required
-                        pattern="[a-z][a-z0-9-]{0,47}"
-                        placeholder="payments"
-                        value={appID}
-                        onChange={(e) => {
-                          setAppID(e.target.value);
-                          setProjectID(`${e.target.value}-${env}`);
-                        }}
-                      />
-                    </label>
-                    <label>
-                      Project ID
-                      <input
-                        required
-                        pattern="[a-z][a-z0-9-]{0,47}"
-                        placeholder="payments-production"
-                        value={projectID}
-                        onChange={(e) => setProjectID(e.target.value)}
-                      />
-                    </label>
-                  </div>
+                  <label htmlFor="project-name">
+                    Project name
+                    <input
+                      id="project-name"
+                      required
+                      maxLength={120}
+                      placeholder="e.g. Payments"
+                      autoComplete="off"
+                      value={projectName}
+                      onChange={(e) => setProjectName(e.target.value)}
+                      aria-describedby={
+                        identity ? "project-name-preview" : undefined
+                      }
+                    />
+                    {identity && (
+                      <small
+                        id="project-name-preview"
+                        className="project-name-preview"
+                        aria-live="polite"
+                      >
+                        {identity.adjusted
+                          ? "Name already in use. Will create "
+                          : "Will create "}
+                        <strong>{identity.id}</strong>
+                      </small>
+                    )}
+                  </label>
                 </>
               )}
               {(m.kind === "create" || m.kind === "routes") && (

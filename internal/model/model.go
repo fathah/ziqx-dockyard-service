@@ -10,7 +10,16 @@ type Release struct {
 	Created     time.Time `json:"created_at"`
 }
 
+type Adoption struct {
+	SourceName     string   `json:"source_name"`
+	ComposeProject string   `json:"compose_project"`
+	ConfigFiles    []string `json:"config_files"`
+	ContainerIDs   []string `json:"container_ids"`
+}
+
 type Project struct {
+	Adoption         *Adoption          `json:"adoption,omitempty"`
+	ExternalDomains  []string           `json:"external_domains,omitempty"`
 	Mode             string             `json:"mode,omitempty"`
 	RouteService     string             `json:"route_service,omitempty"`
 	RoutePort        int                `json:"route_port,omitempty"`
@@ -45,6 +54,9 @@ func ValidEnvironment(value string) bool {
 }
 
 func (p Project) ValidateTarget() error {
+	if p.Adoption != nil && (!p.NativeCompose() || p.ZeroDowntime || len(p.Domains) != 0 || p.RouteService != "" || p.BluePort != 0 || p.GreenPort != 0) {
+		return Uncertain("ADOPTED_ROUTES_PRESERVED")
+	}
 	if p.AppID == "" || !ValidEnvironment(p.Environment) {
 		return Uncertain("PROJECT_TARGET_INVALID")
 	}

@@ -2703,3 +2703,68 @@ body:has(.modal) {
   font-size: 13px;
   line-height: 1.6;
 }
+
+/* Readable project and deployment forms at native desktop scale. */
+.operation-modal label,
+.operation-modal .wizard-steps,
+.operation-modal .text-button,
+.operation-modal .button {
+  font-size: 14px;
+}
+.operation-modal label {
+  color: #405942;
+  font-weight: 600;
+}
+.operation-modal input:not([type="checkbox"]),
+.operation-modal textarea,
+.operation-modal select {
+  font-size: 16px;
+  color: #293e32;
+  padding: 12px 14px;
+}
+.operation-modal input::placeholder,
+.operation-modal textarea::placeholder {
+  color: #697866;
+  opacity: 1;
+}
+.operation-modal label small,
+.operation-modal .environment-options small {
+  font-size: 13px;
+  color: #52654e;
+}
+.operation-modal .environment-options strong,
+.operation-modal .checkbox-label strong {
+  font-size: 16px;
+  color: #405942;
+}
+.operation-modal .wizard-steps {
+  color: #52654e;
+}
+.operation-modal .wizard-steps i {
+  width: 24px;
+  height: 24px;
+  font-size: 13px;
+}
+.operation-modal .modal-heading h2 {
+  font-size: 28px;
+}
+.operation-modal .modal-heading .eyebrow {
+  font-size: 11px;
+}
+.operation-modal .project-name-preview {
+  overflow-wrap: anywhere;
+}
+
+.project-access-recovery {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.operation-modal .wizard-body > p {
+  font-size: 14px;
+  line-height: 1.7;
+  margin-bottom: 16px;
+}
