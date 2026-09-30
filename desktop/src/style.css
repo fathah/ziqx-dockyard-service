@@ -111,6 +111,66 @@ pre {
   display: flex;
   min-height: 100vh;
 }
+.lock-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f6f7f4;
+}
+.lock-card {
+  width: min(100%, 410px);
+  padding: 44px 40px;
+  border: 1px solid #e0e7dc;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 22px 65px #173b3112;
+  text-align: center;
+}
+.lock-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: #244e39;
+  font-size: 25px;
+  font-weight: 750;
+  letter-spacing: -0.8px;
+}
+.lock-brand .brand-dot,
+.lock-brand .brand-mark span {
+  color: #68994d;
+}
+.lock-symbol {
+  width: 66px;
+  height: 66px;
+  display: grid;
+  place-items: center;
+  margin: 44px auto 18px;
+  border-radius: 18px;
+  background: #edf4e8;
+  color: #315d41;
+}
+.lock-card h1 {
+  font-size: 30px;
+  font-weight: 750;
+  letter-spacing: -0.9px;
+}
+.lock-unlock {
+  width: 100%;
+  min-height: 50px;
+  margin-top: 30px;
+  font-size: 14px;
+}
+.lock-error {
+  margin-top: 18px;
+  padding: 12px;
+  border: 1px solid #ebd4cb;
+  border-radius: 8px;
+  background: #fff6f2;
+  color: #8c3e32;
+  font-size: 13px;
+  line-height: 1.5;
+}
 .sidebar {
   width: 232px;
   background: #173b31;

@@ -4,10 +4,10 @@ A Tauri 2 desktop control room with a Rust API client and a bundled React interf
 
 ## Run on this Mac
 
-The latest local Apple Silicon app is in `releases/clean-sidebar/Dockyard.app`, with `releases/Dockyard-clean-sidebar-macos-arm64.zip` and a SHA-256 checksum. It includes built-in terminals, existing Compose stacks, and a bundled Manrope interface font. From the repository root:
+The latest local Apple Silicon app is in `releases/dockyard-logo/Dockyard.app`, with `releases/Dockyard-logo-macos-arm64.zip` and a SHA-256 checksum. Its app icon uses `src/assets/dockyard.png` on the Dockyard green background. When an enrolled Mac is locked, the app shows only the Touch ID unlock screen. From the repository root:
 
 ```sh
-open desktop/releases/clean-sidebar/Dockyard.app
+open desktop/releases/dockyard-logo/Dockyard.app
 ```
 
 Quit any previously opened Dockyard instance first so the single-instance guard does not bring an older build to the foreground. This local artifact uses an ad-hoc signature; it is not notarized for distribution.
@@ -17,6 +17,7 @@ The local build produces `src-tauri/target/release/bundle/macos/Dockyard.app`:
 ```sh
 cd desktop
 npm ci
+bash scripts/generate-icon.sh
 npm run server:bundle
 npm run desktop:build
 open src-tauri/target/release/bundle/macos/Dockyard.app

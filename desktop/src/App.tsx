@@ -139,6 +139,49 @@ function Brand() {
     </>
   );
 }
+function LockedScreen({
+  loading,
+  retry,
+  busy,
+  error,
+  unlock,
+}: {
+  loading: boolean;
+  retry: boolean;
+  busy: boolean;
+  error: string;
+  unlock: () => void;
+}) {
+  return (
+    <main className="lock-screen">
+      <div className="lock-card">
+        <div className="lock-brand">
+          <Brand />
+        </div>
+        <div className="lock-symbol">
+          <LockKeyhole size={28} />
+        </div>
+        <h1>Locked</h1>
+        {error && <p className="lock-error" role="alert">{error}</p>}
+        <button
+          className="button primary lock-unlock"
+          disabled={loading || busy}
+          onClick={unlock}
+          autoFocus={!loading}
+        >
+          <Fingerprint size={19} />
+          {loading
+            ? "Checking this Mac…"
+            : busy
+              ? "Waiting for macOS…"
+              : retry
+                ? "Retry"
+                : "Unlock with Touch ID"}
+        </button>
+      </div>
+    </main>
+  );
+}
 function App() {
   const [preview, setPreview] = useState(!api.native);
   const [session, setSession] = useState<Session>({
@@ -146,6 +189,9 @@ function App() {
     profile: null,
     jobs: [],
   });
+  const [sessionReady, setSessionReady] = useState(!api.native);
+  const [sessionLoadFailed, setSessionLoadFailed] = useState(false);
+  const [hasEnrollment, setHasEnrollment] = useState(false);
   const [page, setPage] = useState<Page>("projects");
   const [projects, setProjects] = useState<Project[]>([]);
   const [inventory, setInventory] = useState<Inventory | null>(null);
@@ -168,7 +214,8 @@ function App() {
   const loseSession = useCallback(() => {
     epoch.current++;
     unlocked.current = false;
-    setSession((s) => ({ ...s, unlocked: false, jobs: [] }));
+    setSession((s) => ({ ...s, unlocked: false, profile: null, jobs: [] }));
+    setPreview(false);
     setProjects([]);
     setInventory(null);
     setJobs([]);
@@ -179,6 +226,7 @@ function App() {
     setUpdated(undefined);
     setLoading(false);
     setSetupOpen(false);
+    setError("");
   }, []);
   const report = useCallback(
     (e: unknown) => {
@@ -259,11 +307,20 @@ function App() {
       .then((s) => {
         if (!disposed) {
           setSession(s);
+          setHasEnrollment(Boolean(s.enrolled || s.unlocked));
+          setSessionLoadFailed(false);
+          setSessionReady(true);
           unlocked.current = s.unlocked;
           if (s.unlocked) void refresh();
         }
       })
-      .catch(report);
+      .catch((e) => {
+        if (!disposed) {
+          setSessionLoadFailed(true);
+          setSessionReady(true);
+          report(e);
+        }
+      });
     listen("session-locked", () => {
       loseSession();
       setNotice("Session locked. VPS services continue running.");
@@ -304,6 +361,8 @@ function App() {
       epoch.current++;
       unlocked.current = true;
       setSession(s);
+      setHasEnrollment(true);
+      setSessionLoadFailed(false);
       setPreview(false);
       setPage("projects");
       await refresh(s.jobs);
@@ -340,6 +399,22 @@ function App() {
       report(e);
     }
   }
+  async function retrySessionInfo() {
+    setAuthBusy(true);
+    setError("");
+    try {
+      const s = await api.sessionInfo();
+      setSession(s);
+      setHasEnrollment(Boolean(s.enrolled || s.unlocked));
+      setSessionLoadFailed(false);
+      unlocked.current = s.unlocked;
+      if (s.unlocked) await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setAuthBusy(false);
+    }
+  }
   const shownProjects = preview ? demoProjects : projects;
   const shownInventory = preview ? demoInventory : inventory;
   const shownJobs = preview ? demoJobs : jobs;
@@ -353,6 +428,20 @@ function App() {
     shownProjects.length +
     (shownInventory?.projects.filter((p) => !p.managed).length ?? 0);
   const busy = authBusy || loading;
+  if (api.native && (!sessionReady || sessionLoadFailed || (hasEnrollment && !session.unlocked))) {
+    return (
+      <LockedScreen
+        loading={!sessionReady}
+        retry={sessionLoadFailed}
+        busy={authBusy}
+        error={sessionReady ? error : ""}
+        unlock={() => {
+          if (sessionLoadFailed) void retrySessionInfo();
+          else void authenticate("unlock");
+        }}
+      />
+    );
+  }
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -562,6 +651,7 @@ function App() {
                   await api.forget();
                   loseSession();
                   setSession({ unlocked: false, profile: null, jobs: [] });
+                  setHasEnrollment(false);
                   setNotice(
                     "Local enrollment removed. Revoke its key on the VPS to remove server access.",
                   );
@@ -676,6 +766,7 @@ function App() {
             epoch.current++;
             unlocked.current = true;
             setSession(s);
+            setHasEnrollment(true);
             setPreview(false);
             setSetupOpen(false);
             setPage("projects");
