@@ -774,7 +774,6 @@ function App() {
             <Projects
               projects={shownProjects}
               inventory={shownInventory}
-              jobs={shownJobs}
               updated={updated}
               loading={loading}
               initialLoading={initialWorkspaceLoading}
@@ -953,9 +952,9 @@ function Connect({
 function Projects({
   projects,
   inventory,
-  jobs,
   updated,
   loading,
+  initialLoading,
   select,
   selectObserved,
   create,
@@ -963,9 +962,9 @@ function Projects({
 }: {
   projects: Project[];
   inventory: Inventory | null;
-  jobs: Job[];
   updated?: string;
   loading: boolean;
+  initialLoading: boolean;
   select: (s: string) => void;
   selectObserved: (id: string) => void;
   create: () => void;
@@ -999,9 +998,28 @@ function Projects({
     Math.min(page, maxPage) * 20,
     Math.min(page, maxPage) * 20 + 20,
   );
-  const activeJobs = jobs.filter((j) =>
-    ["queued", "running", "recovery_required"].includes(j.status),
-  ).length;
+  if (initialLoading) {
+    return (
+      <>
+        <div className="page-heading">
+          <h1>Projects</h1>
+          <button className="button primary" onClick={create}>
+            <Plus size={17} /> New project
+          </button>
+        </div>
+        <SkeletonStats />
+        <div className="section-heading">
+          <h2>Projects</h2>
+          <RefreshCw size={16} className="spin" />
+        </div>
+        <div className="filters skeleton-filters" aria-hidden="true">
+          <Skeleton width={390} height={37} radius={6} />
+          <Skeleton width={195} height={36} radius={6} />
+        </div>
+        <SkeletonProjectTable />
+      </>
+    );
+  }
   return (
     <>
       <div className="page-heading">
@@ -1245,41 +1263,6 @@ function Projects({
                 <ChevronRight size={15} />
               </button>
             </div>
-          </div>
-        </div>
-        <div className="right-rail">
-          <div className="rail-activity">
-            <div className="section-heading">
-              <h3>Recent operations</h3>
-              <span className="count">{activeJobs} active</span>
-            </div>
-            {jobs.slice(0, 3).map((j) => (
-              <div className="activity-item" key={j.job_id}>
-                <span
-                  className={`activity-icon ${j.status === "succeeded" ? "success" : ""}`}
-                >
-                  {j.status === "succeeded" ? (
-                    <Check size={15} />
-                  ) : (
-                    <Activity size={15} />
-                  )}
-                </span>
-                <div>
-                  <strong>
-                    {j.action[0].toUpperCase() + j.action.slice(1)} ·{" "}
-                    {j.project_id}
-                  </strong>
-                  <p>
-                    {j.status.replaceAll("_", " ")} · {ago(j.created_at)}
-                  </p>
-                </div>
-              </div>
-            ))}
-            {jobs.length === 0 && (
-              <p className="muted">
-                Operations started from this Mac will appear here.
-              </p>
-            )}
           </div>
         </div>
       </div>
