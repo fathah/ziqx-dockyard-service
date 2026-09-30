@@ -5,6 +5,8 @@ compile_error!("Dockyard Desktop currently requires macOS Keychain and LocalAuth
 mod native;
 mod protocol;
 mod setup;
+mod setup_error;
+mod terminal;
 mod tls;
 
 use protocol::{Enrollment, Mutation, Operation, Read};
@@ -103,6 +105,7 @@ struct Control {
     native_prompt: Arc<AtomicBool>,
     setup: Arc<Mutex<Option<setup::Plan>>>,
     away: Arc<SyncMutex<AwayTimer>>,
+    terminal: Arc<SyncMutex<Option<terminal::Handle>>>,
 }
 impl Control {
     fn new() -> Self {
@@ -117,10 +120,12 @@ impl Control {
             native_prompt: Arc::new(AtomicBool::new(false)),
             setup: Arc::new(Mutex::new(None)),
             away: Arc::new(SyncMutex::new(AwayTimer::default())),
+            terminal: Arc::new(SyncMutex::new(None)),
         }
     }
     async fn clear(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
+        self.terminal.lock().expect("terminal poisoned").take();
         self.inner.lock().await.session = None;
         self.setup.lock().await.take();
     }
@@ -453,7 +458,19 @@ async fn session_info(c: State<'_, Control>) -> Result<Value, String> {
         .as_ref()
         .map(|s| s.saved.jobs.clone())
         .unwrap_or_default();
-    Ok(json!({"unlocked":unlocked,"profile":inner.profile,"jobs":jobs}))
+    let profile = if unlocked { inner.profile.clone() } else { None };
+    let known_enrollment = unlocked || inner.profile.is_some();
+    drop(inner);
+    let enrolled = if known_enrollment {
+        true
+    } else if let Some(bytes) = native::load_optional()? {
+        let saved: Saved = serde_json::from_slice(&bytes)
+            .map_err(|_| "Saved enrollment is invalid")?;
+        saved.setup.is_none()
+    } else {
+        false
+    };
+    Ok(json!({"unlocked":unlocked,"profile":profile,"jobs":jobs,"enrolled":enrolled}))
 }
 #[tauri::command]
 async fn enroll(c: State<'_, Control>) -> Result<Value, String> {
@@ -611,6 +628,13 @@ async fn forget_device(c: State<'_, Control>) -> Result<(), String> {
             serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid")?;
         if saved.pending.is_some() || saved.setup.is_some() {
             return Err("Resolve the saved operation before removing enrollment".into());
+        }
+        if let Some(ssh) = &saved.enrollment.ssh {
+            native::terminal_delete(&terminal::account(
+                &ssh.server_ip,
+                ssh.port,
+                &ssh.host_sha256,
+            ))?;
         }
         native::delete()
     })
@@ -836,6 +860,138 @@ async fn import_compose(c: State<'_, Control>) -> Result<Option<String>, String>
     })
     .await
 }
+
+async fn terminal_authority(
+    c: &Control,
+) -> Result<(protocol::SshIdentity, terminal::Lease), String> {
+    let mut inner = c.inner.lock().await;
+    let s = session(&mut inner)?;
+    let ssh = s
+        .saved
+        .enrollment
+        .ssh
+        .clone()
+        .ok_or("Enroll a pinned SSH server before using the terminal")?;
+    Ok((
+        ssh,
+        terminal::Lease {
+            generation: c.generation.clone(),
+            expected: s.generation,
+            expires: s.expires,
+            expires_wall: s.expires_wall,
+        },
+    ))
+}
+#[tauri::command]
+async fn terminal_connect(
+    app: tauri::AppHandle,
+    c: State<'_, Control>,
+    remember: bool,
+) -> Result<terminal::Connected, String> {
+    let (ssh, lease) = terminal_authority(&c).await?;
+    c.terminal.lock().expect("terminal poisoned").take();
+    let check = lease.clone();
+    let handle = app.clone();
+    let (connection, connected) = native_task(&c, move || {
+        native::authenticate_reason(&format!("Open root SSH access to {}:{}. This grants full server control.", ssh.server_ip, ssh.port))?;
+        lease.check()?;
+        let (session, _) = setup::connect(&ssh.server_ip, ssh.port, Some(&ssh.host_sha256))?;
+        let account = terminal::account(&ssh.server_ip, ssh.port, &ssh.host_sha256);
+        let saved = if remember { native::terminal_load(&account)? } else { None };
+        let password = if let Some(bytes) = saved {
+            if bytes.is_empty() || bytes.len() > 1024 { return Err("Saved SSH password is invalid; forget it and reconnect".into()); }
+            Zeroizing::new(std::str::from_utf8(&bytes).map_err(|_| "Saved SSH password is invalid; forget it and reconnect")?.to_owned())
+        } else { native::terminal_password(&handle, format!("{}:{}", ssh.server_ip, ssh.port), remember)? };
+        lease.check()?;
+        session.userauth_password("root", &password).map_err(|_| "Root SSH login failed. Check your password and server SSH policy. If a password was saved, use Forget password before trying again.")?;
+        if !session.authenticated() { return Err("Root SSH login failed".into()); }
+        lease.check()?;
+        if remember { native::terminal_save(&account, password.as_bytes())?; }
+        drop(password);
+        terminal::spawn(session, lease, remember)
+    }).await?;
+    check.check()?;
+    if !app
+        .get_webview_window("main")
+        .is_some_and(|w| w.is_focused().unwrap_or(false))
+    {
+        return Err("Bring Dockyard to the foreground and reconnect".into());
+    }
+    *c.terminal.lock().expect("terminal poisoned") = Some(connection);
+    Ok(connected)
+}
+#[tauri::command]
+async fn terminal_start(
+    c: State<'_, Control>,
+    id: String,
+    container: Option<String>,
+    shell: String,
+    cols: u32,
+    rows: u32,
+) -> Result<(), String> {
+    let reply = {
+        let manager = c.terminal.lock().expect("terminal poisoned");
+        let handle = manager.as_ref().ok_or("Terminal is disconnected")?;
+        handle.matches(&id)?;
+        handle.start(container, shell, cols, rows)?
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        reply
+            .recv_timeout(Duration::from_secs(12))
+            .map_err(|_| "Opening the shell timed out")?
+    })
+    .await
+    .map_err(|_| "Terminal task failed")?
+}
+#[tauri::command]
+fn terminal_input(c: State<'_, Control>, id: String, data: String) -> Result<(), String> {
+    let manager = c.terminal.lock().expect("terminal poisoned");
+    let handle = manager.as_ref().ok_or("Terminal is disconnected")?;
+    handle.matches(&id)?;
+    let data = Zeroizing::new(data);
+    handle.input(&data)
+}
+#[tauri::command]
+fn terminal_resize(c: State<'_, Control>, id: String, cols: u32, rows: u32) -> Result<(), String> {
+    let manager = c.terminal.lock().expect("terminal poisoned");
+    let handle = manager.as_ref().ok_or("Terminal is disconnected")?;
+    handle.matches(&id)?;
+    handle.resize(cols, rows)
+}
+#[tauri::command]
+fn terminal_poll(c: State<'_, Control>, id: String) -> Result<terminal::Output, String> {
+    let manager = c.terminal.lock().expect("terminal poisoned");
+    let handle = manager.as_ref().ok_or("Terminal is disconnected")?;
+    handle.matches(&id)?;
+    Ok(handle.poll())
+}
+#[tauri::command]
+fn terminal_close(c: State<'_, Control>, id: String) -> Result<(), String> {
+    let mut manager = c.terminal.lock().expect("terminal poisoned");
+    // Closing stays available after lock, and a stale close cannot terminate a newer shell.
+    if manager.as_ref().is_some_and(|h| h.id == id) {
+        manager.take();
+    }
+    Ok(())
+}
+#[tauri::command]
+async fn terminal_forget_password(c: State<'_, Control>) -> Result<(), String> {
+    let (ssh, lease) = terminal_authority(&c).await?;
+    native_task(&c, move || {
+        native::authenticate_reason(&format!(
+            "Remove the saved root SSH password for {} from Keychain",
+            ssh.server_ip
+        ))?;
+        lease.check()?;
+        native::terminal_delete(&terminal::account(
+            &ssh.server_ip,
+            ssh.port,
+            &ssh.host_sha256,
+        ))
+    })
+    .await
+}
+
 use sha2::Digest;
 fn main() {
     let control = Control::new();
@@ -860,7 +1016,14 @@ fn main() {
             setup_inspect,
             setup_install,
             setup_resume,
-            setup_cancel
+            setup_cancel,
+            terminal_connect,
+            terminal_start,
+            terminal_input,
+            terminal_resize,
+            terminal_poll,
+            terminal_close,
+            terminal_forget_password
         ])
         .setup(move |app| {
             tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?

@@ -122,6 +122,9 @@ func TestFailedSourcesAndMissingProjectsKeepLastKnownInventory(t *testing.T) {
 	if len(v.Sites) != 2 || len(v.Projects[0].Services) != 2 || len(v.Projects[0].Warnings) == 0 || !v.CaddyObservedAt.Equal(*old.CaddyObservedAt) || !v.DockerObservedAt.Equal(*old.DockerObservedAt) {
 		t.Fatal("failed scan destroyed last success", v)
 	}
+	if CheckSources(v) == nil {
+		t.Fatal("offline import must report failed Docker/Caddy sources")
+	}
 	os.RemoveAll(project)
 	v, err = s.Sync(context.Background())
 	if err != nil || len(v.Projects) != 1 || v.Projects[0].Present {
@@ -145,6 +148,23 @@ func TestComposeMetadataDoesNotFollowAliasesOrUnsafeFiles(t *testing.T) {
 	v, err := s.Sync(context.Background())
 	if err != nil || len(v.Projects[0].Warnings) == 0 || len(v.Projects[0].Services) != 0 {
 		t.Fatal("followed Compose symlink", v, err)
+	}
+	if CheckSources(v) != nil {
+		t.Fatal("a safely skipped legacy file must not prevent offline import", v.Warnings)
+	}
+	if len(v.Sites) != 2 || v.DockerObservedAt == nil || v.CaddyObservedAt == nil {
+		t.Fatal("other source observations must remain available", v)
+	}
+	if reserved, err := s.Store.Reserved(3300, "new"); err != nil || !reserved {
+		t.Fatal("Docker-observed ports must remain reserved despite skipped legacy files", err)
+	}
+}
+
+func TestOfflineImportRejectsUnknownOrFailedSources(t *testing.T) {
+	for _, warning := range []string{"PROJECT_SCAN_FAILED", "DOCKER_SCAN_FAILED", "CADDY_SCAN_FAILED", "FUTURE_SOURCE_FAILURE"} {
+		if CheckSources(model.Inventory{Warnings: []string{"PROJECT_METADATA_INCOMPLETE", warning}}) == nil {
+			t.Fatal("accepted an incomplete source", warning)
+		}
 	}
 }
 

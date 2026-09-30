@@ -29,7 +29,6 @@ import {
   LayoutDashboard,
   LockKeyhole,
   Plus,
-  Radio,
   RefreshCw,
   Search,
   Server,
@@ -43,6 +42,8 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import * as api from "./api";
 import SetupWizard from "./SetupWizard";
+import TerminalPage from "./TerminalPage";
+import Help from "./Help";
 import { demoInventory, demoJobs, demoProjects } from "./demo";
 import type {
   Environment,
@@ -57,7 +58,13 @@ import type {
 } from "./types";
 
 type Page =
-  "projects" | "deployments" | "domains" | "inventory" | "audit" | "security";
+  | "projects"
+  | "deployments"
+  | "domains"
+  | "inventory"
+  | "audit"
+  | "security"
+  | "terminal";
 type Modal =
   | { kind: "create" }
   | { kind: "deploy" | "routes" | "stop" | "rollback"; project: Project }
@@ -69,6 +76,7 @@ const nav = [
   { id: "domains", label: "Domains", icon: Globe2 },
   { id: "inventory", label: "VPS inventory", icon: Database },
   { id: "audit", label: "Audit trail", icon: History },
+  { id: "terminal", label: "Terminal", icon: Terminal },
 ] as const;
 const environments: Environment[] = ["production", "staging", "development"];
 const labels: Record<Environment, string> = {
@@ -114,7 +122,7 @@ function Empty({
     <div className="empty">
       <Icon size={30} />
       <h3>{title}</h3>
-      <p>{children}</p>
+      {children && <p>{children}</p>}
     </div>
   );
 }
@@ -336,6 +344,14 @@ function App() {
   const shownInventory = preview ? demoInventory : inventory;
   const shownJobs = preview ? demoJobs : jobs;
   const project = shownProjects.find((p) => p.id === selected);
+  const observedProject = selected?.startsWith("observed:")
+    ? shownInventory?.projects.find(
+        (p) => !p.managed && p.id === selected.slice("observed:".length),
+      )
+    : undefined;
+  const projectCount =
+    shownProjects.length +
+    (shownInventory?.projects.filter((p) => !p.managed).length ?? 0);
   const busy = authBusy || loading;
   return (
     <div className="app-shell">
@@ -390,23 +406,12 @@ function App() {
               <n.icon size={18} />
               <span>{n.label}</span>
               {n.id === "projects" && canUse && (
-                <small>{shownProjects.length}</small>
+                <small>{projectCount}</small>
               )}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <div className="private-note">
-            <ShieldCheck size={19} />
-            <div>
-              <strong>Private by design</strong>
-              <p>
-                mTLS + signed requests
-                <br />
-                Credentials stay in Rust.
-              </p>
-            </div>
-          </div>
           <button
             className={page === "security" ? "nav-item active" : "nav-item"}
             onClick={() => {
@@ -483,8 +488,7 @@ function App() {
           <div className="preview-banner">
             <FileCode2 size={15} />
             <span>
-              <strong>Design preview.</strong> All projects and activity below
-              are sample data. No server is connected.
+              <strong>Preview</strong> · Sample data
             </span>
             <button
               onClick={() => {
@@ -533,6 +537,14 @@ function App() {
           </div>
         )}
         <div className="content">
+          {canUse && (
+            <TerminalPage
+              visible={page === "terminal"}
+              native={api.native && !preview}
+              server={session.profile?.server_ip}
+              report={report}
+            />
+          )}
           {page === "security" ? (
             <Security
               profile={session.profile}
@@ -567,7 +579,7 @@ function App() {
               setup={() => setSetupOpen(true)}
               explore={() => setPreview(true)}
             />
-          ) : project ? (
+          ) : page === "terminal" ? null : project ? (
             <ProjectDetail
               key={project.id + String(preview)}
               project={project}
@@ -577,13 +589,21 @@ function App() {
               execute={perform}
               report={report}
             />
+          ) : observedProject ? (
+            <ObservedProjectDetail
+              project={observedProject}
+              inventory={shownInventory}
+              back={() => setSelected(null)}
+            />
           ) : page === "projects" ? (
             <Projects
               projects={shownProjects}
+              inventory={shownInventory}
               jobs={shownJobs}
               updated={updated}
               loading={loading}
               select={setSelected}
+              selectObserved={(id) => setSelected(`observed:${id}`)}
               create={() => setModal({ kind: "create" })}
               refresh={() => {
                 if (!preview) void refresh();
@@ -627,8 +647,7 @@ function App() {
         <footer className="footer">
           <span>
             <span className="tiny-mark">D</span>DOCKYARD{" "}
-            <span className="footer-dot">/</span> A quieter way to run your
-            services.
+            <span className="footer-dot">/</span> Service manager.
           </span>
           <span>
             {preview
@@ -699,27 +718,20 @@ function Connect({
           <Layers3 size={21} />
         </span>
       </div>
-      <div className="eyebrow">YOUR PRIVATE CONTROL ROOM</div>
       <h1>
-        Everything running.
-        <br />
-        <span>Everything in reach.</span>
+        Connect your VPS{" "}
+        <Help label="server connection">
+          Set up Dockyard on an Ubuntu VPS, or import credentials for a server
+          already configured. A saved connection unlocks with Touch ID.
+        </Help>
       </h1>
-      <p>
-        One secure place for your VPS, Compose stacks,
-        <br />
-        deployments and domains. Built for your Mac.
-      </p>
       <div className="connect-actions">
         <button className="button primary" disabled={busy} onClick={setup}>
           <Server size={17} />
           Set up Dockyard on your server
         </button>
       </div>
-      <p className="connect-enrollment-hint">
-        First time? Set up your Ubuntu VPS here. Credentials are generated
-        automatically.
-      </p>
+
       <div className="connect-actions">
         <button
           className="button"
@@ -760,37 +772,53 @@ function Connect({
 }
 function Projects({
   projects,
+  inventory,
   jobs,
   updated,
   loading,
   select,
+  selectObserved,
   create,
   refresh,
 }: {
   projects: Project[];
+  inventory: Inventory | null;
   jobs: Job[];
   updated?: string;
   loading: boolean;
   select: (s: string) => void;
+  selectObserved: (id: string) => void;
   create: () => void;
   refresh: () => void;
 }) {
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(0);
-  const filtered = projects.filter(
-    (p) =>
-      (filter === "all" || p.environment === filter) &&
-      `${p.app_id} ${p.id} ${p.domains.join(" ")}`
+  const observed = (inventory?.projects ?? []).filter((p) => !p.managed);
+  const entries = [
+    ...projects.map((project) => ({ kind: "managed" as const, project })),
+    ...observed.map((project) => ({ kind: "observed" as const, project })),
+  ];
+  const filtered = entries.filter(({ kind, project }) => {
+    const domains =
+      kind === "managed"
+        ? project.domains
+        : (inventory?.sites ?? [])
+            .filter((site) => site.project_ids.includes(project.id))
+            .map((site) => site.host_matcher);
+    const name = kind === "managed" ? project.app_id : project.name;
+    return (
+      (filter === "all" || project.environment === filter) &&
+      `${name} ${project.id} ${domains.join(" ")}`
         .toLowerCase()
-        .includes(query.toLowerCase()),
-  );
+        .includes(query.toLowerCase())
+    );
+  });
   const maxPage = Math.max(0, Math.ceil(filtered.length / 20) - 1);
   const slice = filtered.slice(
     Math.min(page, maxPage) * 20,
     Math.min(page, maxPage) * 20 + 20,
   );
-  const running = projects.filter((p) => p.state === "running").length;
   const activeJobs = jobs.filter((j) =>
     ["queued", "running", "recovery_required"].includes(j.status),
   ).length;
@@ -798,48 +826,44 @@ function Projects({
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">WORKSPACE OVERVIEW</div>
           <h1>
-            Your services. <span>One control room.</span>
+            Projects{" "}
+            <Help label="project management">
+              Dockyard deployments and existing Compose stacks from /docker
+              appear here. Existing stacks are read-only until migrated.
+            </Help>
           </h1>
-          <p>Deploy confidently. Keep every environment in view.</p>
         </div>
         <button className="button primary" onClick={create}>
           <Plus size={17} />
           New project
         </button>
       </div>
-      <div className="stats-grid">
+      <div className="stats-grid three">
         <Stat
-          label="MANAGED PROJECTS"
-          value={projects.length}
+          label="PROJECTS"
+          value={entries.length}
           icon={Box}
-          note={`${new Set(projects.map((p) => p.app_id)).size} applications across environments`}
+          note="Dockyard deployments and existing Compose stacks"
         />
         <Stat
-          label="RUNNING STATE"
-          value={running}
-          icon={Radio}
-          note="Recorded state · inspect for live health"
-        />
-        <Stat
-          label="BLUE–GREEN PROJECTS"
-          value={projects.filter((p) => p.zerodowntime).length}
+          label="MANAGED"
+          value={projects.length}
           icon={Layers3}
-          note="Production with two deployment slots"
+          note="Projects Dockyard can deploy and control"
         />
         <Stat
-          label="ASSIGNED DOMAINS"
-          value={projects.reduce((n, p) => n + p.domains.length, 0)}
-          icon={Globe2}
-          note="Managed Caddy route assignments"
+          label="EXISTING COMPOSE"
+          value={observed.length}
+          icon={FolderGit2}
+          note="Read-only stacks found in /docker"
         />
       </div>
       <div className="workspace-grid">
         <div className="project-area">
           <div className="section-heading">
             <h2>
-              Projects <span>{projects.length}</span>
+              Projects <span>{entries.length}</span>
             </h2>
             <button
               className="icon-button"
@@ -888,77 +912,130 @@ function Projects({
               <span>ROUTE</span>
               <span />
             </div>
-            {slice.map((p) => (
-              <button
-                className="project-row"
-                key={p.id}
-                onClick={() => select(p.id)}
-              >
-                <span className="project-name">
-                  <span
-                    className={`app-icon ${p.app_id.charCodeAt(0) % 3 === 0 ? "lavender" : p.app_id.charCodeAt(0) % 3 === 1 ? "sand" : "mint"}`}
+            {slice.map((entry) => {
+              if (entry.kind === "observed") {
+                const p = entry.project;
+                const sites = (inventory?.sites ?? []).filter((site) =>
+                  site.project_ids.includes(p.id),
+                );
+                const ports = p.services.flatMap((s) => s.published_ports);
+                return (
+                  <button
+                    className="project-row"
+                    key={`observed:${p.id}`}
+                    onClick={() => selectObserved(p.id)}
                   >
-                    {initials(p.app_id)}
-                  </span>
-                  <span>
-                    <strong>{p.app_id}</strong>
-                    <span className="env-label">
-                      <i className={`env-dot ${p.environment}`} />
-                      {labels[p.environment]}
+                    <span className="project-name">
+                      <span className="app-icon sand">{initials(p.name)}</span>
+                      <span>
+                        <strong>{p.name}</strong>
+                        <span className="env-label">
+                          <i className="env-dot production" />
+                          Production · existing
+                        </span>
+                      </span>
+                    </span>
+                    <span>
+                      <Tag tone={p.present ? "neutral" : "red"}>
+                        {p.present ? "Observed" : "Missing folder"}
+                      </Tag>
+                    </span>
+                    <span className="deployment-label">
+                      <FolderGit2 size={14} />
+                      <span>
+                        Existing Compose
+                        <small>{p.services.length} services · read-only</small>
+                      </span>
+                    </span>
+                    <span className="route-label">
+                      <span>{sites[0]?.host_matcher ?? "No linked route"}</span>
+                      <small>
+                        {ports.length ? `:${ports[0]} observed port` : "No observed port"}
+                        {sites.length > 1 ? ` · +${sites.length - 1} more` : ""}
+                      </small>
+                    </span>
+                    <ChevronRight size={16} />
+                  </button>
+                );
+              }
+              const p = entry.project;
+              return (
+                <button
+                  className="project-row"
+                  key={p.id}
+                  onClick={() => select(p.id)}
+                >
+                  <span className="project-name">
+                    <span
+                      className={`app-icon ${p.app_id.charCodeAt(0) % 3 === 0 ? "lavender" : p.app_id.charCodeAt(0) % 3 === 1 ? "sand" : "mint"}`}
+                    >
+                      {initials(p.app_id)}
+                    </span>
+                    <span>
+                      <strong>{p.app_id}</strong>
+                      <span className="env-label">
+                        <i className={`env-dot ${p.environment}`} />
+                        {labels[p.environment]}
+                      </span>
                     </span>
                   </span>
-                </span>
-                <span>
-                  <Tag
-                    tone={
-                      p.state === "running"
-                        ? "green"
-                        : p.state === "stopped"
-                          ? "neutral"
-                          : "amber"
-                    }
-                  >
-                    <i
-                      className={
-                        p.state === "running" ? "green-dot" : "gray-dot"
-                      }
-                    />
-                    {p.state.replaceAll("_", " ")}
-                  </Tag>
-                </span>
-                <span className="deployment-label">
-                  {p.zerodowntime ? <Layers3 size={14} /> : <Box size={14} />}
                   <span>
-                    {p.zerodowntime ? "Blue–green" : "Single instance"}
+                    <Tag
+                      tone={
+                        p.state === "running"
+                          ? "green"
+                          : p.state === "stopped"
+                            ? "neutral"
+                            : "amber"
+                      }
+                    >
+                      <i
+                        className={
+                          p.state === "running" ? "green-dot" : "gray-dot"
+                        }
+                      />
+                      {p.state.replaceAll("_", " ")}
+                    </Tag>
+                  </span>
+                  <span className="deployment-label">
+                    {p.zerodowntime ? <Layers3 size={14} /> : <Box size={14} />}
+                    <span>
+                      {p.zerodowntime ? "Blue–green" : "Single instance"}
+                      <small>
+                        {p.active_slot
+                          ? `${p.active_slot} slot`
+                          : "No active slot"}
+                      </small>
+                    </span>
+                  </span>
+                  <span className="route-label">
+                    <span>{p.domains[0] ?? "No domain"}</span>
                     <small>
-                      {p.active_slot
-                        ? `${p.active_slot} slot`
-                        : "No active slot"}
+                      :{p.active_slot === "green" ? p.green_port : p.blue_port}
+                      {p.domains.length > 1
+                        ? ` · +${p.domains.length - 1} more`
+                        : ""}
                     </small>
                   </span>
-                </span>
-                <span className="route-label">
-                  <span>{p.domains[0] ?? "No domain"}</span>
-                  <small>
-                    :{p.active_slot === "green" ? p.green_port : p.blue_port}
-                    {p.domains.length > 1
-                      ? ` · +${p.domains.length - 1} more`
-                      : ""}
-                  </small>
-                </span>
-                <ChevronRight size={16} />
-              </button>
-            ))}
+                  <ChevronRight size={16} />
+                </button>
+              );
+            })}
             {slice.length === 0 && (
               <Empty
                 title={
-                  projects.length
+                  entries.length
                     ? "No matching projects"
-                    : "No managed projects yet"
+                    : inventory === null
+                      ? "Inventory unavailable"
+                      : "No projects found"
                 }
               >
-                Create a project, select its environment, then deploy a Compose
-                stack.
+                {entries.length === 0 && inventory === null
+                  ? "Refresh to read existing Compose stacks."
+                  : entries.length === 0
+                    ? "Create a project or check VPS inventory."
+                    : undefined}
               </Empty>
             )}
           </div>
@@ -989,37 +1066,6 @@ function Projects({
           </div>
         </div>
         <div className="right-rail">
-          <div className="rollout-card">
-            <div className="eyebrow">
-              <Layers3 size={14} />
-              BUILT FOR CONTINUITY
-            </div>
-            <h2>
-              A smooth switch.
-              <br />A steady service.
-            </h2>
-            <p>
-              Production deploys into the alternate slot. Traffic moves after
-              readiness checks pass.
-            </p>
-            <div className="rollout-diagram">
-              <div>
-                <i className="blue-dot" />
-                <span>BLUE</span>
-                <small>Serving</small>
-              </div>
-              <ArrowRight size={19} />
-              <div>
-                <i className="green-dot" />
-                <span>GREEN</span>
-                <small>Candidate</small>
-              </div>
-            </div>
-            <div className="rollout-foot">
-              <ShieldCheck size={14} />
-              Stateless production stacks
-            </div>
-          </div>
           <div className="rail-activity">
             <div className="section-heading">
               <h3>Recent operations</h3>
@@ -1053,16 +1099,6 @@ function Projects({
               </p>
             )}
           </div>
-          <div className="rail-note">
-            <FileCode2 size={18} />
-            <div>
-              <strong>Compose, from end to end.</strong>
-              <p>
-                Multi-service stacks. Server-side validation. One controlled
-                deployment.
-              </p>
-            </div>
-          </div>
         </div>
       </div>
     </>
@@ -1082,11 +1118,13 @@ function Stat({
   return (
     <div className="stat">
       <div>
-        <span>{label}</span>
+        <span>
+          {label}
+          <Help label={label.toLowerCase()}>{note}</Help>
+        </span>
         <Icon size={17} />
       </div>
       <strong>{String(value).padStart(2, "0")}</strong>
-      <p>{note}</p>
     </div>
   );
 }
@@ -1323,16 +1361,19 @@ function ProjectDetail({
                 Check now
               </button>
             </div>
-            <dl className="facts">
-              <dt>Container health</dt>
-              <dd>{status?.health ?? "Not checked"}</dd>
-              <dt>Caddy route</dt>
-              <dd>{status?.route ?? "Not checked"}</dd>
-              <dt>Job in progress</dt>
-              <dd>{status ? String(status.busy) : "Not checked"}</dd>
-              <dt>Public HTTPS</dt>
-              <dd>{status?.public_tls_state ?? "Unverified"}</dd>
-            </dl>
+            <details className="connection-details">
+              <summary>Connection details</summary>
+              <dl className="facts">
+                <dt>Container health</dt>
+                <dd>{status?.health ?? "Not checked"}</dd>
+                <dt>Caddy route</dt>
+                <dd>{status?.route ?? "Not checked"}</dd>
+                <dt>Job in progress</dt>
+                <dd>{status ? String(status.busy) : "Not checked"}</dd>
+                <dt>Public HTTPS</dt>
+                <dd>{status?.public_tls_state ?? "Unverified"}</dd>
+              </dl>
+            </details>
             <hr />
             <h3>Service controls</h3>
             <div className="controls">
@@ -1477,10 +1518,13 @@ function ProjectDetail({
           {truncated && (
             <p className="warning">Output was truncated by the server.</p>
           )}
-          <p className="muted">
-            The server redacts retained environment values. Avoid logging
-            secrets in your applications.
-          </p>
+          <div className="help-row">
+            Log privacy{" "}
+            <Help label="log privacy">
+              The server redacts retained environment values. Avoid logging
+              secrets in your applications.
+            </Help>
+          </div>
         </section>
       )}
       {tab === "domains" && (
@@ -1553,14 +1597,13 @@ function Jobs({
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">OPERATIONS</div>
           <h1>
-            Every deployment, <span>in view.</span>
+            Deployments{" "}
+            <Help label="tracked deployments">
+              The latest ten jobs tracked by this Mac. Look up another job using
+              its ID. Pending recovery blocks new writes until resolved.
+            </Help>
           </h1>
-          <p>
-            The latest ten jobs tracked by this Mac. Look up any other job by
-            its ID.
-          </p>
         </div>
         <button
           className="button"
@@ -1634,19 +1677,11 @@ function Jobs({
           </div>
         ))}
         {!jobs.length && !found && (
-          <Empty icon={Layers3} title="No tracked operations">
-            New operations are saved in Keychain and remain available after
-            restarting this Mac app.
+          <Empty icon={Layers3} title="No deployments yet">
+            Deploy a Compose stack to get started.
           </Empty>
         )}
       </section>
-      <div className="note">
-        <ShieldCheck size={18} />
-        <p>
-          Recovery-required jobs block further writes on the VPS. Inspect and
-          reconcile locally using the documented server recovery procedure.
-        </p>
-      </div>
     </>
   );
 }
@@ -1665,13 +1700,14 @@ function Domains({
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">NETWORKING</div>
           <h1>
-            A home for <span>every service.</span>
+            Domains{" "}
+            <Help label="domains and routes">
+              View managed domain assignments, upstream ports and existing Caddy
+              sites. A route assignment does not confirm public TLS or DNS
+              readiness.
+            </Help>
           </h1>
-          <p>
-            Managed domain assignments, upstream ports and existing Caddy sites.
-          </p>
         </div>
         <Tag>
           <Globe2 size={14} />
@@ -1728,6 +1764,88 @@ function Domains({
     </>
   );
 }
+function ObservedProjectDetail({
+  project,
+  inventory,
+  back,
+}: {
+  project: Inventory["projects"][number];
+  inventory: Inventory | null;
+  back: () => void;
+}) {
+  const sites = (inventory?.sites ?? []).filter((site) =>
+    site.project_ids.includes(project.id),
+  );
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <button className="text-button" onClick={back}>
+            <ChevronLeft size={15} /> Projects
+          </button>
+          <h1>{project.name}</h1>
+          <p>/docker/{project.name}</p>
+        </div>
+        <Tag>Existing Compose · read-only</Tag>
+      </div>
+      <div className="alert pending">
+        This stack was found on the VPS. Dockyard can display its recorded
+        metadata, but cannot deploy, stop, or change it until it is migrated.
+      </div>
+      <div className="detail-meta">
+        <Tag tone={project.present ? "green" : "red"}>
+          {project.present ? "Folder present" : "Folder missing"}
+        </Tag>
+        <span>Production</span>
+        <span>Observed {ago(inventory?.projects_observed_at)}</span>
+      </div>
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Compose services</h2>
+          <span className="count">{project.services.length}</span>
+        </div>
+        <p className="muted">
+          {project.compose_files.join(" · ") || "Compose filename unavailable"}
+        </p>
+        {project.services.map((service) => (
+          <div className="inventory-row" key={service.name}>
+            <span className="job-icon"><Box size={17} /></span>
+            <div>
+              <strong>{service.name}</strong>
+              {service.image && <p>{service.image}</p>}
+            </div>
+            <span className="mono">
+              {service.published_ports.length
+                ? service.published_ports.map((port) => `:${port}`).join(" · ")
+                : "No published port"}
+            </span>
+          </div>
+        ))}
+        {!project.services.length && (
+          <Empty title="Service metadata unavailable" />
+        )}
+      </section>
+      <section className="panel">
+        <div className="section-heading"><h2>Linked Caddy routes</h2></div>
+        {sites.map((site) => (
+          <div className="inventory-row" key={site.host_matcher}>
+            <Globe2 size={17} />
+            <div>
+              <strong>{site.host_matcher}</strong>
+              <p>{site.upstreams.join(" · ")}</p>
+            </div>
+          </div>
+        ))}
+        {!sites.length && <p className="muted">No linked route found.</p>}
+      </section>
+      {project.warnings.length > 0 && (
+        <div className="alert pending">
+          Some metadata could not be read: {project.warnings.join(", ")}.
+        </div>
+      )}
+    </>
+  );
+}
 function InventoryView({
   inventory: i,
   loading,
@@ -1741,14 +1859,15 @@ function InventoryView({
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">VPS INVENTORY</div>
           <h1>
-            Already running? <span>Already visible.</span>
+            VPS inventory{" "}
+            <Help label="VPS inventory">
+              Existing /docker projects and Caddy sites are synced as production
+              inventory. Import preserves their files and containers. Migration
+              is required before Dockyard can deploy or control them. Secrets
+              are excluded.
+            </Help>
           </h1>
-          <p>
-            Existing /docker projects and Caddy sites, synced to SQLite as
-            production inventory.
-          </p>
         </div>
         <button className="button" disabled={loading} onClick={refresh}>
           <RefreshCw size={15} />
@@ -1818,19 +1937,10 @@ function InventoryView({
         ))}
         {!i?.projects.length && (
           <Empty icon={Database} title="No inventory available">
-            The agent refreshes existing directories and sites every five
-            minutes. Reading this view uses SQLite.
+            Refresh after connecting your server.
           </Empty>
         )}
       </section>
-      <div className="note">
-        <LockKeyhole size={18} />
-        <p>
-          Observed projects are preserved as-is. They require explicit migration
-          before deployment or lifecycle controls become available. Credentials
-          and .env values are excluded from inventory.
-        </p>
-      </div>
     </>
   );
 }
@@ -1868,14 +1978,13 @@ function AuditView({
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">ACCOUNTABILITY</div>
           <h1>
-            A clear record <span>of every action.</span>
+            Audit trail{" "}
+            <Help label="audit trail">
+              Server audit events include the actor and request ID. Viewing them
+              requires permission to read all projects.
+            </Help>
           </h1>
-          <p>
-            Server audit events with attributable actors and request IDs.
-            All-project read scope required.
-          </p>
         </div>
         <button
           className="button"
@@ -1887,12 +1996,33 @@ function AuditView({
         </button>
       </div>
       <section className="panel">
-        {events.map((e) => (
-          <div className="audit-event" key={e.event_id}>
-            <Tag>#{e.event_id}</Tag>
-            <pre>{JSON.stringify(e.event, null, 2)}</pre>
-          </div>
-        ))}
+        {events.map((e) => {
+          const field = (key: string, fallback = "") =>
+            typeof e.event[key] === "string"
+              ? (e.event[key] as string)
+              : fallback;
+          return (
+            <div className="audit-event" key={e.event_id}>
+              <Tag>#{e.event_id}</Tag>
+              <div className="audit-summary">
+                <strong>
+                  {field("Action", "Event")} · {field("ProjectID", "Server")}
+                </strong>
+                <p>
+                  {field("ActorID", "Unknown actor")} · {ago(field("Time"))}
+                </p>
+                {field("Code") && <p className="warning">{field("Code")}</p>}
+                <details className="connection-details">
+                  <summary>Event details</summary>
+                  <pre>{JSON.stringify(e.event, null, 2)}</pre>
+                </details>
+              </div>
+              <Tag tone={field("Status") === "succeeded" ? "green" : "neutral"}>
+                {field("Status", "Recorded")}
+              </Tag>
+            </div>
+          );
+        })}
         {events.length === 0 && (
           <Empty
             icon={History}
@@ -1901,9 +2031,7 @@ function AuditView({
                 ? "Audit events appear after connecting"
                 : "No audit events loaded"
             }
-          >
-            The desktop keeps no local plaintext audit cache.
-          </Empty>
+          />
         )}
         {events.length > 0 && more && (
           <button
@@ -1941,11 +2069,15 @@ function Security({
     <>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">CONNECTION & SECURITY</div>
           <h1>
-            Your Mac. <span>Your control plane.</span>
+            Connection & security{" "}
+            <Help label="connection security">
+              Access uses this Mac’s dedicated credentials. Revoke other client
+              keys on the VPS to limit access. A compromised Mac or copied
+              credentials can impersonate a client. Production builds should be
+              signed and notarized.
+            </Help>
           </h1>
-          <p>A dedicated client identity for your private VPS API.</p>
         </div>
         <Tag tone={unlocked ? "green" : "neutral"}>
           <LockKeyhole size={14} />
@@ -1957,11 +2089,19 @@ function Security({
           <div className="security-symbol">
             <ShieldCheck size={32} />
           </div>
-          <h2>{p?.name ?? "Connect your VPS"}</h2>
-          <p>
-            Set up a new Ubuntu VPS here, or import an enrollment from an
-            already configured server. Credentials go straight to Keychain.
-          </p>
+          <h2>
+            {p?.name ?? "Connect your VPS"}
+            <Help label="enrollment">
+              Set up a new Ubuntu VPS, or import an enrollment for an existing
+              Dockyard server. Credentials are stored in macOS Keychain.
+              Removing local enrollment does not revoke its key on the VPS.
+            </Help>
+          </h2>
+          {p?.server_ip && (
+            <p className="mono">
+              {p.server_ip}:{p.ssh_port}
+            </p>
+          )}
           {p && (
             <dl className="facts">
               <dt>Origin</dt>
@@ -2023,11 +2163,9 @@ function Security({
               Remove local enrollment
             </button>
           )}
-          <p className="muted">
-            {native
-              ? "Touch ID is required to enroll and unlock. Set up a fingerprint in System Settings → Touch ID & Password."
-              : "This browser is a read-only design preview. Enrollment requires the native macOS app."}
-          </p>
+          {!native && (
+            <p className="muted">Preview · use the Mac app to connect.</p>
+          )}
           <button className="text-button" onClick={explore}>
             Explore sample workspace <ArrowRight size={14} />
           </button>
@@ -2037,49 +2175,42 @@ function Security({
           {[
             {
               icon: ShieldCheck,
-              title: "TLS 1.3 + dedicated client certificate",
+              title: "Client certificate",
               text: "The server checks the client CA and certificate fingerprint. Rust verifies the enrolled CA, SAN, expiry and exact server certificate pin.",
             },
             {
               icon: Code2,
-              title: "Every API request is signed",
+              title: "Signed requests",
               text: "HMAC includes the server, actor, scope, exact route and body hash. The server enforces scopes and project permissions.",
             },
             {
               icon: LockKeyhole,
-              title: "Credentials stay outside the webview",
+              title: "Touch ID & Keychain",
               text: "Keychain storage, native authentication, five-minute sessions, and auto-lock after one minute away from the app.",
             },
             {
               icon: History,
-              title: "Safe recovery after uncertain writes",
+              title: "Safe retries",
               text: "Exact payloads and retry IDs are saved in Keychain before submission. A pending write blocks another write.",
             },
             {
               icon: Server,
-              title: "Private network, narrow commands",
-              text: "Private IP or SSH tunnel only. No webview network, host shell, arbitrary file access, or generic API proxy.",
+              title: "Private connection",
+              text: "API access uses a private connection and restricted SSH tunnel. Terminal access uses a separate root SSH connection with fresh Touch ID.",
             },
           ].map((s) => (
             <div className="security-item" key={s.title}>
               <s.icon size={20} />
               <div>
-                <h3>{s.title}</h3>
-                <p>{s.text}</p>
+                <h3>
+                  {s.title}
+                  <Help label={s.title}>{s.text}</Help>
+                </h3>
               </div>
               <Check size={15} />
             </div>
           ))}
         </section>
-      </div>
-      <div className="note">
-        <ShieldCheck size={19} />
-        <p>
-          Restrict the VPS to this Mac’s dedicated certificate and key, and
-          revoke other client keys. A server authenticates credentials, not the
-          app’s pixels: copied credentials or a compromised Mac can impersonate
-          a client. Use a signed, notarized build for production.
-        </p>
       </div>
     </>
   );
@@ -2274,11 +2405,15 @@ function OperationModal({
         )}
         {step === 0 ? (
           <div className="wizard-body">
-            <h3>Where are we deploying?</h3>
-            <p>
-              One app, three isolated environments. Production can protect
-              serving traffic with blue–green slots.
-            </p>
+            <h3>
+              Environment{" "}
+              <Help label="environments">
+                Each app has separate development, staging and production
+                environments. Blue–green deployment is available only for
+                stateless production stacks. Development and staging use one
+                instance.
+              </Help>
+            </h3>
             <div className="environment-options">
               {environments.map((e) => (
                 <button
@@ -2293,10 +2428,8 @@ function OperationModal({
                     <strong>{labels[e]}</strong>
                     <small>
                       {e === "production"
-                        ? "Blue–green available · stateless stacks"
-                        : e === "staging"
-                          ? "Single instance · pre-release validation"
-                          : "Single instance · development builds"}
+                        ? "Blue–green available"
+                        : "Single instance"}
                     </small>
                     {m.kind === "deploy" && (
                       <small>
@@ -2311,7 +2444,7 @@ function OperationModal({
               ))}
             </div>
             <div className="modal-footer">
-              <span className="muted">Environment selection is required.</span>
+              <span />
               <button
                 className="button primary"
                 disabled={!env || (m.kind === "deploy" && !target)}
@@ -2356,35 +2489,42 @@ function OperationModal({
                       />
                     </label>
                   </div>
-                  <label>
-                    Approved server template
+                  <label htmlFor="approved-template">
+                    <span className="field-title">
+                      Server template
+                      <Help label="server templates">
+                        Use a template approved by the VPS administrator. It
+                        defines the allowed images and service settings.
+                      </Help>
+                    </span>
                     <input
+                      id="approved-template"
                       required
                       placeholder="web-node"
                       value={template}
                       onChange={(e) => setTemplate(e.target.value)}
                     />
-                    <small>
-                      Use a template configured by the VPS administrator.
-                    </small>
                   </label>
                 </>
               )}
               {(m.kind === "create" || m.kind === "routes") && (
                 <>
-                  <label>
-                    Domains
+                  <label htmlFor="project-domains">
+                    <span className="field-title">
+                      Domains
+                      <Help label="project domains">
+                        Enter one domain per line. Each must be permitted by the
+                        server policy.
+                      </Help>
+                    </span>
                     <textarea
+                      id="project-domains"
                       required
                       rows={3}
                       placeholder="app.example.com"
                       value={domains}
                       onChange={(e) => setDomains(e.target.value)}
                     />
-                    <small>
-                      One domain per line. All must be permitted by the server
-                      policy.
-                    </small>
                   </label>
                   {env === "production" && m.kind === "create" && (
                     <label className="checkbox-label">
@@ -2394,11 +2534,13 @@ function OperationModal({
                         onChange={(e) => setZero(e.target.checked)}
                       />
                       <span>
-                        <strong>Use production blue–green deployment</strong>
-                        <small>
-                          Two stateless Compose stacks. Persistent volumes
-                          require a single instance.
-                        </small>
+                        <strong>Blue–green deployment</strong>
+                        <Help label="blue–green deployment">
+                          Production deploys into the alternate slot, then
+                          switches traffic after health checks pass. This
+                          requires stateless stacks; persistent volumes use a
+                          single instance.
+                        </Help>
                       </span>
                     </label>
                   )}
@@ -2455,8 +2597,11 @@ function OperationModal({
                   </button>
                   {suggestion && (
                     <p className="muted">
-                      Next available: {suggestion}. Advisory only; the agent
-                      reserves ports when accepting the job.
+                      Available port: {suggestion}
+                      <Help label="port availability">
+                        This is a suggestion. The agent reserves the port when
+                        accepting the job.
+                      </Help>
                     </p>
                   )}
                 </>
@@ -2477,7 +2622,15 @@ function OperationModal({
                     </span>
                   </div>
                   <div className="section-heading">
-                    <label htmlFor="compose">Docker Compose YAML</label>
+                    <span className="field-title">
+                      <label htmlFor="compose">Docker Compose YAML</label>
+                      <Help label="Compose requirements">
+                        The VPS validates all services against its policy. Use
+                        1–8 services with an app service and approved digest
+                        images. Build contexts, privileged containers and host
+                        mounts are blocked.
+                      </Help>
+                    </span>
                     <button
                       type="button"
                       className="button small"
@@ -2514,11 +2667,18 @@ function OperationModal({
                         .length.toLocaleString()}{" "}
                       / 65,536 bytes
                     </span>
-                    <span>1–8 services · app required · digest images</span>
                   </div>
-                  <label>
-                    App environment snapshot <small>(optional JSON)</small>
+                  <label htmlFor="app-variables">
+                    <span className="field-title">
+                      Environment variables <small>(optional JSON)</small>
+                      <Help label="environment variables">
+                        Leave blank to use the Compose environment or current
+                        snapshot. For a first deployment without variables,
+                        enter {}. Do not also set services.app.environment.
+                      </Help>
+                    </span>
                     <textarea
+                      id="app-variables"
                       className="code-editor short"
                       rows={3}
                       spellCheck={false}
@@ -2526,21 +2686,7 @@ function OperationModal({
                       value={variables}
                       onChange={(e) => setVariables(e.target.value)}
                     />
-                    <small>
-                      Leave blank to use the Compose environment or reuse the
-                      current snapshot. For a first deployment with no
-                      variables, enter {`{}`}. Do not also set
-                      services.app.environment.
-                    </small>
                   </label>
-                  <div className="note">
-                    <ShieldCheck size={17} />
-                    <p>
-                      The VPS validates the Compose subset and every service
-                      against its root policy. No build contexts, privileged
-                      containers, or host mounts. Review YAML before submitting.
-                    </p>
-                  </div>
                 </>
               )}
               {m.kind === "stop" && (
@@ -2600,7 +2746,7 @@ function OperationModal({
                   Environment
                 </button>
               ) : (
-                <span className="muted">A native confirmation follows.</span>
+                <span className="muted">Touch ID required</span>
               )}
               <button
                 className={`button ${m.kind === "stop" ? "danger" : "primary"}`}

@@ -37,6 +37,7 @@ if command -v caddy >/dev/null; then echo caddy; else echo no-caddy; fi
 if command -v python3 >/dev/null; then echo python; else echo no-python; fi
 "#;
 pub const PHASES: &[&str] = &[
+    "preflight",
     "verify",
     "dependencies",
     "credentials",
@@ -192,7 +193,11 @@ impl Receipt {
     }
 }
 
-fn connect(ip: &str, port: u16, expected: Option<&str>) -> Result<(SshSession, String), String> {
+pub(crate) fn connect(
+    ip: &str,
+    port: u16,
+    expected: Option<&str>,
+) -> Result<(SshSession, String), String> {
     let ip: IpAddr = ip.parse().map_err(|_| "Invalid SSH IP")?;
     if ip.is_unspecified() || ip.is_multicast() || port == 0 {
         return Err("Invalid SSH endpoint".into());
@@ -263,6 +268,36 @@ fn exec(session: &SshSession, command: &str) -> Result<String, String> {
     }
     Ok(output)
 }
+// Read metadata only. Missing install directories are allowed; all existing ancestors
+// must still be protected. Never inspect or change project/volume ownership.
+fn preflight(session: &SshSession, require_caddyfile: bool) -> Result<(), String> {
+    let sftp = session
+        .sftp()
+        .map_err(|_| "Cannot check server folders over SSH. Reconnect and try again")?;
+    for directory in crate::setup_error::DIRECTORIES {
+        for path in Path::new(directory).ancestors() {
+            match sftp.lstat(path) {
+                Ok(stat) => crate::setup_error::check_stat(path.to_str().unwrap(), &stat, true)?,
+                Err(error) if error.code() == ssh2::ErrorCode::SFTP(2) => {},
+                Err(_) => return Err(format!("Cannot check {}. Ask your server administrator to check SSH file access, then try again", path.display())),
+            }
+        }
+    }
+    let path = "/etc/caddy/Caddyfile";
+    match sftp.lstat(Path::new(path)) {
+        Ok(stat) => {
+            crate::setup_error::check_stat(path, &stat, false)?;
+            if stat.size.is_none_or(|size| size > 1024 * 1024) {
+                return Err(crate::setup_error::path_error("file_large", path, ""));
+            }
+        },
+        Err(error) if error.code() == ssh2::ErrorCode::SFTP(2) && !require_caddyfile => {},
+        Err(error) if error.code() == ssh2::ErrorCode::SFTP(2) => return Err(crate::setup_error::path_error("file_missing", path, "")),
+        Err(_) => return Err("Cannot check Caddy’s configuration file. Ask your server administrator to check SSH file access, then try again".into()),
+    }
+    Ok(())
+}
+
 pub fn inspect(app: &tauri::AppHandle, request: Request) -> Result<Plan, String> {
     request.validate()?;
     let (session, host) = root_connect(app, &request.server_ip, request.ssh_port, None)?;
@@ -281,21 +316,7 @@ pub fn inspect(app: &tauri::AppHandle, request: Request) -> Result<Plan, String>
     if lines[4] != "fresh" {
         return Err("Dockyard is already configured. Import an enrollment instead; setup will not overwrite it".into());
     }
-    if lines[6] == "caddy" {
-        let sftp = session
-            .sftp()
-            .map_err(|_| "Cannot inspect existing Caddy")?;
-        let stat = sftp
-            .lstat(Path::new("/etc/caddy/Caddyfile"))
-            .map_err(|_| "Existing Caddy needs a regular /etc/caddy/Caddyfile")?;
-        if stat.uid != Some(0)
-            || !stat.is_file()
-            || stat.perm.is_none_or(|p| p & 0o022 != 0)
-            || stat.size.is_none_or(|s| s > 1024 * 1024)
-        {
-            return Err("Existing Caddyfile must be root-owned, not writable by other users, and up to 1 MiB".into());
-        }
-    }
+    preflight(&session, lines[6] == "caddy")?;
     let policy = if request.import_policy {
         let path = rfd::FileDialog::new()
             .set_title("Select your reviewed root deployment policy")
@@ -555,20 +576,15 @@ pub fn apply(
     python: bool,
 ) -> Result<(), String> {
     receipt.validate()?;
+    let _ = app.emit("setup-progress", json!({"phase":"preflight"}));
+    preflight(session, false)?;
     let stage = receipt.stage();
     let sftp = session
         .sftp()
         .map_err(|_| "Cannot open the secure upload channel")?;
     for path in ["/var/lib/dockyard-desktop-setup", stage.as_str()] {
         match sftp.lstat(Path::new(path)) {
-            Ok(stat)
-                if stat.uid != Some(0)
-                    || !stat.is_dir()
-                    || stat.perm.is_none_or(|p| p & 0o022 != 0) =>
-            {
-                return Err("Unsafe existing server setup directory".into())
-            }
-            Ok(_) => {}
+            Ok(stat) => crate::setup_error::check_stat(path, &stat, true)?,
             Err(error) if error.code() == ssh2::ErrorCode::SFTP(2) => {}
             Err(_) => return Err("Cannot inspect the server setup directory".into()),
         }
@@ -577,6 +593,7 @@ pub fn apply(
     let sftp = session
         .sftp()
         .map_err(|_| "Cannot open the secure upload channel")?;
+    let _ = app.emit("setup-progress", json!({"phase":"verify"}));
     for f in receipt
         .files
         .iter()
@@ -595,8 +612,13 @@ pub fn apply(
         }
         let path = format!("{stage}/{}", f.name);
         if let Ok(stat) = sftp.lstat(Path::new(&path)) {
-            if stat.uid != Some(0) || !stat.is_file() || stat.perm.is_none_or(|p| p & 0o077 != 0) {
-                return Err("Unsafe existing setup file on server".into());
+            crate::setup_error::check_stat(&path, &stat, false)?;
+            if stat.perm.is_none_or(|p| p & 0o077 != 0) {
+                return Err(crate::setup_error::path_error(
+                    "path_private",
+                    &path,
+                    "verify",
+                ));
             }
             let mut existing = Zeroizing::new(Vec::new());
             sftp.open(Path::new(&path))
@@ -650,6 +672,8 @@ pub fn apply(
     let mut pending = Vec::new();
     let mut total = 0usize;
     let mut complete = false;
+    let mut phase = "verify".to_string();
+    let mut failure = None;
     loop {
         let mut buf = [0; 2048];
         match channel.read(&mut buf) {
@@ -660,7 +684,9 @@ pub fn apply(
                 while let Some(end)=pending.iter().position(|b| *b==b'\n') {
                     let line=String::from_utf8_lossy(&pending[..end]).trim().to_string(); pending.drain(..=end);
                     if let Some(stage)=line.strip_prefix("DOCKYARD_STAGE:") {
-                        if PHASES.contains(&stage) { let _=app.emit("setup-progress",json!({"phase":stage})); complete|=stage=="complete"; }
+                        if PHASES.contains(&stage) { phase=stage.into(); let _=app.emit("setup-progress",json!({"phase":stage})); complete|=stage=="complete"; }
+                    } else if let Some(error) = crate::setup_error::installer_line(&line, &phase) {
+                        failure = Some(error);
                     }
                 }
                 if pending.len()>4096 { return Err("Installer progress line too large".into()); }
@@ -682,7 +708,10 @@ pub fn apply(
             .map_err(|_| "Setup status unavailable")?
             != 0
     {
-        return Err("Server setup stopped. Its receipt is saved. Review the staged installer error on the VPS, then resume this setup".into());
+        // Old saved receipts still run their original script. Diagnose its generic
+        // path error from metadata without changing that script or saved credentials.
+        preflight(session, false)?;
+        return Err(failure.unwrap_or_else(|| crate::setup_error::fallback(&phase)));
     }
     Ok(())
 }
@@ -977,9 +1006,27 @@ mod tests {
         session
             .userauth_password("root", "dockyard-fixture-only")
             .unwrap();
+        // Missing future install directories are allowed, but existing ancestors are checked.
+        preflight(&session, false).unwrap();
         // Validate the actual wizard credentials/root policy with the bundled Go agent.
         // Docker is a protected placeholder here: -check never invokes containers.
         exec(&session, "python3 -c 'from pathlib import Path; import os; [Path(p).mkdir(parents=True,exist_ok=True) for p in [\"/etc/dockyard/tls\",\"/etc/dockyard/docker\",\"/var/lib/dockyard\",\"/docker\",\"/etc/caddy/dockyard\"]]; Path(\"/usr/bin/docker\").write_text(\"fixture-check-only\"); Path(\"/etc/caddy/Caddyfile\").write_text(\"# fixture\\n\"); os.chmod(\"/usr/bin/docker\",0o755)' ").unwrap();
+        preflight(&session, true).unwrap();
+        exec(&session, "chown 1234 /etc/caddy").unwrap();
+        let error = preflight(&session, true).unwrap_err();
+        assert!(error.contains("sudo chown root /etc/caddy"));
+        assert_eq!(
+            session
+                .sftp()
+                .unwrap()
+                .lstat(Path::new("/etc/caddy"))
+                .unwrap()
+                .uid,
+            Some(1234),
+            "inspection must not change ownership"
+        );
+        exec(&session, "chown root /etc/caddy").unwrap();
+        preflight(&session, true).unwrap();
         let resource_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/ubuntu");
         let agent =
             std::fs::read(resource_root.join("dockyard")).expect("bundle server binaries first");

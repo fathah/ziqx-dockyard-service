@@ -33,6 +33,8 @@ For upgrades, stop the daemon, back up matching SQLite/project/Caddy state, repl
 
 Sync runs once at daemon startup and then every five minutes. The offline `-sync-existing` command uses the same process lock as the daemon. Reading `/v1/inventory` never rescans files or invokes adapters.
 
+Offline sync succeeds when the project directory scan, Docker port scan and Caddy scan complete, even if individual legacy Compose files cannot be safely resolved. Those projects keep their warning codes and are not adopted or modified. Failed or unknown source warnings still make offline sync exit with an error; previously recorded metadata and port reservations remain retained.
+
 - Immediate project directories under `projects_root`, recognizing `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml` and their common override filenames.
 - Safe service names, literal image references and explicitly published numeric ports. Legacy projects are classified **production**; their current deployment mode is preserved, and blue-green is not enabled by discovery.
 - The effective Caddyfile host matchers and static host/port upstreams, obtained through `caddy adapt`, including imported configuration. No reload occurs. The Caddyfile remains authoritative for manual configuration.

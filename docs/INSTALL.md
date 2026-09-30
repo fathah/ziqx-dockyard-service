@@ -36,6 +36,8 @@ RuntimeDirectoryMode=0700
 
 The agent checks that the admin socket has mode 0600 and that its ancestors are owned by root or the trusted `caddy` account without group/other write permission. Caddy must be the sole route writer alongside the coordinated agent. Out-of-band config edits cause a disk/live divergence and block route changes.
 
+The root systemd service retains `CAP_DAC_OVERRIDE` so it can traverse Caddy's private service directory and connect to the caddy-owned socket. Its bounding set permits only this capability; `NoNewPrivileges`, the read-only filesystem mounts and configured writable paths still apply. An empty capability bounding set prevents the agent from reaching this private socket even when its Unix user is root.
+
 The agent defaults to `127.0.0.1:9123`; only loopback/private IPs are accepted. Use a private control network or an SSH tunnel from the Super Admin backend. Restrict network ingress to that backend with your host/network firewall. The server certificate SAN must match the IP/name the backend verifies. Keep the agent's end-to-end mTLS connection intact; an ordinary public Caddy reverse proxy would change the peer certificate and must not be added without a separately designed gateway contract.
 
 ## Credentials

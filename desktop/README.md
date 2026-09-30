@@ -4,10 +4,10 @@ A Tauri 2 desktop control room with a Rust API client and a bundled React interf
 
 ## Run on this Mac
 
-The updated local Apple Silicon app with server setup is ready in `releases/idle-lock/Dockyard.app`, with `releases/Dockyard-idle-lock-macos-arm64.zip` and a SHA-256 checksum. From the repository root:
+The latest local Apple Silicon app is in `releases/clean-sidebar/Dockyard.app`, with `releases/Dockyard-clean-sidebar-macos-arm64.zip` and a SHA-256 checksum. It includes built-in terminals, existing Compose stacks, and a bundled Manrope interface font. From the repository root:
 
 ```sh
-open desktop/releases/idle-lock/Dockyard.app
+open desktop/releases/clean-sidebar/Dockyard.app
 ```
 
 Quit any previously opened Dockyard instance first so the single-instance guard does not bring an older build to the foreground. This local artifact uses an ad-hoc signature; it is not notarized for distribution.
@@ -26,13 +26,35 @@ Requirements: macOS 12+, Node 22.12+ or 24+, Rust 1.88+, and Xcode Command Line 
 
 For development: `npm run desktop:dev`. For a browser-only visual preview: `npm run build && npm run preview`, then open `http://127.0.0.1:1420/`. A browser preview cannot enroll, read your API, or submit writes. Frontend assets and icons are bundled; no CDN, remote fonts, analytics, or updater are used.
 
+## Built-in terminal
+
+Choose **Terminal** in the sidebar, select **VPS root** or **Container**, then **Connect with Touch ID**. A separate root SSH connection checks the server IP, port and host fingerprint saved during enrollment before sending credentials. Password entry uses a native macOS secure field; passwords never enter the webview, enrollment JSON, SQLite or app logs. This requires an SSH enrollment and root password login already permitted by the server; the app does not change SSH policy.
+
+**Remember root SSH password in this Mac’s Keychain** is optional and off by default. A password is saved only after successful root SSH authentication. The non-synchronized Keychain entry is separate from API credentials and scoped to the exact IP, port and SSH fingerprint. Each connection requires fresh Touch ID even when a password is remembered. Unchecking the option uses a newly entered password without updating a previously saved entry; **Forget saved root password** removes that entry after Touch ID. Removing enrollment also removes its saved root password. Changing the VPS password requires forgetting the old one and reconnecting.
+
+The root terminal opens a full administrative login shell. Container mode lists all running Docker containers, including observed legacy Compose services, and opens a PTY using the full container ID and `docker exec -it … /bin/sh` (or `/bin/bash`, if installed). Docker uses the container’s configured user. The API-only `dockyard-link` account and Go API never gain arbitrary shell execution.
+
+One terminal is open at a time. It stays connected when switching Dockyard pages. **Disconnect**, `exit`, app closure, manual lock, the existing five-minute session expiry, or a minute away from the app closes the connection. Disconnecting does not roll back commands or guarantee that remote background processes have stopped; terminal commands bypass managed deployment reviews and may change any server resource. To preserve deployment tracking, use Dockyard’s Compose deployment controls for normal releases.
+
+Terminal history is held only in memory, with 2,000 lines of scrollback, bounded output/backpressure and 8 KiB input chunks. Remote clipboard (OSC 52), hyperlinks (OSC 8) and window control are disabled. Commands run on the VPS may still appear in its shell history or server audit logs; this app does not disable those logs. This local ad-hoc Mac build does not claim production code-signing or absolute protection against a compromised Mac/root server.
+
+Verification: Rust unit tests cover target validation, dimensions, credential scoping and session revocation. The optional loopback SSH fixture verifies streaming, root/container channel selection, resize requests, bounded output and disconnect on lock without executing OS commands. The separate OpenSSH fixture verifies actual PTYs and Docker CLI dispatch against a simulated container command; it does not mount the host Docker socket. Native Touch ID/Keychain prompts and real VPS/container acceptance require an operator check.
+
+```sh
+# From desktop; prepare only the loopback test fixture dependency cache.
+(cd tests/terminal && GOMODCACHE=/private/tmp/dockyard-terminal-go-mod-cache go mod download)
+cargo test --offline --locked --manifest-path src-tauri/Cargo.toml loopback_streaming_resize_container_and_revocation -- --ignored
+# With dockyard-ssh-fixture:local built and Docker Desktop running:
+cargo test --offline --locked --manifest-path src-tauri/Cargo.toml interactive_pty_container_resize_backpressure_and_lock -- --ignored
+```
+
 ## First-time Ubuntu setup
 
 Choose **Set up Dockyard on your server** in the Mac app. Select Ubuntu, enter the server IP and SSH port, verify its SSH fingerprint against your provider's console, and enter the root password in the native secure Mac dialog. Review the installation and confirm with Touch ID. The installer generates the certificates and HMAC credentials automatically; no enrollment file is needed. See [the complete setup and recovery guide](FIRST_TIME.md).
 
 Ubuntu 22.04/24.04 x86-64 with working root SSH password access is supported by this installer. The app contains its Ubuntu agent binaries; first-time installation does not depend on a GitHub release. `server:bundle` builds those resources with Docker when building the app from source. It needs Docker Desktop or another functioning local Docker builder.
 
-The server IP/SSH port/fingerprint and restricted connector key are saved in Keychain; the root password is never saved or returned to JavaScript. The API remains on the VPS's loopback address, reached through a pinned SSH tunnel automatically when the app is unlocked. Caddy is backed up, adapted and compared before a reload; existing Docker/Compose files are preserved. Installation receipts and generated credentials are saved before writes so the same installation can be resumed after an uncertain disconnect.
+The server IP/SSH port/fingerprint and restricted connector key are saved in Keychain; the setup root password is never saved or returned to JavaScript. Terminal access has a separate, optional Keychain password. The API remains on the VPS's loopback address, reached through a pinned SSH tunnel automatically when the app is unlocked. Caddy is backed up, adapted and compared before a reload; existing Docker/Compose files are preserved. Installation receipts and generated credentials are saved before writes so the same installation can be resumed after an uncertain disconnect.
 
 Without an imported, reviewed deployment policy, setup grants inventory/log reads only. The advanced policy option accepts private root-policy JSON for approved templates/domains/resource limits; it does not import credential paths or Cloudflare secrets. DNS still requires an explicit VPS Cloudflare configuration and zone-scoped token; the saved IP does not grant DNS permissions. Existing projects remain production observations until explicitly migrated.
 

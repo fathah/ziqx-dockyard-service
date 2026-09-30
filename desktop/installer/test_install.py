@@ -5,11 +5,77 @@ import shutil
 import subprocess
 import tempfile
 import time
+import errno
+import stat
+import os
+import socket
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location('installer', Path(__file__).with_name('install.py'))
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
+
+class ServicePermissions(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'linux' and os.geteuid() == 0 and shutil.which('setpriv'),
+                         'requires a disposable root Ubuntu fixture with setpriv')
+    def test_private_caddy_socket_requires_the_retained_capability(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory) / 'caddy'
+            runtime.mkdir(mode=0o700)
+            os.chown(runtime, 1001, 1001)
+            address = str(runtime / 'admin.sock')
+            with socket.socket(socket.AF_UNIX) as server:
+                server.bind(address)
+                os.chown(address, 1001, 1001)
+                os.chmod(address, 0o600)
+                server.listen(1)
+                probe = "import os,socket,sys; os.lstat(sys.argv[1]); s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.close()"
+                for capabilities, allowed in (('-all', False), ('-all,+dac_override', True)):
+                    result = subprocess.run(['setpriv', '--bounding-set=' + capabilities,
+                                             '--inh-caps=-all', '--ambient-caps=-all', '--no-new-privs',
+                                             sys.executable, '-c', probe, address], capture_output=True, timeout=10)
+                    self.assertEqual(result.returncode == 0, allowed, capabilities)
+                self.assertEqual(stat.S_IMODE(runtime.stat().st_mode), 0o700)
+                self.assertEqual(stat.S_IMODE(os.stat(address).st_mode), 0o600)
+
+class SetupDiagnostics(unittest.TestCase):
+    def metadata(self, path):
+        # Actual incident: Caddyfile safe, parent owned by deployuser.
+        return SimpleNamespace(st_uid=1000 if str(path) == '/etc/caddy' else 0,
+                               st_mode=stat.S_IFREG | 0o644 if str(path).endswith('Caddyfile') else stat.S_IFDIR | 0o755)
+
+    def test_unsafe_parent_reports_exact_path_and_reason(self):
+        with patch.object(Path, 'lstat', autospec=True, side_effect=self.metadata):
+            with self.assertRaises(installer.SetupError) as error:
+                installer.protected('/etc/caddy/Caddyfile')
+        self.assertEqual(installer.diagnostic(error.exception),
+                         {'code': 'path_owner', 'path': '/etc/caddy', 'tool': ''})
+
+    def test_symbolic_links_and_writable_paths_are_distinct(self):
+        for mode, code in ((stat.S_IFLNK | 0o777, 'path_symlink'), (stat.S_IFDIR | 0o775, 'path_writable')):
+            with patch.object(Path, 'lstat', return_value=SimpleNamespace(st_uid=0, st_mode=mode)):
+                with self.assertRaises(installer.SetupError) as error:
+                    installer.protected('/docker', True)
+            self.assertEqual(error.exception.code, code)
+
+    def test_command_error_and_timeout_never_echo_output(self):
+        for result in (subprocess.CompletedProcess(['caddy'], 1, b'secret', b'secret'),
+                       subprocess.TimeoutExpired(['caddy'], 1, output=b'secret')):
+            with patch.object(installer.subprocess, 'run', **({'side_effect': result} if isinstance(result, Exception) else {'return_value': result})):
+                with self.assertRaises(installer.SetupError) as error:
+                    installer.run(['caddy', 'validate'])
+            report = installer.diagnostic(error.exception)
+            self.assertEqual(report['tool'], 'caddy')
+            self.assertNotIn('secret', json.dumps(report))
+
+    def test_unknown_exception_text_is_not_exposed(self):
+        for error in (ValueError('secret'), RuntimeError('secret'), KeyError('secret')):
+            self.assertEqual(installer.diagnostic(error), {'code': 'unknown'})
+        self.assertEqual(installer.diagnostic(OSError(errno.ENOSPC, 'secret')), {'code': 'disk_full'})
+        self.assertEqual(installer.diagnostic(PermissionError(errno.EACCES, 'secret')), {'code': 'permission_denied'})
 
 class CaddyPreparation(unittest.TestCase):
     def test_existing_sites_and_nested_global_options_remain_literal(self):

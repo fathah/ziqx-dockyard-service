@@ -15,7 +15,9 @@ TimeoutStopSec=45s
 KillMode=control-group
 UMask=0077
 NoNewPrivileges=true
-CapabilityBoundingSet=
+# Required to traverse Caddy's private service directory and connect to its
+# caddy-owned mode-0600 admin socket. Filesystem mount restrictions still apply.
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
 AmbientCapabilities=
 ProtectSystem=strict
 ProtectHome=true

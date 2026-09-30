@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Fixed first-install operations. Receives only a native-generated, private staged kit."""
+import errno
 import fcntl
 import hashlib
 import http.client
@@ -18,16 +19,79 @@ SOCKET = 'unix//run/caddy/admin.sock|0600'
 IMPORT = 'import /etc/caddy/dockyard/*.caddy'
 PHASES = ('verify', 'dependencies', 'credentials', 'caddy', 'ssh', 'service', 'complete')
 
+class SetupError(ValueError):
+    def __init__(self, code, path='', tool=''):
+        self.code, self.path, self.tool = code, str(path), tool
+        super().__init__(code)
+
+# Only fixed installer reasons are sent. Unknown exception text can contain secrets.
+SAFE_REASONS = {
+    'Caddy admin socket unavailable',
+    'Caddy reload outcome is uncertain; preserve existing containers and reconcile manually',
+    'Caddy routes would change; manual preparation required',
+    'Caddyfile changed during setup',
+    'Caddyfile too large',
+    'Docker signing key mismatch',
+    'Dockyard did not remain active',
+    'Ubuntu 22.04/24.04 required',
+    'Ubuntu x86-64 required',
+    'cannot verify live Caddy configuration',
+    'command output exceeded limit',
+    'custom Caddy admin configuration requires manual preparation',
+    'custom Caddy admin directive requires manual preparation',
+    'custom Caddy admin endpoint requires manual setup',
+    'custom SSH configuration prevents a restricted connector; manual preparation required',
+    'existing Docker Compose needs an operator upgrade to 2.30 or newer',
+    'existing Dockyard installation refused',
+    'existing container runtime requires manual Docker installation',
+    'existing dockyard-link account requires manual review',
+    'existing installation file differs; operator review required',
+    'installation directory required',
+    'invalid Caddy global options',
+    'invalid admin directive',
+    'invalid connector account',
+    'invalid connector public key',
+    'invalid live Caddy configuration',
+    'invalid manifest',
+    'invalid staged filename',
+    'live Caddy routes differ from disk; manual reconciliation required',
+    'no arguments accepted',
+    'root required',
+    'staged file checksum mismatch',
+    'unsafe Caddy runtime directory',
+    'unsafe Caddy runtime owner',
+    'unsafe SSH home',
+    'unsafe installation path',
+    'unsupported Ubuntu version',
+    'unterminated Caddy string',
+}
+
+def diagnostic(error):
+    if isinstance(error, SetupError):
+        return {'code': error.code, 'path': error.path, 'tool': error.tool}
+    if isinstance(error, OSError):
+        if error.errno == errno.ENOSPC: return {'code': 'disk_full'}
+        if error.errno in (errno.EACCES, errno.EPERM, errno.EROFS): return {'code': 'permission_denied'}
+    if isinstance(error, ValueError) and str(error) in SAFE_REASONS:
+        return {'code': 'legacy', 'reason': str(error)}
+    return {'code': 'unknown'}
+
 def phase(name):
     print('DOCKYARD_STAGE:' + name, flush=True)
 
 def run(args, timeout=120):
-    result = subprocess.run(args, capture_output=True, timeout=timeout, check=False,
-                            env={**os.environ, 'DEBIAN_FRONTEND': 'noninteractive', 'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'})
+    tool = Path(args[0]).name
+    try:
+        result = subprocess.run(args, capture_output=True, timeout=timeout, check=False,
+                                env={**os.environ, 'DEBIAN_FRONTEND': 'noninteractive', 'PATH': '/usr/sbin:/usr/bin:/sbin:/bin'})
+    except subprocess.TimeoutExpired:
+        raise SetupError('command_timeout', tool=tool) from None
+    except FileNotFoundError:
+        raise SetupError('command_failed', tool=tool) from None
     if len(result.stdout) + len(result.stderr) > 8 * 1024 * 1024:
         raise ValueError('command output exceeded limit')
     if result.returncode:
-        raise ValueError('command failed: ' + Path(args[0]).name)
+        raise SetupError('command_failed', tool=tool)
     return result.stdout
 
 def protected(path, directory=False):
@@ -35,11 +99,12 @@ def protected(path, directory=False):
     # Refuse symlinks and writable ancestors, including pre-existing install trees.
     for ancestor in (p, *p.parents):
         s = ancestor.lstat()
-        if stat.S_ISLNK(s.st_mode) or s.st_uid != 0 or s.st_mode & 0o022:
-            raise ValueError('unsafe installation path')
+        if stat.S_ISLNK(s.st_mode): raise SetupError('path_symlink', ancestor)
+        if s.st_uid != 0: raise SetupError('path_owner', ancestor)
+        if s.st_mode & 0o022: raise SetupError('path_writable', ancestor)
     s = p.lstat()
     if directory and not stat.S_ISDIR(s.st_mode):
-        raise ValueError('installation directory required')
+        raise SetupError('path_type', p)
 
 def mkdir(path, mode=0o700, group=None):
     p = Path(path)
@@ -50,7 +115,11 @@ def mkdir(path, mode=0o700, group=None):
         p.mkdir(mode=mode)
     if group:
         import grp
-        os.chown(p, 0, grp.getgrnam(group).gr_gid)
+        try:
+            gid = grp.getgrnam(group).gr_gid
+        except KeyError:
+            raise SetupError('missing_account') from None
+        os.chown(p, 0, gid)
     os.chmod(p, mode)
 
 def write(path, data, mode=0o600):
@@ -59,7 +128,7 @@ def write(path, data, mode=0o600):
     if p.exists() or p.is_symlink():
         protected(p)
         if not p.is_file() or p.read_bytes() != data:
-            raise ValueError('existing installation file differs; operator review required')
+            raise SetupError('file_conflict', p)
         return
     with os.fdopen(os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode), 'wb') as f:
         f.write(data)
@@ -227,9 +296,13 @@ def prepare_caddy(stage):
     if runtime.is_symlink(): raise ValueError('unsafe Caddy runtime directory')
     runtime.mkdir(mode=0o700, exist_ok=True)
     s = runtime.stat()
-    uid = pwd.getpwnam('caddy').pw_uid
+    try:
+        uid = pwd.getpwnam('caddy').pw_uid
+        gid = grp.getgrnam('caddy').gr_gid
+    except KeyError:
+        raise SetupError('missing_account') from None
     if s.st_uid not in (0, uid) or s.st_mode & 0o022: raise ValueError('unsafe Caddy runtime owner')
-    os.chown(runtime, uid, grp.getgrnam('caddy').gr_gid)
+    os.chown(runtime, uid, gid)
     os.chmod(runtime, 0o700)
     run(['systemctl', 'daemon-reload'])
     if path.read_bytes() != content:
@@ -344,7 +417,6 @@ def install(stage):
     raise ValueError('Dockyard did not remain active')
 
 if __name__ == '__main__':
-    current = 'verify'
     try:
         if len(sys.argv) != 1: raise ValueError('no arguments accepted')
         lock = open('/run/dockyard-desktop-setup.lock', 'w')
@@ -352,13 +424,14 @@ if __name__ == '__main__':
         install(Path(__file__).resolve().parent)
     except Exception as error:
         # Never echo certificate material, environment values, or root passwords.
-        print('DOCKYARD_FAILED:' + str(error)[:250], file=sys.stderr)
+        report = json.dumps(diagnostic(error), separators=(',', ':'))
+        print('DOCKYARD_ERROR:' + report, file=sys.stderr, flush=True)
         try:
             error_path = Path(__file__).resolve().parent / 'error.txt'
             protected(error_path.parent, True)
             if error_path.exists(): protected(error_path)
             with os.fdopen(os.open(error_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600), 'w') as stream:
-                stream.write(str(error)[:1000] + '\n')
+                stream.write(report + '\n')
         except Exception:
             pass
         sys.exit(1)

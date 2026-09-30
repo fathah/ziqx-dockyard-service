@@ -86,6 +86,7 @@ export type Session = {
   unlocked: boolean;
   profile: Profile | null;
   jobs: string[];
+  enrolled?: boolean;
 };
 export type Pending = {
   project: string;

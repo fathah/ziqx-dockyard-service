@@ -105,10 +105,7 @@ func run() error {
 			return err
 		}
 		slog.Info("existing inventory synced", "projects", len(result.Projects), "sites", len(result.Sites), "warnings", result.Warnings)
-		if len(result.Warnings) > 0 {
-			return errors.New("inventory sync has source failures; last successful metadata retained")
-		}
-		return nil
+		return inventory.CheckSources(result)
 	}
 	// Reject an unavailable/old Compose before accepting privileged operations.
 	version, err := runner.Run(ctx, c.DockerBinary, c.ProjectsRoot, []string{"compose", "version", "--short"})

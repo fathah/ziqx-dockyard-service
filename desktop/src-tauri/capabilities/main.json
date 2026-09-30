@@ -20,6 +20,13 @@
     "allow-setup-inspect",
     "allow-setup-install",
     "allow-setup-resume",
-    "allow-setup-cancel"
+    "allow-setup-cancel",
+    "allow-terminal-connect",
+    "allow-terminal-start",
+    "allow-terminal-input",
+    "allow-terminal-resize",
+    "allow-terminal-poll",
+    "allow-terminal-close",
+    "allow-terminal-forget-password"
   ]
 }

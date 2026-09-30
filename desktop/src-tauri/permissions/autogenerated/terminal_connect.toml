@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-terminal-connect"
+description = "Enables the terminal_connect command without any pre-configured scope."
+commands.allow = ["terminal_connect"]
+
+[[permission]]
+identifier = "deny-terminal-connect"
+description = "Denies the terminal_connect command without any pre-configured scope."
+commands.deny = ["terminal_connect"]

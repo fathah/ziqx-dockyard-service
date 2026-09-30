@@ -49,6 +49,9 @@ fn authentication_error(code: isize) -> &'static str {
 }
 
 pub fn authenticate() -> Result<(), String> {
+    authenticate_reason("Unlock Dockyard to manage your VPS")
+}
+pub fn authenticate_reason(reason_text: &str) -> Result<(), String> {
     use objc::runtime::{Object, BOOL, YES};
     use objc::{class, msg_send, sel, sel_impl};
     let (tx, rx) = std::sync::mpsc::channel();
@@ -76,7 +79,8 @@ pub fn authenticate() -> Result<(), String> {
         let _: () = msg_send![context, setLocalizedFallbackTitle:empty];
         let _: () = msg_send![context, setTouchIDAuthenticationAllowableReuseDuration:0.0f64];
         let reason: *mut Object = msg_send![class!(NSString), alloc];
-        let text = std::ffi::CString::new("Unlock Dockyard to manage your VPS").unwrap();
+        let text =
+            std::ffi::CString::new(reason_text).expect("validated native authentication reason");
         let reason: *mut Object = msg_send![reason, initWithUTF8String:text.as_ptr()];
         let reply = block::ConcreteBlock::new(move |success: BOOL, error: *mut Object| {
             let result = if success == YES {
@@ -107,6 +111,31 @@ pub fn authenticate() -> Result<(), String> {
 /// Only Rust receives the password. AppKit owns the secure field on the main thread.
 #[allow(deprecated)] // cocoa geometry encodes the existing objc 0.2 bridge's AppKit ABI.
 pub fn root_password(app: &tauri::AppHandle, server: String) -> Result<Zeroizing<String>, String> {
+    password_prompt(app, server, "Used for setup only; never saved.")
+}
+
+pub fn terminal_password(
+    app: &tauri::AppHandle,
+    server: String,
+    remember: bool,
+) -> Result<Zeroizing<String>, String> {
+    password_prompt(
+        app,
+        server,
+        if remember {
+            "Saved in this Mac’s Keychain only after successful SSH authentication. This opens full administrative access."
+        } else {
+            "Used for this terminal connection only; never saved. This opens full administrative access."
+        },
+    )
+}
+
+#[allow(deprecated)]
+fn password_prompt(
+    app: &tauri::AppHandle,
+    server: String,
+    purpose: &'static str,
+) -> Result<Zeroizing<String>, String> {
     let (tx, rx) = std::sync::mpsc::channel();
     app.run_on_main_thread(move || {
         use cocoa::foundation::{NSPoint, NSRect, NSSize};
@@ -120,7 +149,7 @@ pub fn root_password(app: &tauri::AppHandle, server: String) -> Result<Zeroizing
             };
             let alert: *mut Object = msg_send![class!(NSAlert), new];
             let _: () = msg_send![alert, setMessageText:ns("Connect to your Ubuntu server")];
-            let _: () = msg_send![alert, setInformativeText:ns(&format!("Root SSH password for {server}. Used for setup only; never saved. The SSH fingerprint has already been reviewed."))];
+            let _: () = msg_send![alert, setInformativeText:ns(&format!("Root SSH password for {server}. {purpose} The SSH fingerprint has already been reviewed."))];
             let _: *mut Object = msg_send![alert, addButtonWithTitle:ns("Connect")];
             let _: *mut Object = msg_send![alert, addButtonWithTitle:ns("Cancel")];
             let field: *mut Object = msg_send![class!(NSSecureTextField), alloc];
@@ -145,4 +174,33 @@ pub fn root_password(app: &tauri::AppHandle, server: String) -> Result<Zeroizing
         }
     }).map_err(|_| "Could not open the native password prompt")?;
     rx.recv().map_err(|_| "Native password prompt failed")?
+}
+
+// Separate from enrollment: scoped to the pinned endpoint, never synchronized to iCloud.
+fn terminal_options(account: &str) -> security_framework::passwords::PasswordOptions {
+    let mut options = security_framework::passwords::PasswordOptions::new_generic_password(
+        "com.ziqx.dockyard.root-ssh.v1",
+        account,
+    );
+    options.set_access_synchronized(Some(false));
+    options
+}
+pub fn terminal_load(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+    match security_framework::passwords::generic_password(terminal_options(account)) {
+        Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
+        Err(error) if error.code() == -25300 => Ok(None),
+        Err(_) => Err("Keychain denied access to the saved SSH password".into()),
+    }
+}
+pub fn terminal_save(account: &str, password: &[u8]) -> Result<(), String> {
+    security_framework::passwords::set_generic_password_options(password, terminal_options(account))
+        .map_err(|_| "SSH connected, but Keychain could not save the password".into())
+}
+pub fn terminal_delete(account: &str) -> Result<(), String> {
+    match security_framework::passwords::delete_generic_password_options(terminal_options(account))
+    {
+        Ok(()) => Ok(()),
+        Err(error) if error.code() == -25300 => Ok(()),
+        Err(_) => Err("Keychain could not remove the saved SSH password".into()),
+    }
 }

@@ -15,6 +15,13 @@ fn main() {
             "setup_install",
             "setup_resume",
             "setup_cancel",
+            "terminal_connect",
+            "terminal_start",
+            "terminal_input",
+            "terminal_resize",
+            "terminal_poll",
+            "terminal_close",
+            "terminal_forget_password",
         ]),
     ))
     .expect("Tauri build failed");

@@ -1,0 +1,218 @@
+:root {
+  --tt-in-dur: 150ms;
+  --tt-out-dur: 50ms;
+  --tt-scale: 0.98;
+  --tt-delay: 80ms;
+  --tt-in-ease: ease-out;
+  --tt-out-ease: ease-out;
+  --tt-bg: #ffffff;
+  --tt-fg: #2f2f2f;
+}
+
+.t-tt-wrap {
+  position: relative;
+  display: inline-block;
+}
+.t-tt {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translate(-50%, 0) scale(var(--tt-scale));
+  transform-origin: 50% 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--tt-bg);
+  color: var(--tt-fg);
+  white-space: nowrap;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.06),
+    0 2px 6px 0 rgba(0, 0, 0, 0.05),
+    0 4px 42px 0 rgba(0, 0, 0, 0.06);
+  opacity: 0;
+  pointer-events: none;
+  /* Default rule controls the LEAVE state. transition-delay
+     stays unset so leaving plays without delay. */
+  transition:
+    opacity var(--tt-out-dur) var(--tt-out-ease),
+    transform var(--tt-out-dur) var(--tt-out-ease);
+}
+/* The 50ms delay belongs ONLY to the hover rule so leaving
+   the trigger snaps the delay back to 0 and the disappear
+   plays immediately. */
+.t-tt-wrap:hover .t-tt,
+.t-tt-trigger:focus-visible + .t-tt {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+  transition-duration: var(--tt-in-dur);
+  transition-timing-function: var(--tt-in-ease);
+  transition-delay: var(--tt-delay);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-tt {
+    transition: none !important;
+  }
+}
+
+/* Dockyard help placement uses a portal to escape modal/card clipping. */
+.help-inline {
+  display: inline-flex;
+  vertical-align: middle;
+  flex: 0 0 auto;
+  margin-left: 7px;
+}
+.help-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  color: #84917d;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+}
+.help-trigger:hover,
+.help-trigger:focus-visible {
+  color: #36583e;
+  background: #edf3e7;
+}
+.help-layer {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  width: 0;
+  height: 0;
+}
+.help-layer .help-tip {
+  bottom: auto;
+  top: 0;
+  left: 0;
+  width: min(296px, calc(100vw - 24px));
+  max-height: min(240px, calc(100vh - 24px));
+  overflow-y: auto;
+  white-space: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  font:
+    12px/1.6 -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  text-align: left;
+  padding: 12px 14px;
+  background: #fcfdf9;
+  color: #4c5e46;
+  pointer-events: auto;
+}
+.help-layer[data-open="true"] .t-tt {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+  transition-duration: var(--tt-in-dur);
+  transition-timing-function: var(--tt-in-ease);
+  transition-delay: var(--tt-delay);
+}
+.help-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #748369;
+  font-size: 12px;
+}
+.field-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.connection-details {
+  margin: 18px 0;
+}
+.connection-details summary {
+  cursor: pointer;
+  color: #687d5c;
+  font-size: 12px;
+}
+.setup-option {
+  position: relative;
+}
+.setup-option > .help-inline {
+  position: absolute;
+  top: calc(50% - 12px);
+  right: 48px;
+}
+.setup-option .setup-choice {
+  padding-right: 86px;
+}
+.stat > div .help-inline,
+.stat > div .help-trigger {
+  letter-spacing: normal;
+}
+.private-note .help-trigger {
+  color: #a4b69d;
+}
+.private-note .help-trigger:hover {
+  background: #ffffff12;
+}
+.security-item h3 {
+  display: flex;
+  align-items: center;
+}
+.terminal-access-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+  color: #748369;
+  font-size: 12px;
+}
+.terminal-target {
+  align-items: center;
+}
+.terminal-target span {
+  font-size: 12px;
+}
+
+.help-layer[data-open="false"] .help-tip {
+  visibility: hidden;
+  pointer-events: none;
+}
+.help-layer[data-open="true"] .help-tip {
+  visibility: visible;
+}
+
+.audit-summary {
+  flex: 1;
+  min-width: 0;
+}
+.audit-summary > strong {
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+.audit-summary > p {
+  font-size: 11px;
+  color: #899481;
+  margin: 6px 0 0;
+}
+.audit-summary .connection-details {
+  margin: 10px 0 0;
+}
+.audit-summary pre {
+  padding-top: 14px;
+}
+.stat > div > span {
+  display: inline-flex;
+  align-items: center;
+}
+
+.help-description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
