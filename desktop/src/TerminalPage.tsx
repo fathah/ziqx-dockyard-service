@@ -265,61 +265,67 @@ export default function TerminalPage({
         <ShieldCheck size={28} />
       </div>
       <div className="terminal-access card">
-        <div className="terminal-targets">
-          <button
-            className={`terminal-target ${mode === "root" ? "selected" : ""}`}
-            disabled={busy || !!connection}
-            onClick={() => setMode("root")}
+        <div className="terminal-controls">
+          <div
+            className="terminal-targets"
+            role="group"
+            aria-label="Terminal target"
           >
-            <Terminal size={22} />
-            <strong>VPS root</strong>
-            <span>Full server access</span>
-          </button>
-          <button
-            className={`terminal-target ${mode === "container" ? "selected" : ""}`}
-            disabled={busy || !!connection}
-            onClick={() => setMode("container")}
-          >
-            <Box size={22} />
-            <strong>Container</strong>
-            <span>Configured container user</span>
-          </button>
-        </div>
-        <div className="terminal-toolbar">
-          <label className="terminal-remember">
-            <input
-              type="checkbox"
-              checked={remember}
+            <button
+              className={`terminal-target ${mode === "root" ? "selected" : ""}`}
               disabled={busy || !!connection}
-              onChange={(e) => setRemember(e.target.checked)}
-            />
-            Remember SSH password
-            <Help label="remembering the SSH password">
-              Save the root SSH password in this Mac’s Keychain after successful
-              authentication. It is not synced to iCloud. Touch ID is required
-              on every connection. Unchecking this does not delete a saved
-              password; use Forget password.
-            </Help>
-          </label>
-          {connection ? (
-            <button
-              className="button secondary"
-              disabled={busy}
-              onClick={() => void disconnect()}
+              onClick={() => setMode("root")}
+              title="Full server access"
             >
-              <Unplug size={16} />
-              Disconnect
+              <Terminal size={18} />
+              <strong>VPS root</strong>
             </button>
-          ) : (
             <button
-              className="button"
-              disabled={busy || !native || !server}
-              onClick={() => void connect()}
+              className={`terminal-target ${mode === "container" ? "selected" : ""}`}
+              disabled={busy || !!connection}
+              onClick={() => setMode("container")}
+              title="Configured container user"
             >
-              <Fingerprint size={17} />
-              {busy ? "Connecting…" : "Connect with Touch ID"}
+              <Box size={18} />
+              <strong>Container</strong>
             </button>
-          )}
+          </div>
+          <div className="terminal-toolbar">
+            <label className="terminal-remember">
+              <input
+                type="checkbox"
+                checked={remember}
+                disabled={busy || !!connection}
+                onChange={(e) => setRemember(e.target.checked)}
+              />
+              Remember SSH password
+              <Help label="remembering the SSH password">
+                Save the root SSH password in this Mac’s Keychain after
+                successful authentication. It is not synced to iCloud. Touch ID
+                is required on every connection. Unchecking this does not delete
+                a saved password; use Forget password.
+              </Help>
+            </label>
+            {connection ? (
+              <button
+                className="button secondary"
+                disabled={busy}
+                onClick={() => void disconnect()}
+              >
+                <Unplug size={16} />
+                Disconnect
+              </button>
+            ) : (
+              <button
+                className="button"
+                disabled={busy || !native || !server}
+                onClick={() => void connect()}
+              >
+                <Fingerprint size={17} />
+                {busy ? "Connecting…" : "Connect with Touch ID"}
+              </button>
+            )}
+          </div>
         </div>
         <div className="terminal-access-meta">
           <span>
@@ -331,6 +337,25 @@ export default function TerminalPage({
               then starts the shell as the container’s configured user.
             </Help>
           </span>
+          <button
+            className="terminal-forget"
+            disabled={!native || busy || !server}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                await invoke("terminal_forget_password");
+                setMessage("Saved root SSH password removed from Keychain.");
+              } catch (e) {
+                fail(e);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            <Trash2 size={14} />
+            Forget password
+          </button>
         </div>
         {connection && mode === "container" && !active && (
           <div className="terminal-container-picker">
@@ -400,25 +425,6 @@ export default function TerminalPage({
             {error}
           </div>
         )}
-        <button
-          className="terminal-forget"
-          disabled={!native || busy || !server}
-          onClick={async () => {
-            setBusy(true);
-            setError("");
-            try {
-              await invoke("terminal_forget_password");
-              setMessage("Saved root SSH password removed from Keychain.");
-            } catch (e) {
-              fail(e);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <Trash2 size={14} />
-          Forget password
-        </button>
       </div>
       <div className="terminal-window">
         <div className="terminal-window-bar">

@@ -189,6 +189,30 @@ func query(r *http.Request, allowed ...string) (map[string]string, error) {
 func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	e := a.Engine
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/"), "/")
+	if len(parts) == 3 && parts[0] == "inventory" && parts[2] == "migration" {
+		if !require(w, p, "deploy.read", "") {
+			return
+		}
+		if !p.Allows("*") {
+			problem(w, 403, "SCOPE_REQUIRED", p.RequestID)
+			return
+		}
+		if _, err := query(r); err != nil || !config.ID.MatchString(parts[1]) || !strings.HasPrefix(parts[1], "existing-") {
+			problem(w, 400, "REQUEST_INVALID", p.RequestID)
+			return
+		}
+		assessment, found, err := migrationAssessment(e, parts[1])
+		if err != nil {
+			fail(w, err, p.RequestID)
+			return
+		}
+		if !found {
+			problem(w, 404, "PROJECT_NOT_FOUND", p.RequestID)
+			return
+		}
+		write(w, 200, assessment)
+		return
+	}
 	if r.URL.Path == "/v1/inventory" {
 		if !require(w, p, "deploy.read", "") {
 			return

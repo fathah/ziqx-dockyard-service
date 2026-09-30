@@ -6,7 +6,12 @@
   font-display: swap;
 }
 :root {
-  font-family: Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family:
+    Manrope,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
   color: #29352f;
   background: #f6f7f4;
   font-synthesis: none;
@@ -136,9 +141,12 @@ pre {
   font-weight: 750;
   letter-spacing: -0.8px;
 }
-.lock-brand .brand-dot,
-.lock-brand .brand-mark span {
+.lock-brand .brand-dot {
   color: #68994d;
+}
+.lock-brand .brand-mark {
+  width: 38px;
+  height: 38px;
 }
 .lock-symbol {
   width: 66px;
@@ -197,17 +205,11 @@ pre {
   color: #c7e4a3;
 }
 .brand-mark {
-  position: relative;
-  color: #e7f0db;
-}
-.brand-mark span {
-  height: 5px;
-  width: 5px;
-  background: #c7e4a3;
-  position: absolute;
-  top: 3px;
-  right: 1px;
-  border-radius: 50%;
+  display: block;
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  flex: none;
 }
 .workspace-label {
   border-top: 1px solid #315348;
@@ -217,40 +219,35 @@ pre {
   color: #83a090;
   font-weight: 600;
 }
-.server-select {
-  border: 1px solid #3a594e;
-  border-radius: 9px;
-  padding: 12px 10px;
-  background: #214439;
+.server-summary {
   display: flex;
   align-items: center;
   gap: 10px;
   color: #e4ece2;
   text-align: left;
   width: 100%;
-  margin-bottom: 31px;
+  padding: 10px 8px;
+  margin-bottom: 24px;
 }
 .server-symbol {
-  width: 30px;
-  height: 32px;
-  border-radius: 6px;
-  background: #35564a;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
   color: #c0d3b0;
 }
-.server-select > div:nth-child(2) {
+.server-summary > div:nth-child(2) {
   flex: 1;
   min-width: 0;
 }
-.server-select strong {
+.server-summary strong {
   font-size: 14px;
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.server-select span {
+.server-summary span {
   font-size: 12px;
   display: flex;
   align-items: center;
@@ -443,6 +440,11 @@ pre {
   padding: 37px 39px 27px;
   flex: 1;
 }
+.content-terminal {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 .page-heading {
   display: flex;
   justify-content: space-between;
@@ -453,6 +455,12 @@ pre {
 .page-heading p {
   margin-top: 10px;
   font-size: 14px;
+}
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .page-heading .eyebrow {
   margin-bottom: 10px;
@@ -1519,22 +1527,6 @@ pre {
 .content > .alert {
   margin: 0 0 18px;
 }
-.toast {
-  position: fixed;
-  bottom: 28px;
-  right: 30px;
-  z-index: 99;
-  box-shadow: 0 5px 30px #1a3c2520;
-  background: #234737;
-  color: #e3eeda;
-  padding: 14px 21px;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  border-radius: 7px;
-  max-width: 550px;
-  font-size: 11px;
-}
 .job-search {
   display: flex;
   gap: 13px;
@@ -1570,6 +1562,39 @@ pre {
 }
 .modal.wide {
   width: 760px;
+}
+.migration-modal .migration-intro {
+  margin-bottom: 20px;
+}
+.migration-result {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: #2d4836;
+  font-size: 16px;
+  margin-bottom: 12px;
+}
+.migration-result span {
+  font-size: 13px;
+  color: #a2583e;
+}
+.migration-checks {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 18px;
+}
+.migration-check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid #e9eee4;
+  font-size: 14px;
+  color: #354b3d;
+}
+.migration-check svg {
+  flex: none;
+  color: #b26246;
 }
 .setup-modal {
   width: 700px;
@@ -2246,39 +2271,43 @@ body:has(.modal) {
 .terminal-page {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  flex: 1;
+  min-height: 0;
+  gap: 12px;
+}
+.terminal-page .page-heading {
+  margin-bottom: 4px;
 }
 .terminal-access {
-  padding: 24px;
+  padding: 14px 18px;
   background: #fff;
   border: 1px solid #dfe5da;
   border-radius: 14px;
 }
+.terminal-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
 .terminal-targets {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin-bottom: 22px;
+  display: flex;
+  gap: 8px;
 }
 .terminal-target {
-  text-align: left;
-  padding: 20px;
-  display: grid;
-  grid-template-columns: 30px 1fr;
-  gap: 8px 12px;
+  padding: 10px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   border: 1px solid #dde5d4;
-  border-radius: 12px;
+  border-radius: 8px;
   background: #f8faf5;
   color: #44613b;
-  cursor: pointer;
+  white-space: nowrap;
 }
 .terminal-target strong {
-  font-size: 16px;
-}
-.terminal-target span {
-  grid-column: 2;
-  color: #7c8b78;
   font-size: 13px;
+  font-weight: 650;
 }
 .terminal-target.selected {
   border-color: #89a96a;
@@ -2286,24 +2315,43 @@ body:has(.modal) {
 }
 .terminal-target:disabled {
   cursor: default;
+  opacity: 1;
 }
 .terminal-toolbar {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
+  flex: 1;
+  min-width: 300px;
 }
 .terminal-remember {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 14px;
+  gap: 7px;
+  font-size: 12px;
   color: #53664b;
+  white-space: nowrap;
 }
 .terminal-remember input {
   accent-color: #254f3d;
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+.terminal-access-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  color: #75836d;
+  font-size: 12px;
+}
+.terminal-access-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
 .terminal-security-note {
   font-size: 12px;
@@ -2320,7 +2368,8 @@ body:has(.modal) {
   color: #6c8060;
   font-size: 12px;
   cursor: pointer;
-  padding: 8px 0;
+  padding: 4px 0;
+  white-space: nowrap;
 }
 .terminal-forget:disabled {
   opacity: 0.5;
@@ -2330,7 +2379,7 @@ body:has(.modal) {
   display: flex;
   align-items: end;
   gap: 16px;
-  padding: 18px 0;
+  padding: 12px 0 0;
 }
 .terminal-container-picker label {
   display: flex;
@@ -2357,12 +2406,16 @@ body:has(.modal) {
   overflow: hidden;
   background: #102d25;
   border: 1px solid #24483a;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 320px;
 }
 .terminal-window-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 14px 20px;
+  padding: 10px 16px;
   color: #a5b79d;
   background: #173a2e;
   font:
@@ -2383,8 +2436,9 @@ body:has(.modal) {
   background: #bdde8d;
 }
 .terminal-screen {
-  height: 410px;
-  padding: 16px;
+  flex: 1;
+  min-height: 270px;
+  padding: 12px;
 }
 .terminal-status {
   margin: 0;

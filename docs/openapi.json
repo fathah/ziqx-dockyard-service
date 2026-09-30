@@ -1724,6 +1724,79 @@
         ],
         "x-requires-all-projects": true
       }
+    },
+    "/v1/inventory/{id}/migration": {
+      "get": {
+        "operationId": "assessExistingMigration",
+        "summary": "Assess an observed Compose stack for safe-first migration",
+        "tags": [
+          "Projects"
+        ],
+        "description": "Requires deploy.read and all-project access. Reads cached inventory and at most one root-owned Compose source file to check strict policy compatibility. Returns only fixed check codes and a source hash, never YAML or environment values. This is read-only preflight: no migration execution endpoint exists yet.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Read-only migration eligibility checks; execution_available is currently false.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationAssessment"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ],
+        "x-requires-all-projects": true
+      }
     }
   },
   "components": {
@@ -3078,6 +3151,77 @@
           "warnings"
         ],
         "additionalProperties": false
+      },
+      "MigrationCheck": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "status"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "INVENTORY_FRESH",
+              "SOURCE_PRESENT",
+              "SOURCE_METADATA_COMPLETE",
+              "SINGLE_COMPOSE_FILE",
+              "PROJECT_ID_SUPPORTED",
+              "NO_MANUAL_CADDY_CUTOVER",
+              "NO_EXISTING_PUBLISHED_PORTS",
+              "APPROVED_TEMPLATES_CONFIGURED",
+              "SOURCE_FILE_TRUSTED",
+              "SOURCE_FILE_READABLE",
+              "APP_TEMPLATE_UNAMBIGUOUS",
+              "COMPOSE_POLICY_COMPATIBLE",
+              "STATELESS_STACK"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "blocked"
+            ]
+          }
+        }
+      },
+      "MigrationAssessment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "project_id",
+          "status",
+          "checks",
+          "execution_available"
+        ],
+        "properties": {
+          "project_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "blocked",
+              "candidate"
+            ]
+          },
+          "source_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MigrationCheck"
+            }
+          },
+          "execution_available": {
+            "type": "boolean",
+            "const": false
+          }
+        }
       }
     }
   }

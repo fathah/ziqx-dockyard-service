@@ -60,6 +60,13 @@ export type Inventory = {
   reserved_ports: number[];
   warnings: string[];
 };
+export type MigrationAssessment = {
+  project_id: string;
+  status: "blocked" | "candidate";
+  source_sha256?: string;
+  checks: { code: string; status: "passed" | "blocked" }[];
+  execution_available: boolean;
+};
 export type Profile = {
   name: string;
   origin: string;
@@ -97,6 +104,7 @@ export type Pending = {
 } | null;
 export type Read =
   | { kind: "projects" | "inventory" | "port" }
+  | { kind: "migration"; project: string }
   | { kind: "audit"; after: number }
   | {
       kind: "project";

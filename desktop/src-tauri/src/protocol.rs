@@ -112,6 +112,7 @@ impl Enrollment {
 pub enum Read {
     Projects {},
     Inventory {},
+    Migration { project: String },
     Audit {
         after: u64,
     },
@@ -137,6 +138,8 @@ impl Read {
         Ok(match self {
             Self::Projects {} => ("/v1/projects".into(), "deploy.read"),
             Self::Inventory {} => ("/v1/inventory".into(), "deploy.read"),
+            Self::Migration { project } if id(project) && project.starts_with("existing-") =>
+                (format!("/v1/inventory/{project}/migration"), "deploy.read"),
             Self::Audit { after } => (format!("/v1/audit?after={after}"), "deploy.read"),
             Self::Port {} => ("/v1/ports/next".into(), "projects.write"),
             Self::Project { project, view } if id(project) && matches!(view.as_str(), "status" | "releases" | "services" | "domains") =>
@@ -471,6 +474,20 @@ mod tests {
         }
         .target()
         .is_err());
+        assert!(Read::Migration {
+            project: "../secret".into()
+        }
+        .target()
+        .is_err());
+        assert_eq!(
+            Read::Migration {
+                project: "existing-safe".into()
+            }
+            .target()
+            .unwrap()
+            .0,
+            "/v1/inventory/existing-safe/migration"
+        );
         assert!(Read::Logs {
             project: "demo".into(),
             service: "app&tail=9999".into(),

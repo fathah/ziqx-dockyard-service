@@ -13,8 +13,6 @@ import {
   ArrowUpRight,
   Box,
   Check,
-  CheckCheck,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Cloud,
@@ -40,14 +38,17 @@ import {
   Zap,
 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
+import toast from "react-hot-toast";
 import * as api from "./api";
 import SetupWizard from "./SetupWizard";
 import TerminalPage from "./TerminalPage";
 import Help from "./Help";
 import { demoInventory, demoJobs, demoProjects } from "./demo";
+import dockyardIcon from "../src-tauri/icons/icon.png";
 import type {
   Environment,
   Inventory,
+  MigrationAssessment,
   Job,
   Pending,
   Project,
@@ -129,10 +130,7 @@ function Empty({
 function Brand() {
   return (
     <>
-      <div className="brand-mark">
-        <Box size={25} strokeWidth={1.7} />
-        <span />
-      </div>
+      <img className="brand-mark" src={dockyardIcon} alt="" />
       <span>
         dockyard<span className="brand-dot">.</span>
       </span>
@@ -162,7 +160,11 @@ function LockedScreen({
           <LockKeyhole size={28} />
         </div>
         <h1>Locked</h1>
-        {error && <p className="lock-error" role="alert">{error}</p>}
+        {error && (
+          <p className="lock-error" role="alert">
+            {error}
+          </p>
+        )}
         <button
           className="button primary lock-unlock"
           disabled={loading || busy}
@@ -201,7 +203,6 @@ function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [modal, setModal] = useState<Modal>(null);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
@@ -323,7 +324,6 @@ function App() {
       });
     listen("session-locked", () => {
       loseSession();
-      setNotice("Session locked. VPS services continue running.");
     })
       .then((u) => {
         if (disposed) u();
@@ -340,11 +340,6 @@ function App() {
     const timer = setInterval(() => void refresh(), 30000);
     return () => clearInterval(timer);
   }, [preview, session.unlocked, refresh]);
-  useEffect(() => {
-    if (!notice) return;
-    const t = setTimeout(() => setNotice(""), 5000);
-    return () => clearTimeout(t);
-  }, [notice]);
   async function authenticate(method: "enroll" | "unlock") {
     if (!api.native) {
       setError(
@@ -378,7 +373,7 @@ function App() {
     const version = epoch.current;
     const result = await api.mutate(mutation);
     if (version !== epoch.current) return;
-    setNotice(`Operation accepted · ${result.job_id}`);
+    toast.success(`Operation accepted · ${result.job_id}`);
     setModal(null);
     await refresh([result.job_id, ...session.jobs]);
     setPage("deployments");
@@ -428,7 +423,10 @@ function App() {
     shownProjects.length +
     (shownInventory?.projects.filter((p) => !p.managed).length ?? 0);
   const busy = authBusy || loading;
-  if (api.native && (!sessionReady || sessionLoadFailed || (hasEnrollment && !session.unlocked))) {
+  if (
+    api.native &&
+    (!sessionReady || sessionLoadFailed || (hasEnrollment && !session.unlocked))
+  ) {
     return (
       <LockedScreen
         loading={!sessionReady}
@@ -449,13 +447,7 @@ function App() {
           <Brand />
         </div>
         <div className="workspace-label">CONTROL ROOM</div>
-        <button
-          className="server-select"
-          onClick={() => {
-            setPage("security");
-            setSelected(null);
-          }}
-        >
+        <div className="server-summary">
           <div className="server-symbol">
             <Server size={18} />
           </div>
@@ -474,12 +466,11 @@ function App() {
               {preview
                 ? "Sample data"
                 : session.unlocked
-                  ? "Private connection"
+                  ? "Connected"
                   : "Not connected"}
             </span>
           </div>
-          <ChevronDown size={14} />
-        </button>
+        </div>
         <div className="nav-label">WORKSPACE</div>
         <nav>
           {nav.map((n) => (
@@ -494,9 +485,7 @@ function App() {
             >
               <n.icon size={18} />
               <span>{n.label}</span>
-              {n.id === "projects" && canUse && (
-                <small>{projectCount}</small>
-              )}
+              {n.id === "projects" && canUse && <small>{projectCount}</small>}
             </button>
           ))}
         </nav>
@@ -598,12 +587,6 @@ function App() {
             </button>
           </div>
         )}
-        {notice && (
-          <div className="toast" role="status">
-            <CheckCheck size={17} />
-            {notice}
-          </div>
-        )}
         {pending && !preview && canUse && (
           <div className="alert pending">
             <History size={17} />
@@ -625,7 +608,13 @@ function App() {
             </button>
           </div>
         )}
-        <div className="content">
+        <div
+          className={
+            page === "terminal" && canUse
+              ? "content content-terminal"
+              : "content"
+          }
+        >
           {canUse && (
             <TerminalPage
               visible={page === "terminal"}
@@ -652,7 +641,7 @@ function App() {
                   loseSession();
                   setSession({ unlocked: false, profile: null, jobs: [] });
                   setHasEnrollment(false);
-                  setNotice(
+                  toast.success(
                     "Local enrollment removed. Revoke its key on the VPS to remove server access.",
                   );
                 } catch (e) {
@@ -683,6 +672,7 @@ function App() {
             <ObservedProjectDetail
               project={observedProject}
               inventory={shownInventory}
+              preview={preview}
               back={() => setSelected(null)}
             />
           ) : page === "projects" ? (
@@ -697,7 +687,7 @@ function App() {
               create={() => setModal({ kind: "create" })}
               refresh={() => {
                 if (!preview) void refresh();
-                else setNotice("This preview uses sample data.");
+                else toast("This preview uses sample data.");
               }}
             />
           ) : page === "deployments" ? (
@@ -770,7 +760,7 @@ function App() {
             setPreview(false);
             setSetupOpen(false);
             setPage("projects");
-            setNotice(
+            toast.success(
               "Dockyard is running on your VPS. Your server IP and connection are saved in Keychain.",
             );
             void refresh(s.jobs);
@@ -1041,7 +1031,9 @@ function Projects({
                     <span className="route-label">
                       <span>{sites[0]?.host_matcher ?? "No linked route"}</span>
                       <small>
-                        {ports.length ? `:${ports[0]} observed port` : "No observed port"}
+                        {ports.length
+                          ? `:${ports[0]} observed port`
+                          : "No observed port"}
                         {sites.length > 1 ? ` · +${sites.length - 1} more` : ""}
                       </small>
                     </span>
@@ -1858,12 +1850,15 @@ function Domains({
 function ObservedProjectDetail({
   project,
   inventory,
+  preview,
   back,
 }: {
   project: Inventory["projects"][number];
   inventory: Inventory | null;
+  preview: boolean;
   back: () => void;
 }) {
+  const [migrationOpen, setMigrationOpen] = useState(false);
   const sites = (inventory?.sites ?? []).filter((site) =>
     site.project_ids.includes(project.id),
   );
@@ -1877,11 +1872,15 @@ function ObservedProjectDetail({
           <h1>{project.name}</h1>
           <p>/docker/{project.name}</p>
         </div>
-        <Tag>Existing Compose · read-only</Tag>
+        <div className="heading-actions">
+          <Tag>Existing Compose · read-only</Tag>
+          <button className="button primary" onClick={() => setMigrationOpen(true)}>
+            Migrate Now <ArrowRight size={16} />
+          </button>
+        </div>
       </div>
       <div className="alert pending">
-        This stack was found on the VPS. Dockyard can display its recorded
-        metadata, but cannot deploy, stop, or change it until it is migrated.
+        Imported from VPS · read-only until migrated.
       </div>
       <div className="detail-meta">
         <Tag tone={project.present ? "green" : "red"}>
@@ -1900,7 +1899,9 @@ function ObservedProjectDetail({
         </p>
         {project.services.map((service) => (
           <div className="inventory-row" key={service.name}>
-            <span className="job-icon"><Box size={17} /></span>
+            <span className="job-icon">
+              <Box size={17} />
+            </span>
             <div>
               <strong>{service.name}</strong>
               {service.image && <p>{service.image}</p>}
@@ -1917,7 +1918,9 @@ function ObservedProjectDetail({
         )}
       </section>
       <section className="panel">
-        <div className="section-heading"><h2>Linked Caddy routes</h2></div>
+        <div className="section-heading">
+          <h2>Linked Caddy routes</h2>
+        </div>
         {sites.map((site) => (
           <div className="inventory-row" key={site.host_matcher}>
             <Globe2 size={17} />
@@ -1934,7 +1937,110 @@ function ObservedProjectDetail({
           Some metadata could not be read: {project.warnings.join(", ")}.
         </div>
       )}
+      {migrationOpen && (
+        <MigrationReview
+          project={project}
+          preview={preview}
+          close={() => setMigrationOpen(false)}
+        />
+      )}
     </>
+  );
+}
+const migrationLabels: Record<string, string> = {
+  INVENTORY_FRESH: "Refresh VPS inventory and resolve scan warnings.",
+  SOURCE_PRESENT: "Restore the project folder before migrating.",
+  SOURCE_METADATA_COMPLETE: "Resolve Compose metadata warnings.",
+  SINGLE_COMPOSE_FILE: "Multiple Compose files or overrides need a reviewed merge.",
+  PROJECT_ID_SUPPORTED: "Project name must fit Dockyard's naming rules.",
+  NO_MANUAL_CADDY_CUTOVER: "This Caddy route needs a reviewed traffic cutover.",
+  NO_EXISTING_PUBLISHED_PORTS: "This published port needs a reviewed traffic cutover.",
+  APPROVED_TEMPLATES_CONFIGURED: "Configure approved deployment templates on the VPS.",
+  SOURCE_FILE_TRUSTED: "The Compose file and its parent folders need safe root ownership.",
+  SOURCE_FILE_READABLE: "The Compose file could not be read safely.",
+  APP_TEMPLATE_UNAMBIGUOUS: "Pin the app image by digest and map it to one approved template.",
+  COMPOSE_POLICY_COMPATIBLE: "Convert unsupported Compose settings to Dockyard's secure subset.",
+  STATELESS_STACK: "Persistent volumes need a separate data migration plan.",
+};
+function MigrationReview({
+  project,
+  preview,
+  close,
+}: {
+  project: Inventory["projects"][number];
+  preview: boolean;
+  close: () => void;
+}) {
+  const [assessment, setAssessment] = useState<MigrationAssessment | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (preview) return;
+    let active = true;
+    api.read<MigrationAssessment>({ kind: "migration", project: project.id })
+      .then((value) => {
+        if (active) setAssessment(value);
+      })
+      .catch((cause) => {
+        if (active) setError(String(cause));
+      });
+    return () => {
+      active = false;
+    };
+  }, [preview, project.id]);
+  return (
+    <div className="modal-backdrop" onClick={close}>
+      <section
+        className="modal wide migration-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Migrate ${project.name}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="modal-heading">
+          <div>
+            <span className="eyebrow">Existing project</span>
+            <h2>Migrate {project.name}</h2>
+          </div>
+          <button className="icon-button" aria-label="Close" onClick={close}>
+            <X size={19} />
+          </button>
+        </div>
+        <div className="wizard-body">
+          <p className="migration-intro">
+            Dockyard will check whether this stack can be moved safely into its managed deployment system.
+          </p>
+          {preview && <div className="alert pending">Connect to your VPS to check this project.</div>}
+          {error && (
+            <div className="alert pending">
+              Could not check this project. The VPS may need a newer Dockyard service. {error}
+            </div>
+          )}
+          {!preview && !error && !assessment && <p>Checking the project…</p>}
+          {assessment && (
+            <>
+              <div className="migration-result">
+                <strong>{assessment.status === "candidate" ? "Source checks passed" : "Needs preparation"}</strong>
+                <span>{assessment.checks.filter((check) => check.status === "blocked").length} blockers</span>
+              </div>
+              <div className="migration-checks">
+                {assessment.checks.filter((check) => check.status === "blocked").map((check) => (
+                  <div className="migration-check" key={check.code}>
+                    <X size={16} />
+                    <span>{migrationLabels[check.code] ?? check.code}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="alert pending">
+                Migration is not yet available on this server. The existing containers and files remain untouched.
+              </div>
+            </>
+          )}
+        </div>
+        <div className="modal-footer">
+          <button className="button" onClick={close}>Close</button>
+        </div>
+      </section>
+    </div>
   );
 }
 function InventoryView({

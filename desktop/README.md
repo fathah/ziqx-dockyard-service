@@ -4,13 +4,15 @@ A Tauri 2 desktop control room with a Rust API client and a bundled React interf
 
 ## Run on this Mac
 
-The latest local Apple Silicon app is in `releases/dockyard-logo/Dockyard.app`, with `releases/Dockyard-logo-macos-arm64.zip` and a SHA-256 checksum. Its app icon uses `src/assets/dockyard.png` on the Dockyard green background. When an enrolled Mac is locked, the app shows only the Touch ID unlock screen. From the repository root:
+The latest local Apple Silicon app is in `releases/dockyard-terminal-toast/Dockyard.app`, with `releases/Dockyard-terminal-toast-macos-arm64.zip` and a SHA-256 checksum. Its app icon and in-app wordmark use the same Dockyard logo. When an enrolled Mac is locked, the app shows only the Touch ID unlock screen. From the repository root:
 
 ```sh
-open desktop/releases/dockyard-logo/Dockyard.app
+open desktop/releases/dockyard-terminal-toast/Dockyard.app
 ```
 
 Quit any previously opened Dockyard instance first so the single-instance guard does not bring an older build to the foreground. This local artifact uses an ad-hoc signature; it is not notarized for distribution.
+
+Package the app with `npm run desktop:build`; a standalone `cargo build --release` does not embed the frontend and produces a blank window when copied into an app bundle.
 
 The local build produces `src-tauri/target/release/bundle/macos/Dockyard.app`:
 
@@ -99,7 +101,7 @@ The desktop uses the existing certificate-pinned mTLS + HMAC API protocol. It do
 - Production supports stateless blue-green stacks. Dev/staging always use one slot. Persistent volumes require a single-instance production project. All services need approved image digests and root templates; this app cannot grant itself new templates.
 - Inspect live status separately from recorded state, browse release/service metadata, read bounded container logs by service/slot, and start/restart/stop/rollback services. Stop requires typing the exact project ID. Public TLS remains explicitly unverified by this API.
 - Domains: edit managed Caddy assignments and optional ports, then create Cloudflare DNS for an assigned hostname in the project detail. The VPS selects the permitted zone and origin. Manual Caddy sites appear in read-only inventory.
-- Inventory: existing directories remain production observations from SQLite and are not silently adopted or restarted. The VPS refreshes them every five minutes; the app's refresh reads the current database snapshot. See [existing-project migration boundary](../docs/EXISTING.md).
+- Inventory: existing directories remain production observations from SQLite and are not silently adopted or restarted. The VPS refreshes them every five minutes; the app's refresh reads the current database snapshot. **Migrate Now** opens a read-only eligibility review when the VPS runs a service version with the migration preflight endpoint. It shows blockers; the actual takeover job is not implemented yet. See [legacy migration design](../docs/LEGACY_MIGRATION.md).
 - Deployments: tracks the newest ten jobs started by this Mac, retains up to 100 job IDs in Keychain, and supports job lookup by ID. This API has no global jobs-list endpoint. Audit reads the server's paginated event log.
 
 All writes have a native review dialog, separate from the webview. The desktop permits one outstanding write at a time. Before sending, Rust saves the exact JSON bytes, stable operation/request IDs, and an attempted marker in Keychain. A definitive rejection of the first attempt can clear the operation; any rejection after an uncertain attempt retains it, since authentication or policy changes do not prove the earlier request was never accepted. Uncertain outcomes retain them across restarts; **Retry safely** refreshes the timestamp/signature while reusing those bytes and IDs. Successful job acceptance retains the operation until its terminal result is read, then removes the payload from saved state. A saved operation prevents replacing or removing enrollment. A single-instance guard prevents concurrent desktop processes from overwriting the saved state. Never re-submit the same change with new IDs after a network error. If a recorded operation cannot be resolved because of key rotation or state recovery, inspect its IDs and the VPS before removing local state.
