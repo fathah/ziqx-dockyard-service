@@ -132,7 +132,12 @@ func migrationAssessment(e *engine.Engine, id string) (MigrationAssessment, bool
 							matches = append(matches, id)
 						}
 					}
-					add("APP_TEMPLATE_UNAMBIGUOUS", len(matches) == 1)
+					// Without an approved template, an image cannot be matched to
+					// one. Keep the policy prerequisite as the only actionable
+					// finding instead of reporting a misleading second failure.
+					if approved {
+						add("APP_TEMPLATE_UNAMBIGUOUS", len(matches) == 1)
+					}
 					if len(matches) == 1 {
 						candidate := model.Project{ID: p.Name, Template: matches[0], Environment: model.Production}
 						plan, parseErr := runtime.ParseCompose(e.Config, candidate, string(b))

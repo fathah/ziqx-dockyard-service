@@ -30,18 +30,22 @@ secret values. Its current conservative checks cover:
 3. No host bind mounts, external or named persistent volumes, host namespaces,
    devices, privileged settings, custom container names, or other unsupported
    Compose fields. Stateful stacks require a separate data migration design.
-4. No known manual Caddy route or existing published host port. These stay
-   blocked until the traffic-cutover job can transfer them safely. A missing
-   association is not proof that a route is unowned.
+4. A known manual Caddy route or existing published host port requires a
+   traffic-cutover job. These are work for Dockyard to perform, not changes
+   the operator should make to the live service just to satisfy preflight.
+   A missing association is not proof that a route is unowned.
 
 The execution preflight must add available replacement ports and resources,
 live Docker identity/health, and a fingerprint of all relevant Compose files,
 Caddy routes, container IDs, and policy. A changed fingerprint must invalidate
 the review. The current source hash alone is not authority to execute.
 
-The desktop shows `Migrate Now` on each observed project. Its current first
-screen displays the preflight result and concrete blockers, and clearly says
-execution is unavailable. For an eligible project, the future execution flow
+The desktop shows `Check migration` on each observed project. Its current first
+screen separates the traffic work Dockyard must perform from policy and source
+decisions requiring review, and clearly says execution is unavailable. A
+missing approved template must not also be reported as an image-to-template
+mismatch: that check depends on the template being present. For an eligible
+project, the future execution flow
 will let the operator supply any environment values
 through the existing secret handling path and reviews service/template mapping,
 new ports, domain ownership, traffic switch, and rollback plan. No secret is

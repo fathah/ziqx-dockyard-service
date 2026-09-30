@@ -1219,8 +1219,7 @@ pre {
   margin-top: 9px;
   color: #a3b095;
 }
-.job-row > div:last-child,
-.inventory-row > div:last-child {
+.job-row > div:last-child {
   text-align: right;
 }
 .job-icon {
@@ -1670,27 +1669,52 @@ pre {
   font-size: 16px;
   margin-bottom: 12px;
 }
-.migration-result span {
-  font-size: 13px;
-  color: #a2583e;
-}
-.migration-checks {
-  display: grid;
-  gap: 2px;
-  margin-bottom: 18px;
-}
-.migration-check {
+.migration-plan-step {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 4px;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 18px 4px;
   border-bottom: 1px solid #e9eee4;
-  font-size: 14px;
   color: #354b3d;
 }
-.migration-check svg {
+.migration-plan-step > div {
+  min-width: 0;
+}
+.migration-plan-step > svg {
   flex: none;
-  color: #b26246;
+  color: #628a59;
+}
+.migration-plan-step strong {
+  font-size: 15px;
+}
+.migration-plan-step p {
+  margin: 7px 0 0;
+  color: #526357;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.migration-plan-number {
+  display: grid;
+  flex: 0 0 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  background: #eff4e9;
+  color: #36583b;
+  font-size: 12px;
+  font-weight: 700;
+}
+.migration-plan-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.migration-plan-issue {
+  margin-top: 12px;
+}
+.migration-plan-issue strong {
+  font-size: 13px;
 }
 .setup-modal {
   width: 700px;

@@ -2033,7 +2033,7 @@ function ObservedProjectDetail({
             className="button primary"
             onClick={() => setMigrationOpen(true)}
           >
-            Migrate Now <ArrowRight size={16} />
+            Check migration <ArrowRight size={16} />
           </button>
         </div>
       </div>
@@ -2113,19 +2113,37 @@ const migrationLabels: Record<string, string> = {
   SINGLE_COMPOSE_FILE:
     "Multiple Compose files or overrides need a reviewed merge.",
   PROJECT_ID_SUPPORTED: "Project name must fit Dockyard's naming rules.",
-  NO_MANUAL_CADDY_CUTOVER: "This Caddy route needs a reviewed traffic cutover.",
+  NO_MANUAL_CADDY_CUTOVER: "A live Caddy route needs a reviewed traffic switch.",
   NO_EXISTING_PUBLISHED_PORTS:
-    "This published port needs a reviewed traffic cutover.",
+    "A live published port needs a replacement port and traffic switch.",
   APPROVED_TEMPLATES_CONFIGURED:
-    "Configure approved deployment templates on the VPS.",
+    "This VPS needs approved deployment templates before it can manage this stack.",
   SOURCE_FILE_TRUSTED:
     "The Compose file and its parent folders need safe root ownership.",
   SOURCE_FILE_READABLE: "The Compose file could not be read safely.",
   APP_TEMPLATE_UNAMBIGUOUS:
-    "Pin the app image by digest and map it to one approved template.",
+    "The app image must match exactly one approved template and use a digest.",
   COMPOSE_POLICY_COMPATIBLE:
     "Convert unsupported Compose settings to Dockyard's secure subset.",
   STATELESS_STACK: "Persistent volumes need a separate data migration plan.",
+};
+const migrationNextSteps: Record<string, string> = {
+  INVENTORY_FRESH: "Refresh the VPS inventory, then check again.",
+  SOURCE_PRESENT: "Restore the project folder before planning a move.",
+  SOURCE_METADATA_COMPLETE:
+    "Review the Compose file and resolve the inventory warning shown on the project page.",
+  SINGLE_COMPOSE_FILE:
+    "Review and merge the active Compose files into one deployment source.",
+  PROJECT_ID_SUPPORTED:
+    "Choose a Dockyard project ID that meets its naming rules.",
+  SOURCE_FILE_TRUSTED:
+    "Review the ownership and permissions of the Compose file and its parent folders.",
+  SOURCE_FILE_READABLE:
+    "Check the Compose file on the VPS and refresh the inventory.",
+  COMPOSE_POLICY_COMPATIBLE:
+    "Review unsupported Compose settings before Dockyard can run a replacement stack.",
+  STATELESS_STACK:
+    "Plan a data backup and transfer before moving a stack with persistent volumes.",
 };
 function migrationCheckError(error: string) {
   if (error.includes("HTTP_404: NOT_FOUND")) {
@@ -2154,6 +2172,15 @@ function MigrationReview({
     null,
   );
   const [error, setError] = useState("");
+  const blocked = assessment?.checks.filter((check) => check.status === "blocked") ?? [];
+  const hasRoute = blocked.some((check) => check.code === "NO_MANUAL_CADDY_CUTOVER");
+  const hasPort = blocked.some((check) => check.code === "NO_EXISTING_PUBLISHED_PORTS");
+  const needsTemplates = blocked.some((check) => check.code === "APPROVED_TEMPLATES_CONFIGURED");
+  const needsImage = !needsTemplates && blocked.some((check) => check.code === "APP_TEMPLATE_UNAMBIGUOUS");
+  const sourceIssues = blocked.filter((check) => ![
+    "NO_MANUAL_CADDY_CUTOVER", "NO_EXISTING_PUBLISHED_PORTS",
+    "APPROVED_TEMPLATES_CONFIGURED", "APP_TEMPLATE_UNAMBIGUOUS",
+  ].includes(check.code));
   useEffect(() => {
     if (preview) return;
     let active = true;
@@ -2181,7 +2208,7 @@ function MigrationReview({
         <div className="modal-heading">
           <div>
             <span className="eyebrow">Existing project</span>
-            <h2>Migrate {project.name}</h2>
+          <h2>Migration plan for {project.name}</h2>
           </div>
           <button className="icon-button" aria-label="Close" onClick={close}>
             <X size={19} />
@@ -2189,8 +2216,8 @@ function MigrationReview({
         </div>
         <div className="wizard-body">
           <p className="migration-intro">
-            Check whether this stack is eligible. Automatic takeover is not
-            available yet.
+            Dockyard should prepare a replacement, check it, switch traffic,
+            and keep the original stack available for rollback.
           </p>
           {preview && (
             <div className="alert pending">
@@ -2214,33 +2241,43 @@ function MigrationReview({
           {assessment && (
             <>
               <div className="migration-result">
-                <strong>
-                  {assessment.status === "candidate"
-                    ? "Source checks passed"
-                    : "Needs preparation"}
-                </strong>
-                <span>
-                  {
-                    assessment.checks.filter(
-                      (check) => check.status === "blocked",
-                    ).length
-                  }{" "}
-                  blockers
-                </span>
+                <strong>{assessment.execution_available ? "Ready for review" : "Migration is not available in this version"}</strong>
               </div>
-              <div className="migration-checks">
-                {assessment.checks
-                  .filter((check) => check.status === "blocked")
-                  .map((check) => (
-                    <div className="migration-check" key={check.code}>
-                      <X size={16} />
-                      <span>{migrationLabels[check.code] ?? check.code}</span>
-                    </div>
-                  ))}
-              </div>
+              {(hasRoute || hasPort) && <div className="migration-plan-step">
+                <span className="migration-plan-number">1</span>
+                <div>
+                  <strong>Dockyard must move live traffic</strong>
+                  <p>Start the managed stack on a free local port, verify its health, then switch the reviewed Caddy route. Keep the original containers and route backup for rollback. This cutover job has not been built yet.</p>
+                  <div className="migration-plan-tags">
+                    {hasRoute && <Tag>Caddy route detected</Tag>}
+                    {hasPort && <Tag>Published port in use</Tag>}
+                  </div>
+                </div>
+              </div>}
+              {(needsTemplates || needsImage) && <div className="migration-plan-step">
+                <span className="migration-plan-number">2</span>
+                <div>
+                  <strong>Review the deployment policy</strong>
+                  {needsTemplates && <p>The VPS currently has an inventory-only policy. A managed deployment needs approved templates for its services: image repositories, health checks, non-root users, resource limits, and allowed environment variables. Dockyard cannot safely guess these from a running container.</p>}
+                  {needsImage && <p>The app image needs an immutable SHA-256 digest and must match exactly one approved template. Choose the image and template before starting a replacement.</p>}
+                </div>
+              </div>}
+              {sourceIssues.length > 0 && <div className="migration-plan-step">
+                <span className="migration-plan-number">3</span>
+                <div>
+                  <strong>Resolve source and data requirements</strong>
+                  {sourceIssues.map((check) => <div className="migration-plan-issue" key={check.code}>
+                    <strong>{migrationLabels[check.code] ?? check.code}</strong>
+                    {migrationNextSteps[check.code] && <p>{migrationNextSteps[check.code]}</p>}
+                  </div>)}
+                </div>
+              </div>}
+              {!blocked.length && <div className="migration-plan-step">
+                <Check size={18} />
+                <div><strong>Source checks passed</strong><p>The migration job is still required to take over this project.</p></div>
+              </div>}
               <div className="alert pending">
-                Migration is not yet available on this server. The existing
-                containers and files remain untouched.
+                This review makes no changes. Dockyard cannot take over this stack until the migration job is implemented; your files, routes, and containers are unchanged.
               </div>
             </>
           )}
