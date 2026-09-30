@@ -18,7 +18,10 @@ export const demoProjects: Project[] = [
   id: `${app}-${env}`,
   app_id: String(app),
   environment: env as Project["environment"],
-  template_id: "web-node",
+  template_id: i === 0 ? "" : "web-node",
+  ...(i === 0
+    ? { mode: "compose" as const, route_service: "web", route_port: 80 }
+    : {}),
   domains: [`${env === "production" ? "" : env + "."}${app}.example.com`],
   zerodowntime: Boolean(zero),
   blue_port: Number(port),

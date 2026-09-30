@@ -103,7 +103,7 @@ func TestOpenAPIReferencesAndSecurity(t *testing.T) {
 			}
 		}
 	}
-	if operations != 27 {
+	if operations != 28 {
 		t.Fatalf("expected 21 API operations and 6 health/docs operations, got %d", operations)
 	}
 }

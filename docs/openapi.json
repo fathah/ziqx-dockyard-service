@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Ziqx Dockyard Service API",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
     "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, service, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved."
   },
@@ -1889,6 +1889,78 @@
           }
         }
       }
+    },
+    "/v1/projects/{id}/configuration": {
+      "get": {
+        "operationId": "readProjectConfiguration",
+        "summary": "Read saved Compose and environment files",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Returns verified source Compose and raw .env for the current release, or empty files and release_id for an undeployed project. Contains secrets: requires signed deploy.environment and server-wide compose.admin authority. Responses are no-store. The desktop requires Touch ID before fetching. Read-only metadata endpoints never include these contents.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private editable configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectConfiguration"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.environment"
+        ]
+      }
     }
   },
   "components": {
@@ -2785,6 +2857,10 @@
             "maxLength": 65536,
             "writeOnly": true,
             "description": "Raw .env file contents, not a filesystem path. Up to 64 KiB in UTF-8. Used for Compose interpolation and env_file: .env. Omit to reuse the current snapshot, or supply an empty string to clear. Full Compose mode only; requires deploy.environment."
+          },
+          "expected_release_id": {
+            "type": "string",
+            "description": "Optional optimistic concurrency check against the current release. An empty string requires an undeployed project. A mismatch returns CONFIGURATION_CHANGED before any files are prepared."
           }
         },
         "required": [
@@ -3385,6 +3461,25 @@
           "service_count": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "ProjectConfiguration": {
+        "type": "object",
+        "required": [
+          "release_id",
+          "compose_yaml",
+          "env_file"
+        ],
+        "properties": {
+          "release_id": {
+            "type": "string"
+          },
+          "compose_yaml": {
+            "type": "string"
+          },
+          "env_file": {
+            "type": "string"
           }
         }
       }

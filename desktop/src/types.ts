@@ -112,7 +112,7 @@ export type Pending = {
 } | null;
 export type Read =
   | { kind: "projects" | "inventory" | "port" }
-  | { kind: "migration"; project: string }
+  | { kind: "migration" | "configuration"; project: string }
   | { kind: "audit"; after: number }
   | {
       kind: "project";

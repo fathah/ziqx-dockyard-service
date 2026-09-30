@@ -155,3 +155,14 @@ Connections are desktop-wide and saved in a separate, non-iCloud-synchronized Ke
 Native requests use a fixed HTTPS Cloudflare endpoint, no redirects or environment proxies, bounded responses and timeouts, and an unlocked-session lease. Record edits/deletes re-read `modified_on` before applying a change to detect stale forms (Cloudflare does not provide an atomic compare-and-swap through this flow). Writes are never retried automatically; after a connection failure, refresh to determine whether the change succeeded.
 
 Tests: `cargo test --locked --manifest-path src-tauri/Cargo.toml` includes local-only Cloudflare HTTP fixtures (requires permission to bind loopback). For a credential-free visual fixture, run Vite and visit `/tests/providers-preview.html`. This test page uses mocked IPC and is not included in the packaged app.
+
+### Edit project files
+
+Native Compose projects have a Configuration tab. Edit files with Touch ID retrieves
+verified Compose source and `.env` from the current release. Contents stay in memory
+while the tab is open, and are cleared on navigation or lock. Update & deploy sends
+both files through the existing validated, authenticated deployment flow. An empty
+`.env` intentionally clears saved values. Concurrent release changes are rejected
+so an old editor cannot overwrite a newer release. Requires server 0.5.0 or later.
+Migrated projects use their saved adoption snapshot; inline Compose environment
+values take precedence over `.env` interpolation, as in Docker Compose.

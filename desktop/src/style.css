@@ -1357,9 +1357,16 @@ pre {
   flex-wrap: wrap;
   gap: 16px;
 }
-.server-updater-heading h2 { margin: 0 0 5px; }
-.server-updater-heading p { margin: 0; }
-.server-updater-status { justify-content: flex-start; margin-top: 20px; }
+.server-updater-heading h2 {
+  margin: 0 0 5px;
+}
+.server-updater-heading p {
+  margin: 0;
+}
+.server-updater-status {
+  justify-content: flex-start;
+  margin-top: 20px;
+}
 .server-updater-review {
   margin-top: 20px;
   padding: 20px;
@@ -1367,15 +1374,21 @@ pre {
   border-radius: 12px;
   background: #f6f9f2;
 }
-.server-updater-review h3 { margin: 0 0 10px; }
-.server-updater-review p { max-width: 720px; }
+.server-updater-review h3 {
+  margin: 0 0 10px;
+}
+.server-updater-review p {
+  max-width: 720px;
+}
 .server-updater-hashes {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 9px 16px;
   margin: 16px 0;
 }
-.server-updater-forget { margin-top: 20px; }
+.server-updater-forget {
+  margin-top: 20px;
+}
 .server-card-header {
   display: flex;
   align-items: center;
@@ -2767,4 +2780,68 @@ body:has(.modal) {
   font-size: 14px;
   line-height: 1.7;
   margin-bottom: 16px;
+}
+
+.project-configuration h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.configuration-unlock {
+  padding: 40px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+.configuration-unlock p {
+  font-size: 16px;
+}
+.configuration-toolbar,
+.configuration-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.configuration-toolbar {
+  margin: 20px 0 12px;
+}
+.configuration-toolbar .tabs {
+  margin: 0;
+}
+.configuration-editor {
+  width: 100%;
+  min-height: 380px;
+  height: min(52vh, 620px);
+  font-size: 15px;
+  line-height: 1.65;
+  tab-size: 2;
+}
+.configuration-footer {
+  margin-top: 20px;
+  font-size: 14px;
+}
+.configuration-note {
+  font-size: 14px;
+  margin-top: 12px;
+}
+.configuration-loading {
+  width: 100%;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.configuration-loading > .skeleton-bar {
+  height: 20px;
+  width: 80%;
+}
+.configuration-loading > .skeleton-bar:nth-child(2) {
+  width: 55%;
+}
+.configuration-loading > .skeleton-bar:nth-child(3) {
+  width: 65%;
 }

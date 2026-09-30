@@ -329,6 +329,9 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	}
 	id := parts[1]
 	scope := "deploy.read"
+	if len(parts) == 3 && parts[2] == "configuration" {
+		scope = "deploy.environment"
+	}
 	if len(parts) == 3 && parts[2] == "logs" {
 		select {
 		case a.logSlots <- struct{}{}:
@@ -345,6 +348,31 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 	project, err := e.Store.Project(id)
 	if err != nil {
 		problem(w, 404, "PROJECT_NOT_FOUND", p.RequestID)
+		return
+	}
+	if len(parts) == 3 && parts[2] == "configuration" {
+		if _, err := query(r); err != nil {
+			fail(w, err, p.RequestID)
+			return
+		}
+		if !a.nativeAuthority(w, p) {
+			return
+		}
+		if !project.NativeCompose() {
+			problem(w, 409, "CONFIGURATION_UNAVAILABLE", p.RequestID)
+			return
+		}
+		current, exists := project.Current()
+		if !exists {
+			write(w, 200, map[string]string{"release_id": "", "compose_yaml": "", "env_file": ""})
+			return
+		}
+		source, dotenv, err := runtime.EditableConfiguration(e.Config, project, current)
+		if err != nil {
+			fail(w, err, p.RequestID)
+			return
+		}
+		write(w, 200, map[string]string{"release_id": current.ID, "compose_yaml": source, "env_file": dotenv})
 		return
 	}
 	if len(parts) == 3 && parts[2] == "logs" {
@@ -476,10 +504,11 @@ type createRequest struct {
 	ReadinessPath string   `json:"readiness_path,omitempty"`
 }
 type deployRequest struct {
-	Environment string            `json:"environment"`
-	Compose     string            `json:"compose_yaml"`
-	Variables   map[string]string `json:"variables,omitempty"`
-	EnvFile     *string           `json:"env_file,omitempty"`
+	ExpectedRelease *string           `json:"expected_release_id,omitempty"`
+	Environment     string            `json:"environment"`
+	Compose         string            `json:"compose_yaml"`
+	Variables       map[string]string `json:"variables,omitempty"`
+	EnvFile         *string           `json:"env_file,omitempty"`
 }
 
 // Full Compose can mount the host or run privileged services. It is only
@@ -792,6 +821,13 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 			if secure.Decode(body, &input) != nil {
 				problem(w, 400, "REQUEST_INVALID", request)
 				return
+			}
+			if input.ExpectedRelease != nil {
+				current, _ := p.Current()
+				if *input.ExpectedRelease != current.ID {
+					problem(w, 409, "CONFIGURATION_CHANGED", request)
+					return
+				}
 			}
 			if input.Environment == "" {
 				problem(w, 422, "DEPLOYMENT_ENVIRONMENT_REQUIRED", request)

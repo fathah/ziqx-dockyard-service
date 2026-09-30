@@ -311,3 +311,26 @@ func ComposeMirror(c config.Config, p model.Project, r model.Release) ([]byte, e
 	}
 	return source, nil
 }
+
+// EditableConfiguration returns only the selected immutable release's inputs.
+// Callers must authorize secret access; never include this in ordinary metadata.
+func EditableConfiguration(c config.Config, p model.Project, r model.Release) (string, string, error) {
+	source, err := ComposeMirror(c, p, r)
+	if err != nil {
+		return "", "", err
+	}
+	_, compiled, err := nativeRelease(c, p, r)
+	if err != nil {
+		return "", "", err
+	}
+	env, err := os.ReadFile(envPath(c, p.ID, r.Environment))
+	var doc map[string]any
+	if err != nil || json.Unmarshal(compiled, &doc) != nil || len(source) > 64<<10 || len(env) > 64<<10 {
+		return "", "", model.Fail("CONFIGURATION_UNAVAILABLE")
+	}
+	h := sha256.Sum256(env)
+	if doc["x-dockyard-env-sha256"] != hex.EncodeToString(h[:]) {
+		return "", "", model.Fail("ENVIRONMENT_IDENTITY_UNKNOWN")
+	}
+	return string(source), string(env), nil
+}

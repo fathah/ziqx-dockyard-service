@@ -112,6 +112,7 @@ impl Enrollment {
 pub enum Read {
     Projects {},
     Inventory {},
+    Configuration { project: String },
     Migration {
         project: String,
     },
@@ -139,6 +140,7 @@ impl Read {
         let bad = || "Invalid read operation".to_string();
         Ok(match self {
             Self::Projects {} => ("/v1/projects".into(), "deploy.read"),
+            Self::Configuration { project } if id(project) => (format!("/v1/projects/{project}/configuration"), "deploy.environment"),
             Self::Inventory {} => ("/v1/inventory".into(), "deploy.read"),
             Self::Migration { project } if id(project) && project.starts_with("existing-") =>
                 (format!("/v1/inventory/{project}/migration"), "deploy.read"),
@@ -180,6 +182,8 @@ pub struct Create {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Deploy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_release_id: Option<String>,
     pub environment: String,
     pub compose_yaml: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -306,6 +310,7 @@ impl Mutation {
             }
             Self::Deploy { project, mut data } => {
                 if !environment(&data.environment)
+                    || data.expected_release_id.as_ref().is_some_and(|r| !r.is_empty() && !token(r))
                     || data.compose_yaml.is_empty()
                     || data.compose_yaml.len() > 65536
                     || data
@@ -546,6 +551,18 @@ mod tests {
         .target()
         .is_err());
     }
+    #[test]
+    fn configuration_requires_secret_scope_and_preserves_edit_revision() {
+        let read = Read::Configuration { project: "demo".into() };
+        assert_eq!(read.target().unwrap(), ("/v1/projects/demo/configuration".into(), "deploy.environment"));
+        assert!(Read::Configuration { project: "../demo".into() }.target().is_err());
+        let deploy: Mutation = serde_json::from_value(serde_json::json!({"action":"deploy","project":"demo","data":{"environment":"production","compose_yaml":"services: {}", "env_file":"", "expected_release_id":"rel-old"}})).unwrap();
+        let op = deploy.plan().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&op.body).unwrap();
+        assert_eq!(body["expected_release_id"], "rel-old");
+        assert_eq!(body["env_file"], "");
+    }
+
     #[test]
     fn full_compose_inputs_keep_dotenv_and_need_no_template() {
         let create: Mutation = serde_json::from_value(serde_json::json!({"action":"create","data":{"id":"demo","app_id":"demo","environment":"production","domains":[],"zerodowntime":false}})).unwrap();

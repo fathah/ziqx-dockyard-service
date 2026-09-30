@@ -41,6 +41,7 @@ import { listen } from "@tauri-apps/api/event";
 import toast from "react-hot-toast";
 import * as api from "./api";
 import SetupWizard from "./SetupWizard";
+import ProjectConfiguration from "./ProjectConfiguration";
 import TerminalPage from "./TerminalPage";
 import { DomainProviderSettings, ProviderDomains } from "./DomainProviders";
 import Help from "./Help";
@@ -1340,6 +1341,7 @@ function ProjectDetail({
   report: (e: unknown) => void;
 }) {
   const [tab, setTab] = useState("overview");
+  const [configDirty, setConfigDirty] = useState(false);
   const [services, setServices] = useState<Service[]>([]);
   const [servicesLoading, setServicesLoading] = useState(!preview);
   const [dnsLoading, setDnsLoading] = useState(!preview);
@@ -1502,10 +1504,14 @@ function ProjectDetail({
         </div>
         <button
           className="button primary"
-          onClick={() => open({ kind: "deploy", project: p })}
+          onClick={() =>
+            p.mode === "compose"
+              ? setTab("configuration")
+              : open({ kind: "deploy", project: p })
+          }
         >
           <ArrowUpRight size={17} />
-          Deploy Compose
+          {p.mode === "compose" ? "Edit & deploy" : "Deploy Compose"}
         </button>
       </div>
       <div className="detail-meta">
@@ -1524,16 +1530,39 @@ function ProjectDetail({
         </span>
       </div>
       <div className="tabs">
-        {["overview", "services", "releases", "logs", "domains"].map((t) => (
+        {[
+          "overview",
+          "services",
+          ...(p.mode === "compose" ? ["configuration"] : []),
+          "releases",
+          "logs",
+          "domains",
+        ].map((t) => (
           <button
             key={t}
             className={tab === t ? "selected" : ""}
-            onClick={() => setTab(t)}
+            onClick={() => {
+              if (
+                t !== tab &&
+                configDirty &&
+                !window.confirm("Discard your unsaved configuration edits?")
+              )
+                return;
+              setTab(t);
+            }}
           >
             {t[0].toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>
+      {tab === "configuration" && (
+        <ProjectConfiguration
+          project={p}
+          preview={preview}
+          execute={execute}
+          onDirtyChange={setConfigDirty}
+        />
+      )}
       {p.adoption && (
         <p className="alert pending">
           Managed in place · Caddy routes remain in the existing Caddyfile.

@@ -48,6 +48,20 @@ func TestNativeComposeRequiresExplicitRootCapability(t *testing.T) {
 	if p.Mode != "compose" || p.ZeroDowntime || p.BluePort != 0 || p.Template != "" {
 		t.Fatal("native project needs a template or route", p)
 	}
+	w = send("GET", "/v1/projects/demo/configuration", "", "deploy.environment", "empty-config")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"release_id":""`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	// Merely possessing environment permission must not grant host-level secrets.
+	a.Engine.Config.Keys[0].Scopes = []string{"deploy.environment"}
+	a.Auth, err = auth.New(a.Engine.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = send("GET", "/v1/projects/demo/configuration", "", "deploy.environment", "no-compose-grant")
+	if w.Code != 403 || !strings.Contains(w.Body.String(), "COMPOSE_ACCESS_REQUIRED") {
+		t.Fatal(w.Code, w.Body.String())
+	}
 }
 
 type nativeRunner struct{}
@@ -140,6 +154,50 @@ func TestNativeDeploymentQueuesRevisionsWithoutSecrets(t *testing.T) {
 	project, err := a.Engine.Store.Project("demo")
 	if err != nil || project.State != "running" || project.BluePort != 0 {
 		t.Fatal("invalid native state", err, project)
+	}
+
+	// Configuration reads expose secrets only to explicitly enabled admins.
+	for _, scopes := range []string{"deploy.read", "deploy.execute"} {
+		w = send("GET", "/v1/projects/demo/configuration", "", scopes, "read-denied")
+		if w.Code != 403 || strings.Contains(w.Body.String(), "private-test-token") {
+			t.Fatal(w.Code, w.Body.String())
+		}
+	}
+	w = send("GET", "/v1/projects/demo/configuration", "", "deploy.environment", "read-config")
+	var editable struct {
+		Release string `json:"release_id"`
+		Compose string `json:"compose_yaml"`
+		Env     string `json:"env_file"`
+	}
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &editable) != nil || editable.Env != "TOKEN=private-test-token\n" || editable.Compose != "services:\n  web:\n    image: nginx:alpine\n" || editable.Release != job.Input.Release.ID || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	// Editing an older release must not silently overwrite a newer deployment.
+	stale, _ := json.Marshal(map[string]any{"environment": "production", "compose_yaml": editable.Compose, "env_file": "", "expected_release_id": "rel-old"})
+	w = send("POST", "/v1/projects/demo/deploy", string(stale), "deploy.environment deploy.execute", "stale-edit")
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "CONFIGURATION_CHANGED") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	// An intentionally empty file clears saved values instead of reusing them.
+	update, _ := json.Marshal(map[string]any{"environment": "production", "compose_yaml": editable.Compose, "env_file": "", "expected_release_id": editable.Release})
+	w = send("POST", "/v1/projects/demo/deploy", string(update), "deploy.environment deploy.execute", "edit-deploy")
+	if w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var edited model.Job
+	json.Unmarshal(w.Body.Bytes(), &edited)
+	edited, _ = a.Engine.Store.Job(edited.ID)
+	if edited.Input.Release == nil {
+		t.Fatal("missing edited release")
+	}
+	contents, err := os.ReadFile(filepath.Join(a.Engine.Config.ProjectsRoot, "demo", "env", edited.Input.Release.Environment+".env"))
+	if err != nil || len(contents) != 0 {
+		t.Fatal("empty environment was not applied", err)
+	}
+	// Normal project metadata never contains editor contents.
+	w = send("GET", "/v1/projects", "", "deploy.read", "metadata")
+	if strings.Contains(w.Body.String(), "private-test-token") {
+		t.Fatal("secret in metadata")
 	}
 
 	services, err := a.Engine.Store.ComposeServices("demo", job.Input.Release.Compose)

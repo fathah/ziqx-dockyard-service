@@ -688,6 +688,16 @@ async fn pending_info(c: State<'_, Control>) -> Result<Value, String> {
 #[tauri::command]
 async fn read_api(c: State<'_, Control>, read: Read) -> Result<Value, String> {
     let op = read_op(&read)?;
+    if matches!(&read, Read::Configuration { .. }) {
+        let generation = {
+            let mut inner = c.inner.lock().await;
+            session(&mut inner)?.generation
+        };
+        native_task(&c, || native::authenticate_reason("Edit this project's Compose configuration and environment secrets")).await?;
+        if generation != c.generation.load(Ordering::SeqCst) {
+            return Err("SESSION_LOCKED".into());
+        }
+    }
     let mut inner = c.inner.lock().await;
     let s = session(&mut inner)?;
     let data = send(s, &op).await?;
