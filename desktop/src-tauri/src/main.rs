@@ -3,6 +3,7 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("Dockyard Desktop currently requires macOS Keychain and LocalAuthentication");
 mod native;
+mod credential_cache;
 mod protocol;
 mod providers;
 mod setup;
@@ -497,12 +498,8 @@ async fn session_info(c: State<'_, Control>) -> Result<Value, String> {
     drop(inner);
     let enrolled = if known_enrollment {
         true
-    } else if let Some(bytes) = native::load_optional()? {
-        let saved: Saved =
-            serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid")?;
-        saved.setup.is_none()
     } else {
-        false
+        native::enrollment_exists()?
     };
     Ok(json!({"unlocked":unlocked,"profile":profile,"jobs":jobs,"enrolled":enrolled}))
 }
@@ -586,13 +583,23 @@ async fn enroll(c: State<'_, Control>) -> Result<Value, String> {
     Ok(json!({"unlocked":true,"profile":p,"jobs":[]}))
 }
 #[tauri::command]
-async fn unlock(c: State<'_, Control>) -> Result<Value, String> {
+async fn unlock(app: tauri::AppHandle, c: State<'_, Control>) -> Result<Value, String> {
     c.clear().await;
     let generation = c.generation.load(Ordering::SeqCst);
-    let saved: Saved = native_task(&c, || {
+    let saved: Saved = native_task(&c, move || {
         native::authenticate()?;
-        let bytes = native::with_prompt(native::load)?;
-        serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid".into())
+        let bytes = native::load()?;
+        let saved: Saved = serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid")?;
+        if saved.setup.is_none() {
+            let _validated_secret = Zeroizing::new(saved.enrollment.validate()?);
+            providers::preload()?;
+            if let Some(ssh) = &saved.enrollment.ssh {
+                let account = terminal::account(&ssh.server_ip, ssh.port, &ssh.host_sha256);
+                let password = native::root_credential(&app, format!("{}:{}", ssh.server_ip, ssh.port), &account, false)?;
+                native::terminal_remember_for_run(&account, password.as_bytes())?;
+            }
+        }
+        Ok(saved)
     })
     .await?;
     if saved.setup.is_some() {
@@ -622,6 +629,7 @@ fn validate_pending(op: &Operation) -> Result<(), String> {
     let value = match op.action.as_str() {
         "create" => json!({"action":"create","data":body}),
         "migrate" => json!({"action":"migrate","project":op.project,"source_sha256":body.get("source_sha256")}),
+        "blue-green" => json!({"action":"blue_green","project":op.project,"data":body}),
         "deploy" | "routes" => json!({"action":op.action,"project":op.project,"data":body}),
         "stop" => {
             json!({"action":"stop","project":op.project,"confirmation":body.get("confirmation")})
@@ -788,6 +796,15 @@ async fn execute_pending(s: &mut Session) -> Result<Value, String> {
     }
 }
 #[tauri::command]
+async fn preview_blue_green(c: State<'_, Control>, project: String, data: protocol::BlueGreen) -> Result<Value,String> {
+ if !protocol::id(&project) || !data.valid() {return Err("Invalid blue–green configuration".into());}
+ let op=Operation {method:"POST".into(),target:format!("/v1/projects/{project}/blue-green-preview"),scopes:"deploy.environment".into(),project,action:"blue-green-preview".into(),body:serde_json::to_string(&data).map_err(|_|"Invalid request")?,idempotency:format!("preview-{}",uuid::Uuid::new_v4()),request_id:format!("req-{}",uuid::Uuid::new_v4())};
+ let mut inner=c.inner.lock().await;let s=session(&mut inner)?;
+ let result=send(s,&op).await?;
+ if s.generation!=c.generation.load(Ordering::SeqCst){return Err("SESSION_LOCKED".into());}
+ Ok(result)
+}
+#[tauri::command]
 async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, String> {
     let op = mutation.plan()?;
     let name = {
@@ -831,6 +848,7 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         "\nPayload SHA-256:\n{}\n\nThis changes services on your VPS.",
         hex::encode(sha2::Sha256::digest(op.body.as_bytes()))
     ));
+    if op.action == "blue-green" {review.push_str("\nStart an isolated green slot, verify health, switch the reviewed domains, then drain and stop the old instance. Original files and the previous project snapshot are retained for recovery.");}
     if op.action == "migrate" { review.push_str("\nAdopt the reviewed existing Compose stack into Dockyard. Containers, ports and Caddy routes stay in place. Future deployments use a single instance."); }
     let sensitive = op.action != "create";
     let approved = native_task(&c, move || {
@@ -1014,16 +1032,15 @@ async fn terminal_connect(
         lease.check()?;
         let (session, _) = setup::connect(&ssh.server_ip, ssh.port, Some(&ssh.host_sha256))?;
         let account = terminal::account(&ssh.server_ip, ssh.port, &ssh.host_sha256);
-        let saved = if remember { native::terminal_load(&account)? } else { None };
-        let password = if let Some(bytes) = saved {
-            if bytes.is_empty() || bytes.len() > 1024 { return Err("Saved SSH password is invalid; forget it and reconnect".into()); }
-            Zeroizing::new(std::str::from_utf8(&bytes).map_err(|_| "Saved SSH password is invalid; forget it and reconnect")?.to_owned())
-        } else { native::terminal_password(&handle, format!("{}:{}", ssh.server_ip, ssh.port), remember)? };
+        let password = native::root_credential(&handle, format!("{}:{}", ssh.server_ip, ssh.port), &account, remember)?;
         lease.check()?;
-        session.userauth_password("root", &password).map_err(|_| "Root SSH login failed. Check your password and server SSH policy. If a password was saved, use Forget password before trying again.")?;
-        if !session.authenticated() { return Err("Root SSH login failed".into()); }
+        if session.userauth_password("root", &password).is_err() || !session.authenticated() {
+            native::terminal_invalidate(&account);
+            return Err("Root SSH login failed. Reconnect to enter the current password.".into());
+        }
         lease.check()?;
         if remember { native::terminal_save(&account, password.as_bytes())?; }
+        else { native::terminal_remember_for_run(&account, password.as_bytes())?; }
         drop(password);
         terminal::spawn(session, lease, remember)
     }).await?;
@@ -1126,6 +1143,7 @@ fn main() {
             lock_session,
             forget_device,
             read_api,
+            preview_blue_green,
             mutate,
             retry_pending,
             pending_info,
@@ -1201,13 +1219,17 @@ fn main() {
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                native::clear_credential_cache();
                 window.app_handle().exit(0);
             }
             // Sample application activation on the main thread. Webview/window focus
             // changes inside Dockyard must not start the away timer.
         })
-        .run(tauri::generate_context!())
-        .expect("Unable to run Dockyard");
+        .build(tauri::generate_context!())
+        .expect("Unable to build Dockyard")
+        .run(|_, event| {
+            if matches!(event, tauri::RunEvent::Exit) { native::clear_credential_cache(); }
+        });
 }
 
 #[cfg(test)]

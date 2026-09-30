@@ -14,16 +14,30 @@
     "test": "cargo test --locked --manifest-path src-tauri/Cargo.toml",
     "test:naming": "node --experimental-strip-types --test tests/project-naming.test.mjs",
     "format": "prettier --write src package.json tsconfig.json vite.config.ts index.html",
-    "desktop:release": "tauri build --bundles app -- --locked"
+    "desktop:release": "tauri build --bundles app -- --locked",
+    "test:editor": "node --experimental-strip-types --test tests/compose-editor.test.mjs",
+    "editor:schema": "node scripts/generate-compose-validator.mjs"
   },
   "dependencies": {
+    "@codemirror/autocomplete": "6.20.3",
+    "@codemirror/commands": "6.11.1",
+    "@codemirror/lang-json": "6.0.2",
+    "@codemirror/lang-yaml": "6.1.3",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/lint": "6.9.7",
+    "@codemirror/state": "6.7.6",
+    "@codemirror/view": "6.43.13",
+    "@lezer/highlight": "1.2.5",
     "@tauri-apps/api": "2.12.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/xterm": "6.0.0",
+    "ajv": "8.20.0",
+    "codemirror": "6.0.2",
     "lucide-react": "1.48.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "react-hot-toast": "2.6.1"
+    "react-hot-toast": "2.6.1",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.0",

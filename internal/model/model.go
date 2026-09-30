@@ -83,11 +83,20 @@ func (p Project) Current() (Release, bool) {
 	return r, ok
 }
 
+type RouteEdit struct {
+	Mode   uint32 `json:"mode"`
+	Path   string `json:"path"`
+	Before string `json:"before"`
+	After  string `json:"after"`
+}
+
 type Input struct {
-	Project     *Project `json:"project,omitempty"`
-	Release     *Release `json:"release,omitempty"`
-	Hostname    string   `json:"hostname,omitempty"`
-	DNSRecordID string   `json:"dns_record_id,omitempty"`
+	Previous    *Project    `json:"previous,omitempty"`
+	RouteEdits  []RouteEdit `json:"route_edits,omitempty"`
+	Project     *Project    `json:"project,omitempty"`
+	Release     *Release    `json:"release,omitempty"`
+	Hostname    string      `json:"hostname,omitempty"`
+	DNSRecordID string      `json:"dns_record_id,omitempty"`
 }
 
 // ServiceSpec is safe revision metadata, not raw user YAML or secret values.

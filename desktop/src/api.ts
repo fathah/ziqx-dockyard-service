@@ -28,17 +28,26 @@ export type ServerUpdatePreview = {
   candidate_version: string;
   installed_version: string | null;
   installed_commit: string | null;
-  version_status: "current" | "update_available" | "legacy" | "legacy_bundle" | "server_newer" | "same_version_different_build" | "bundle_unversioned";
+  version_status:
+    | "current"
+    | "update_available"
+    | "legacy"
+    | "legacy_bundle"
+    | "server_newer"
+    | "same_version_different_build"
+    | "bundle_unversioned";
   candidate_dockyard: string;
   candidate_dockyardctl: string;
   installed_dockyard: string;
   installed_dockyardctl: string;
   update_available: boolean;
 };
-export const checkServerUpdate = () => invoke<ServerUpdatePreview>("server_update_check");
+export const checkServerUpdate = () =>
+  invoke<ServerUpdatePreview>("server_update_check");
 export const applyServerUpdate = (expected: ServerUpdatePreview) =>
   invoke<string>("server_update_apply", { expected });
-export const forgetRootPassword = () => invoke<void>("terminal_forget_password");
+export const forgetRootPassword = () =>
+  invoke<void>("terminal_forget_password");
 export type ServerAccessReport = {
   root_ssh: boolean;
   update_directory: "ready" | "can_prepare" | "manual_review";
@@ -46,7 +55,31 @@ export type ServerAccessReport = {
   database: boolean;
   service_active: boolean;
 };
-export const checkServerAccess = () => invoke<ServerAccessReport>("server_access_check");
-export const prepareServerAccess = () => invoke<ServerAccessReport>("server_access_prepare");
+export const checkServerAccess = () =>
+  invoke<ServerAccessReport>("server_access_check");
+export const prepareServerAccess = () =>
+  invoke<ServerAccessReport>("server_access_prepare");
 
-export const enableComposeManagement = () => invoke<void>("server_compose_enable");
+export const enableComposeManagement = () =>
+  invoke<void>("server_compose_enable");
+
+export type BlueGreenInput = {
+  expected_release_id: string;
+  compose_yaml: string;
+  env_file: string;
+  route_service: string;
+  route_port: number;
+  readiness_path: string;
+  review_sha256?: string;
+};
+export type BlueGreenReview = {
+  review_sha256: string;
+  blue_port: number;
+  green_port: number;
+  domains: string[];
+  route_service: string;
+  route_port: number;
+  imports_routes: boolean;
+};
+export const previewBlueGreen = (project: string, data: BlueGreenInput) =>
+  invoke<BlueGreenReview>("preview_blue_green", { project, data });

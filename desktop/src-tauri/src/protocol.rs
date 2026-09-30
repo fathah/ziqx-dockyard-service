@@ -200,9 +200,28 @@ pub struct Routes {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub secondary_port: Option<u16>,
 }
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlueGreen {
+ pub expected_release_id: String,
+ pub compose_yaml: String,
+ pub env_file: String,
+ pub route_service: String,
+ pub route_port: u16,
+ pub readiness_path: String,
+ #[serde(default, skip_serializing_if = "String::is_empty")]
+ pub review_sha256: String,
+}
+impl BlueGreen {
+ pub fn valid(&self) -> bool {
+  token(&self.expected_release_id) && !self.compose_yaml.is_empty() && self.compose_yaml.len() <= 65536 && self.env_file.len() <= 65536 && !self.compose_yaml.contains('\0') && !self.env_file.contains('\0') && service_name(&self.route_service) && self.route_port > 0 && (self.readiness_path.is_empty() || (self.readiness_path.starts_with('/') && !self.readiness_path.contains(['?', '#', '\r', '\n'])))
+ }
+}
+impl Drop for BlueGreen { fn drop(&mut self) {self.compose_yaml.zeroize();self.env_file.zeroize();} }
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Mutation {
+ BlueGreen {project: String, data: BlueGreen},
     Migrate { project: String, source_sha256: String },
     Create {
         data: Create,
@@ -277,6 +296,10 @@ fn service_name(s: &str) -> bool {
 impl Mutation {
     pub fn plan(self) -> Result<Operation, String> {
         let (method, project, action, scopes, body) = match self {
+            Self::BlueGreen { project, data } => {
+                if !data.valid() || data.review_sha256.len()!=64 || !data.review_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {return Err("Review the blue–green deployment first".into());}
+                ("POST",project,"blue-green","deploy.environment deploy.execute projects.write sites.write",serde_json::to_string(&data))
+            }
             Self::Migrate { project, source_sha256 } => {
                 if !project.starts_with("existing-") || source_sha256.len() != 64 || !source_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
                     return Err("Invalid migration review".into());
@@ -583,6 +606,17 @@ mod tests {
         .target()
         .is_ok());
     }
+    #[test]
+    fn blue_green_requires_review_and_scoped_write() {
+      let mut value=serde_json::json!({"action":"blue_green","project":"demo","data":{"expected_release_id":"rel-original","compose_yaml":"services: {}","env_file":"TOKEN=test-secret","route_service":"web","route_port":80,"readiness_path":"/health","review_sha256":"a".repeat(64)}});
+      let op=serde_json::from_value::<Mutation>(value.clone()).unwrap().plan().unwrap();
+      assert_eq!(op.target,"/v1/projects/demo/blue-green");
+      assert_eq!(op.scopes,"deploy.environment deploy.execute projects.write sites.write");
+      assert!(op.body.contains("rel-original"));
+      value["data"]["review_sha256"]=serde_json::json!("");
+      assert!(serde_json::from_value::<Mutation>(value).unwrap().plan().is_err());
+    }
+
     #[test]
     fn staging_cannot_be_blue_green() {
         let data = Create {

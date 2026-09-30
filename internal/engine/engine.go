@@ -166,6 +166,8 @@ func (e *Engine) execute(ctx context.Context, j model.Job) {
 	}
 	if err == nil {
 		switch j.Action {
+		case "blue_green":
+			err = e.blueGreen(ctx, &j, &p)
 		case "project_adopt":
 			for _, r := range p.Slots {
 				if err = runtime.IndexCompose(e.Config, e.Store, p, r); err != nil {
@@ -513,7 +515,12 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if j.Action == "dns_create" {
+	if j.Action == "blue_green" {
+		p, err = e.reconcileBlueGreen(ctx, &j)
+		if err != nil {
+			return err
+		}
+	} else if j.Action == "dns_create" {
 		id, err := e.DNS.Create(ctx, p.ID, j.Input.Hostname)
 		if err != nil {
 			return err

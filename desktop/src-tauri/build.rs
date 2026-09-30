@@ -7,6 +7,7 @@ fn main() {
             "lock_session",
             "forget_device",
             "read_api",
+            "preview_blue_green",
             "mutate",
             "retry_pending",
             "pending_info",

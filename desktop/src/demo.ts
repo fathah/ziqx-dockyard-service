@@ -8,7 +8,7 @@ const release = (n: number): Release => ({
   created_at: date,
 });
 export const demoProjects: Project[] = [
-  ["accounts", "production", "running", true, 4100, "blue"],
+  ["accounts", "production", "running", false, 4100, "blue"],
   ["accounts", "staging", "running", false, 4102, "blue"],
   ["accounts", "development", "stopped", false, 4103, "blue"],
   ["payments", "production", "running", true, 4200, "green"],

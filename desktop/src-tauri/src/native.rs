@@ -29,32 +29,63 @@ use zeroize::Zeroizing;
 const SERVICE: &str = "com.ziqx.dockyard.enrollment.v1";
 const ACCOUNT: &str = "primary";
 
-fn options() -> security_framework::passwords::PasswordOptions {
-    let mut options =
-        security_framework::passwords::PasswordOptions::new_generic_password(SERVICE, ACCOUNT);
+static CREDENTIALS: std::sync::OnceLock<std::sync::Mutex<crate::credential_cache::CredentialCache>> = std::sync::OnceLock::new();
+fn cache() -> &'static std::sync::Mutex<crate::credential_cache::CredentialCache> {
+    CREDENTIALS.get_or_init(Default::default)
+}
+fn options(service: &str, account: &str) -> security_framework::passwords::PasswordOptions {
+    let mut options = security_framework::passwords::PasswordOptions::new_generic_password(service, account);
     options.set_access_synchronized(Some(false));
     options
 }
-pub fn load() -> Result<Zeroizing<Vec<u8>>, String> {
-    security_framework::passwords::generic_password(options())
-        .map(Zeroizing::new)
-        .map_err(|_| "No saved enrollment, or Keychain access was denied".into())
+pub fn credential_load(service: &str, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+    cache().lock().map_err(|_| "Credential cache unavailable")?.read(service, account, || {
+        with_prompt(|| match security_framework::passwords::generic_password(options(service, account)) {
+            Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
+            Err(e) if e.code() == -25300 => Ok(None),
+            Err(_) => Err("Keychain access was denied. Unlock Dockyard again to retry".into()),
+        })
+    })
 }
-pub fn load_optional() -> Result<Option<Zeroizing<Vec<u8>>>, String> {
-    match security_framework::passwords::generic_password(options()) {
-        Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
-        Err(error) if error.code() == -25300 => Ok(None), // errSecItemNotFound only
-        Err(_) => Err("Keychain access was denied; existing enrollment cannot be replaced".into()),
+pub fn credential_save(service: &str, account: &str, data: &[u8]) -> Result<(), String> {
+    let mut values = cache().lock().map_err(|_| "Credential cache unavailable")?;
+    with_prompt(|| security_framework::passwords::set_generic_password_options(data, options(service, account)))
+        .map_err(|_| "macOS Keychain could not save the credential")?;
+    values.set(service, account, Some(Zeroizing::new(data.to_vec())));
+    Ok(())
+}
+fn credential_delete(service: &str, account: &str) -> Result<(), String> {
+    let mut values = cache().lock().map_err(|_| "Credential cache unavailable")?;
+    match with_prompt(|| security_framework::passwords::delete_generic_password_options(options(service, account))) {
+        Ok(()) => (),
+        Err(e) if e.code() == -25300 => (),
+        Err(_) => return Err("Keychain could not remove the credential".into()),
+    }
+    values.set(service, account, None);
+    Ok(())
+}
+pub fn clear_credential_cache() {
+    // Never block the main-thread exit on a Keychain dialog running on a worker.
+    // Process exit releases all remaining memory if a read is still in flight.
+    if let Ok(mut values) = cache().try_lock() { values.clear(); }
+}
+// Check only metadata before Touch ID; never retrieve secret bytes on the lock screen.
+pub fn enrollment_exists() -> Result<bool, String> {
+    use security_framework::item::{ItemClass, ItemSearchOptions};
+    match ItemSearchOptions::new().class(ItemClass::generic_password()).service(SERVICE).account(ACCOUNT).load_attributes(true).load_data(false).search() {
+        Ok(items) => Ok(!items.is_empty()),
+        Err(e) if e.code() == -25300 => Ok(false),
+        Err(_) => Err("Cannot check saved enrollment".into()),
     }
 }
-pub fn save(data: &[u8]) -> Result<(), String> {
-    security_framework::passwords::set_generic_password_options(data, options())
-        .map_err(|_| "macOS Keychain could not save the enrollment".into())
+pub fn load() -> Result<Zeroizing<Vec<u8>>, String> {
+    load_optional()?.ok_or("No saved enrollment".into())
 }
-pub fn delete() -> Result<(), String> {
-    security_framework::passwords::delete_generic_password_options(options())
-        .map_err(|_| "macOS Keychain could not remove the enrollment".into())
+pub fn load_optional() -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+    credential_load(SERVICE, ACCOUNT)
 }
+pub fn save(data: &[u8]) -> Result<(), String> { credential_save(SERVICE, ACCOUNT, data) }
+pub fn delete() -> Result<(), String> { credential_delete(SERVICE, ACCOUNT) }
 
 // macOS owns this prompt. JavaScript never receives biometric data or an unlock token.
 #[link(name = "LocalAuthentication", kind = "framework")]
@@ -136,12 +167,6 @@ pub fn authenticate_reason(reason_text: &str) -> Result<(), String> {
     }
 }
 
-/// Only Rust receives the password. AppKit owns the secure field on the main thread.
-#[allow(deprecated)] // cocoa geometry encodes the existing objc 0.2 bridge's AppKit ABI.
-pub fn root_password(app: &tauri::AppHandle, server: String) -> Result<Zeroizing<String>, String> {
-    password_prompt(app, server, "Used for setup only; never saved.")
-}
-
 pub fn terminal_password(
     app: &tauri::AppHandle,
     server: String,
@@ -153,7 +178,7 @@ pub fn terminal_password(
         if remember {
             "Saved in this Mac’s Keychain only after successful SSH authentication. This opens full administrative access."
         } else {
-            "Used for this root SSH connection only; never saved. This opens full administrative access."
+            "Kept in memory until Dockyard closes; not saved to disk. This opens full administrative access."
         },
     )
 }
@@ -221,32 +246,27 @@ fn secure_prompt(
 }
 
 // Separate from enrollment: scoped to the pinned endpoint, never synchronized to iCloud.
-fn terminal_options(account: &str) -> security_framework::passwords::PasswordOptions {
-    let mut options = security_framework::passwords::PasswordOptions::new_generic_password(
-        "com.ziqx.dockyard.root-ssh.v1",
-        account,
-    );
-    options.set_access_synchronized(Some(false));
-    options
-}
+const ROOT_SERVICE: &str = "com.ziqx.dockyard.root-ssh.v1";
 pub fn terminal_load(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
-    match security_framework::passwords::generic_password(terminal_options(account)) {
-        Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
-        Err(error) if error.code() == -25300 => Ok(None),
-        Err(_) => Err("Keychain denied access to the saved SSH password".into()),
-    }
+    credential_load(ROOT_SERVICE, account)
 }
 pub fn terminal_save(account: &str, password: &[u8]) -> Result<(), String> {
-    security_framework::passwords::set_generic_password_options(password, terminal_options(account))
-        .map_err(|_| "SSH connected, but Keychain could not save the password".into())
+    credential_save(ROOT_SERVICE, account, password)
 }
-pub fn terminal_delete(account: &str) -> Result<(), String> {
-    match security_framework::passwords::delete_generic_password_options(terminal_options(account))
-    {
-        Ok(()) => Ok(()),
-        Err(error) if error.code() == -25300 => Ok(()),
-        Err(_) => Err("Keychain could not remove the saved SSH password".into()),
+pub fn terminal_remember_for_run(account: &str, password: &[u8]) -> Result<(), String> {
+    cache().lock().map_err(|_| "Credential cache unavailable")?.set(ROOT_SERVICE, account, Some(Zeroizing::new(password.to_vec())));
+    Ok(())
+}
+pub fn terminal_invalidate(account: &str) {
+    if let Ok(mut values) = cache().lock() { values.set(ROOT_SERVICE, account, None); }
+}
+pub fn terminal_delete(account: &str) -> Result<(), String> { credential_delete(ROOT_SERVICE, account) }
+pub fn root_credential(app: &tauri::AppHandle, server: String, account: &str, remember: bool) -> Result<Zeroizing<String>, String> {
+    if let Some(bytes) = terminal_load(account)? {
+        if bytes.is_empty() || bytes.len() > 1024 { return Err("Saved root password is invalid; forget it in Terminal".into()); }
+        return Ok(Zeroizing::new(std::str::from_utf8(&bytes).map_err(|_| "Saved root password is invalid")?.to_owned()));
     }
+    terminal_password(app, server, remember)
 }
 
 /// Main-thread AppKit activation, independent of which Dockyard control has focus.

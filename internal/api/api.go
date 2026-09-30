@@ -159,6 +159,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.adopt(w, r, p, body, parts[1])
 		return
 	}
+	if r.Method == "POST" && len(parts) == 3 && parts[0] == "projects" && (parts[2] == "blue-green" || parts[2] == "blue-green-preview") {
+		a.blueGreen(w, r, p, body, parts[1], parts[2] == "blue-green-preview")
+		return
+	}
 	a.mutate(w, r, p, body)
 }
 func require(w http.ResponseWriter, p auth.Principal, scope, id string) bool {

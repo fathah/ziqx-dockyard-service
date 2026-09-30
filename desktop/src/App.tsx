@@ -41,6 +41,8 @@ import { listen } from "@tauri-apps/api/event";
 import toast from "react-hot-toast";
 import * as api from "./api";
 import SetupWizard from "./SetupWizard";
+import CodeEditor from "./CodeEditor";
+import { lintCompose } from "./composeLint";
 import ProjectConfiguration from "./ProjectConfiguration";
 import TerminalPage from "./TerminalPage";
 import { DomainProviderSettings, ProviderDomains } from "./DomainProviders";
@@ -1519,6 +1521,17 @@ function ProjectDetail({
         <span>
           <Layers3 size={15} />
           {p.zerodowntime ? "Production blue–green" : "Single Compose instance"}
+          {!p.zerodowntime &&
+            p.mode === "compose" &&
+            p.environment === "production" && (
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setTab("configuration")}
+              >
+                Change strategy <Settings2 size={15} />
+              </button>
+            )}
         </span>
         <span>
           <FileCode2 size={15} />
@@ -1529,32 +1542,37 @@ function ProjectDetail({
           {p.domains.length + (p.external_domains?.length ?? 0)} domains
         </span>
       </div>
-      <div className="tabs">
+      <nav className="tabs project-tabs" aria-label="Project sections">
         {[
-          "overview",
-          "services",
-          ...(p.mode === "compose" ? ["configuration"] : []),
-          "releases",
-          "logs",
-          "domains",
-        ].map((t) => (
+          { id: "overview", label: "Overview", icon: LayoutDashboard },
+          { id: "services", label: "Services", icon: Box },
+          ...(p.mode === "compose"
+            ? [{ id: "configuration", label: "Configuration", icon: FileCode2 }]
+            : []),
+          { id: "releases", label: "Releases", icon: History },
+          { id: "logs", label: "Logs", icon: Terminal },
+          { id: "domains", label: "Domains", icon: Globe2 },
+        ].map(({ id, label, icon: Icon }) => (
           <button
-            key={t}
-            className={tab === t ? "selected" : ""}
+            key={id}
+            type="button"
+            aria-pressed={tab === id}
+            className={tab === id ? "selected" : ""}
             onClick={() => {
               if (
-                t !== tab &&
+                id !== tab &&
                 configDirty &&
                 !window.confirm("Discard your unsaved configuration edits?")
               )
                 return;
-              setTab(t);
+              setTab(id);
             }}
           >
-            {t[0].toUpperCase() + t.slice(1)}
+            <Icon size={19} aria-hidden="true" />
+            <span>{label}</span>
           </button>
         ))}
-      </div>
+      </nav>
       {tab === "configuration" && (
         <ProjectConfiguration
           project={p}
@@ -3258,6 +3276,16 @@ function OperationModal({
       setError("Preview is read-only. Connect your VPS to submit operations.");
       return;
     }
+    if (
+      m.kind === "deploy" &&
+      (!compose.trim() ||
+        lintCompose(compose).some((p) => p.severity === "error"))
+    ) {
+      setError(
+        "Enter Compose configuration and fix the highlighted syntax errors.",
+      );
+      return;
+    }
     setBusy(true);
     setError("");
     try {
@@ -3710,19 +3738,10 @@ function OperationModal({
                       Import file
                     </button>
                   </div>
-                  <textarea
-                    id="compose"
-                    className="code-editor"
-                    required
-                    spellCheck={false}
-                    rows={12}
-                    placeholder={
-                      target?.mode === "compose"
-                        ? 'services:\n  web:\n    image: nginx:alpine\n    ports:\n      - "8080:80"\n'
-                        : "services:\n  app:\n    image: ghcr.io/your-org/your-app@sha256:<digest>\n"
-                    }
+                  <CodeEditor
                     value={compose}
-                    onChange={(e) => setCompose(e.target.value)}
+                    onChange={setCompose}
+                    readOnly={preview || busy}
                   />
                   <div className="editor-meta">
                     <span>
@@ -3743,19 +3762,28 @@ function OperationModal({
                           : "Leave blank to reuse the current snapshot. Enter {} for an empty environment."}
                       </Help>
                     </span>
-                    <textarea
-                      id="app-variables"
-                      className="code-editor short"
-                      rows={3}
-                      spellCheck={false}
-                      placeholder={
-                        target?.mode === "compose"
-                          ? "APP_URL=https://app.example.com"
-                          : '{"APP_URL": "https://app.example.com"}'
-                      }
-                      value={variables}
-                      onChange={(e) => setVariables(e.target.value)}
-                    />
+                    {target?.mode === "compose" ? (
+                      <CodeEditor
+                        kind="env"
+                        value={variables}
+                        onChange={setVariables}
+                        readOnly={preview || busy}
+                      />
+                    ) : (
+                      <textarea
+                        id="app-variables"
+                        className="code-editor short"
+                        rows={3}
+                        spellCheck={false}
+                        placeholder={
+                          target?.mode === "compose"
+                            ? "APP_URL=https://app.example.com"
+                            : '{"APP_URL": "https://app.example.com"}'
+                        }
+                        value={variables}
+                        onChange={(e) => setVariables(e.target.value)}
+                      />
+                    )}
                   </label>
                 </>
               )}

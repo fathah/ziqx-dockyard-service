@@ -8,7 +8,6 @@ use std::{
     path::Path,
 };
 use tauri::AppHandle;
-use zeroize::Zeroizing;
 
 const MANIFEST: &str = include_str!("../resources/ubuntu/manifest.json");
 const SCRIPT: &[u8] = include_bytes!("../../updater/update.py");
@@ -215,39 +214,12 @@ fn ssh(app: &AppHandle, identity: &SshIdentity, reason: Option<&str>) -> Result<
         Some(&identity.host_sha256),
     )?;
     let account = terminal::account(&identity.server_ip, identity.port, &identity.host_sha256);
-    let saved = native::terminal_load(&account)?;
-    let save_after_login = saved.is_none();
-    if save_after_login && reason.is_none() {
-        native::authenticate_reason("Save root SSH access in Keychain for Dockyard")?;
+    let password = native::root_credential(app, format!("{}:{}", identity.server_ip, identity.port), &account, false)?;
+    if session.userauth_password("root", &password).is_err() || !session.authenticated() {
+        native::terminal_invalidate(&account);
+        return Err("Root SSH login failed. Try again to enter the current password.".into());
     }
-    let password = if let Some(bytes) = saved {
-        if bytes.is_empty() || bytes.len() > 1024 {
-            return Err(
-                "Saved root password is invalid. Forget it in Terminal, then try again".into(),
-            );
-        }
-        Zeroizing::new(
-            std::str::from_utf8(&bytes)
-                .map_err(|_| "Saved root password is invalid")?
-                .to_owned(),
-        )
-    } else {
-        native::terminal_password(
-            app,
-            format!("{}:{}", identity.server_ip, identity.port),
-            true,
-        )?
-    };
-    session.userauth_password("root", &password).map_err(|_| {
-        "Root SSH login failed. Check the password or forget the saved password in Terminal"
-            .to_owned()
-    })?;
-    if !session.authenticated() {
-        return Err("Root SSH login failed".into());
-    }
-    if save_after_login {
-        native::terminal_save(&account, password.as_bytes())?;
-    }
+    native::terminal_remember_for_run(&account, password.as_bytes())?;
     Ok(session)
 }
 fn command(session: &Session, cmd: &str, timeout: u32) -> Result<String, String> {

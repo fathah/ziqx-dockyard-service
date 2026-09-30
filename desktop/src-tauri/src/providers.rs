@@ -23,28 +23,17 @@ struct Credential {
     provider: Provider,
     token: String,
 }
-fn options() -> security_framework::passwords::PasswordOptions {
-    let mut o = security_framework::passwords::PasswordOptions::new_generic_password(
-        "com.ziqx.dockyard.domain-providers.v1",
-        "providers",
-    );
-    o.set_access_synchronized(Some(false));
-    o
-}
+const SERVICE: &str = "com.ziqx.dockyard.domain-providers.v1";
 fn load() -> Result<Vec<Credential>, String> {
-    match security_framework::passwords::generic_password(options()) {
-        Ok(bytes) => serde_json::from_slice(&Zeroizing::new(bytes))
-            .map_err(|_| "Saved domain providers could not be read".into()),
-        Err(e) if e.code() == -25300 => Ok(vec![]),
-        Err(_) => Err("Keychain denied access to domain providers".into()),
+    match native::credential_load(SERVICE, "providers")? {
+        Some(bytes) => serde_json::from_slice(&bytes).map_err(|_| "Saved domain providers could not be read".into()),
+        None => Ok(vec![]),
     }
 }
+pub fn preload() -> Result<(), String> { load().map(|_| ()) }
 fn save(entries: &[Credential]) -> Result<(), String> {
-    let bytes = Zeroizing::new(
-        serde_json::to_vec(entries).map_err(|_| "Could not encode domain providers")?,
-    );
-    security_framework::passwords::set_generic_password_options(&bytes, options())
-        .map_err(|_| "Keychain could not save domain providers".into())
+    let bytes = Zeroizing::new(serde_json::to_vec(entries).map_err(|_| "Could not encode domain providers")?);
+    native::credential_save(SERVICE, "providers", &bytes)
 }
 async fn authority(c: &Control) -> Result<Lease, String> {
     let mut inner = c.inner.lock().await;

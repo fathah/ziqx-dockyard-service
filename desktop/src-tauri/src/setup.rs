@@ -242,11 +242,13 @@ fn root_connect(
     {
         return Err("SSH identity review cancelled".into());
     }
-    let password = native::root_password(app, format!("{ip}:{port}"))?;
-    session.userauth_password("root",&password).map_err(|_| "Root SSH authentication failed. Root password login must already be permitted by your server")?;
-    if !session.authenticated() {
-        return Err("Root SSH authentication failed".into());
+    let account = crate::terminal::account(ip, port, &pin);
+    let password = native::root_credential(app, format!("{ip}:{port}"), &account, false)?;
+    if session.userauth_password("root", &password).is_err() || !session.authenticated() {
+        native::terminal_invalidate(&account);
+        return Err("Root SSH authentication failed. Try again to enter the current password.".into());
     }
+    native::terminal_remember_for_run(&account, password.as_bytes())?;
     Ok((session, pin))
 }
 fn exec(session: &SshSession, command: &str) -> Result<String, String> {

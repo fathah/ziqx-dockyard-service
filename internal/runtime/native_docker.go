@@ -123,3 +123,76 @@ func (d Docker) nativeHealthy(ctx context.Context, p model.Project, slot string,
 	}
 	return nil
 }
+
+// Resolve a reviewed legacy route against positively identified running containers.
+func (d Docker) PublishedUpstream(ctx context.Context, p model.Project, service string, port int) (string, error) {
+	containers, err := d.nativeContainers(ctx, p, p.Active)
+	if err != nil {
+		return "", err
+	}
+	result := ""
+	for _, c := range containers {
+		if c.Config.Labels["com.docker.compose.service"] != service {
+			continue
+		}
+		if !c.State.Running {
+			return "", model.Fail("CONTAINER_UNAVAILABLE")
+		}
+		for _, binding := range c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", port)] {
+			if binding.HostIP != "0.0.0.0" && binding.HostIP != "127.0.0.1" {
+				continue
+			}
+			if result != "" {
+				return "", model.Fail("BLUE_GREEN_ROUTE_TARGET_MISMATCH")
+			}
+			result = "127.0.0.1:" + binding.HostPort
+		}
+	}
+	if result == "" {
+		return "", model.Fail("BLUE_GREEN_ROUTE_TARGET_MISMATCH")
+	}
+	return result, nil
+}
+
+// A conversion stops the original stack after draining. Never include a database
+// or durable mount that the candidate might still depend on in that stop.
+func (d Docker) CheckBlueGreenSource(ctx context.Context, p model.Project) error {
+	r, ok := p.Current()
+	if !ok {
+		return model.Fail("CONFIGURATION_UNAVAILABLE")
+	}
+	_, b, err := nativeRelease(d.Config, p, r)
+	if err != nil {
+		return err
+	}
+	var doc map[string]any
+	if json.Unmarshal(b, &doc) != nil {
+		return model.Fail("COMPOSE_VALIDATION_FAILED")
+	}
+	if len(object(doc["volumes"])) > 0 {
+		return model.Fail("BLUE_GREEN_SOURCE_HAS_STORAGE")
+	}
+	for _, raw := range object(doc["services"]) {
+		if len(array(object(raw)["volumes"])) > 0 {
+			return model.Fail("BLUE_GREEN_SOURCE_HAS_STORAGE")
+		}
+	}
+	cs, err := d.nativeContainers(ctx, p, p.Active)
+	if err != nil {
+		return err
+	}
+	if len(cs) == 0 {
+		return model.Fail("CONTAINER_UNAVAILABLE")
+	}
+	for _, c := range cs {
+		if !c.State.Running {
+			return model.Fail("CONTAINER_UNAVAILABLE")
+		}
+		for _, m := range c.Mounts {
+			if m.Type != "tmpfs" {
+				return model.Fail("BLUE_GREEN_SOURCE_HAS_STORAGE")
+			}
+		}
+	}
+	return nil
+}

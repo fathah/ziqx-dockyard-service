@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-blue-green"
+description = "Enables the preview_blue_green command without any pre-configured scope."
+commands.allow = ["preview_blue_green"]
+
+[[permission]]
+identifier = "deny-preview-blue-green"
+description = "Denies the preview_blue_green command without any pre-configured scope."
+commands.deny = ["preview_blue_green"]

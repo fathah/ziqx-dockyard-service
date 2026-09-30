@@ -51,7 +51,7 @@ export default function TerminalPage({
   const [mode, setMode] = useState("root");
   const [container, setContainer] = useState("");
   const [shell, setShell] = useState("/bin/sh");
-  const [remember, setRemember] = useState(true);
+  const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false);
   const [active, setActive] = useState(false);
   const [message, setMessage] = useState("");
@@ -298,12 +298,12 @@ export default function TerminalPage({
                 disabled={busy || !!connection}
                 onChange={(e) => setRemember(e.target.checked)}
               />
-              Remember SSH password
+              Save password for future app launches
               <Help label="remembering the SSH password">
-                Save the root SSH password in this Mac’s Keychain after
-                successful authentication. It is not synced to iCloud. Touch ID
-                is required on every connection. Unchecking this does not delete
-                a saved password; use Forget password.
+                By default, root access is remembered only until Dockyard closes.
+                Enable this to also save the password in this Mac’s Keychain.
+                Touch ID still protects root access. Use Forget password to
+                remove an existing saved password.
               </Help>
             </label>
             {connection ? (

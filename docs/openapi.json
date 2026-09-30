@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Ziqx Dockyard Service API",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
     "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, service, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved."
   },
@@ -1959,6 +1959,242 @@
         },
         "x-required-scopes": [
           "deploy.environment"
+        ]
+      }
+    },
+    "/v1/projects/{id}/blue-green-preview": {
+      "post": {
+        "operationId": "previewBlueGreen",
+        "summary": "Review existing-project blue\u2013green conversion",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires server-wide compose.admin. Validates the proposed Compose/.env and pins approval to the current release, route source, and allocated ports. Existing persistent mounts are not duplicated or stopped. Imported routes must be plain reverse_proxy sites in the main Caddyfile. Preview writes private validation snapshots but never changes live services or routes. Enable starts green, checks health, switches traffic, drains, and stops the original. Unknown outcomes require reconciliation; backups remain in the private job journal.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Review fingerprint, domains, web service, and blue/green ports. No Compose or environment contents returned."
+          },
+          "409": {
+            "description": "Compatibility or stale-state blocker"
+          },
+          "403": {
+            "description": "Scope or Compose administrator permission missing"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.environment"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "expected_release_id": {
+                    "type": "string"
+                  },
+                  "compose_yaml": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "env_file": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "route_service": {
+                    "type": "string"
+                  },
+                  "route_port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  },
+                  "readiness_path": {
+                    "type": "string"
+                  },
+                  "review_sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "expected_release_id",
+                  "compose_yaml",
+                  "env_file",
+                  "route_service",
+                  "route_port",
+                  "readiness_path"
+                ]
+              }
+            }
+          }
+        },
+        "x-conditional-scopes": [
+          {
+            "when": "variables or any services.<name>.environment is a non-null object",
+            "scopes": [
+              "deploy.environment"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/projects/{id}/blue-green": {
+      "post": {
+        "operationId": "enableBlueGreen",
+        "summary": "Enable blue\u2013green for an existing running production Compose project",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires server-wide compose.admin. Validates the proposed Compose/.env and pins approval to the current release, route source, and allocated ports. Existing persistent mounts are not duplicated or stopped. Imported routes must be plain reverse_proxy sites in the main Caddyfile. Preview writes private validation snapshots but never changes live services or routes. Enable starts green, checks health, switches traffic, drains, and stops the original. Unknown outcomes require reconciliation; backups remain in the private job journal.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Durably accepted. Poll the job_id.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Error403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Error409"
+          },
+          "413": {
+            "$ref": "#/components/responses/Error413"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error422"
+          },
+          "429": {
+            "$ref": "#/components/responses/Error429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Error503"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.environment",
+          "deploy.execute",
+          "projects.write",
+          "sites.write"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "expected_release_id": {
+                    "type": "string"
+                  },
+                  "compose_yaml": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "env_file": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "route_service": {
+                    "type": "string"
+                  },
+                  "route_port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  },
+                  "readiness_path": {
+                    "type": "string"
+                  },
+                  "review_sha256": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  }
+                },
+                "required": [
+                  "expected_release_id",
+                  "compose_yaml",
+                  "env_file",
+                  "route_service",
+                  "route_port",
+                  "readiness_path",
+                  "review_sha256"
+                ]
+              }
+            }
+          }
+        },
+        "x-conditional-scopes": [
+          {
+            "when": "variables or any services.<name>.environment is a non-null object",
+            "scopes": [
+              "deploy.environment"
+            ]
+          }
         ]
       }
     }
