@@ -4,10 +4,10 @@ A Tauri 2 desktop control room with a Rust API client and a bundled React interf
 
 ## Run on this Mac
 
-The latest local Apple Silicon app is in `releases/dockyard-terminal-toast/Dockyard.app`, with `releases/Dockyard-terminal-toast-macos-arm64.zip` and a SHA-256 checksum. Its app icon and in-app wordmark use the same Dockyard logo. When an enrolled Mac is locked, the app shows only the Touch ID unlock screen. From the repository root:
+The latest local Apple Silicon app is in `releases/dockyard-migration-review/Dockyard.app`, with `releases/Dockyard-migration-review-macos-arm64.zip` and a SHA-256 checksum. Its app icon and in-app wordmark use the same Dockyard logo. When an enrolled Mac is locked, the app shows only the Touch ID unlock screen. This build includes the migration review UI, but the bundled Ubuntu installer binaries are from the previous local build; its migration check requires an updated VPS service. From the repository root:
 
 ```sh
-open desktop/releases/dockyard-terminal-toast/Dockyard.app
+open desktop/releases/dockyard-migration-review/Dockyard.app
 ```
 
 Quit any previously opened Dockyard instance first so the single-instance guard does not bring an older build to the foreground. This local artifact uses an ad-hoc signature; it is not notarized for distribution.

@@ -127,6 +127,98 @@ function Empty({
     </div>
   );
 }
+function Skeleton({
+  width,
+  height = 14,
+  radius = 5,
+}: {
+  width: string | number;
+  height?: number;
+  radius?: number;
+}) {
+  return (
+    <span
+      className="t-skel skeleton-bar"
+      style={{ width, height, borderRadius: radius }}
+      aria-hidden="true"
+    >
+      <span className="t-skel-skeleton is-pulsing">
+        <span className="skeleton-fill" />
+      </span>
+    </span>
+  );
+}
+function SkeletonStats({ count = 3 }: { count?: number }) {
+  return (
+    <div className={`stats-grid ${count === 3 ? "three" : ""}`} aria-label="Loading summary" role="status">
+      {Array.from({ length: count }, (_, index) => (
+        <div className="stat skeleton-stat" key={index}>
+          <div>
+            <Skeleton width="48%" height={11} />
+            <Skeleton width={18} height={18} radius={6} />
+          </div>
+          <Skeleton width={62} height={38} radius={7} />
+        </div>
+      ))}
+    </div>
+  );
+}
+function SkeletonProjectTable() {
+  return (
+    <div className="project-table" role="status" aria-label="Loading projects">
+      <div className="table-head">
+        <span>PROJECT / ENVIRONMENT</span>
+        <span>STATE</span>
+        <span>DEPLOYMENT</span>
+        <span>ROUTE</span>
+        <span />
+      </div>
+      {Array.from({ length: 6 }, (_, index) => (
+        <div className="project-row skeleton-project-row" key={index}>
+          <span className="project-name">
+            <Skeleton width={34} height={36} radius={8} />
+            <span className="skeleton-lines">
+              <Skeleton width={index % 2 ? 150 : 116} height={16} />
+              <Skeleton width={108} height={11} />
+            </span>
+          </span>
+          <Skeleton width={78} height={25} />
+          <span className="skeleton-lines">
+            <Skeleton width="75%" height={14} />
+            <Skeleton width="60%" height={11} />
+          </span>
+          <span className="skeleton-lines">
+            <Skeleton width="78%" height={14} />
+            <Skeleton width="50%" height={11} />
+          </span>
+          <Skeleton width={10} height={16} />
+        </div>
+      ))}
+    </div>
+  );
+}
+function SkeletonRows({
+  count = 3,
+  label = "Loading server data",
+}: {
+  count?: number;
+  label?: string;
+}) {
+  return (
+    <div role="status" aria-label={label}>
+      {Array.from({ length: count }, (_, index) => (
+        <div className="inventory-row skeleton-list-row" key={index}>
+          <Skeleton width={42} height={42} radius={9} />
+          <div className="skeleton-lines">
+            <Skeleton width={index % 2 ? 185 : 138} height={17} />
+            <Skeleton width={index % 2 ? 120 : 155} height={12} />
+          </div>
+          <Skeleton width={82} height={24} />
+        </div>
+      ))}
+    </div>
+  );
+}
 function Brand() {
   return (
     <>
@@ -204,6 +296,7 @@ function App() {
   const [modal, setModal] = useState<Modal>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [jobsReady, setJobsReady] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [setupOpen, setSetupOpen] = useState(false);
   const closeSetup = useCallback(() => setSetupOpen(false), []);
@@ -226,6 +319,7 @@ function App() {
     setSelected(null);
     setUpdated(undefined);
     setLoading(false);
+    setJobsReady(false);
     setSetupOpen(false);
     setError("");
   }, []);
@@ -294,7 +388,10 @@ function App() {
         if (epoch.current === version) report(e);
       } finally {
         if (refreshing.current === version) refreshing.current = null;
-        if (epoch.current === version) setLoading(false);
+        if (epoch.current === version) {
+          setLoading(false);
+          setJobsReady(true);
+        }
       }
     },
     [report, loseSession],
@@ -423,6 +520,7 @@ function App() {
     shownProjects.length +
     (shownInventory?.projects.filter((p) => !p.managed).length ?? 0);
   const busy = authBusy || loading;
+  const initialWorkspaceLoading = !preview && loading && !updated;
   if (
     api.native &&
     (!sessionReady || sessionLoadFailed || (hasEnrollment && !session.unlocked))
@@ -446,8 +544,15 @@ function App() {
         <div className="brand">
           <Brand />
         </div>
-        <div className="workspace-label">CONTROL ROOM</div>
-        <div className="server-summary">
+        <button
+          className={page === "security" ? "server-summary active" : "server-summary"}
+          onClick={() => {
+            setPage("security");
+            setSelected(null);
+            setError("");
+          }}
+          aria-label="Open server details"
+        >
           <div className="server-symbol">
             <Server size={18} />
           </div>
@@ -470,7 +575,7 @@ function App() {
                   : "Not connected"}
             </span>
           </div>
-        </div>
+        </button>
         <div className="nav-label">WORKSPACE</div>
         <nav>
           {nav.map((n) => (
@@ -490,16 +595,6 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <button
-            className={page === "security" ? "nav-item active" : "nav-item"}
-            onClick={() => {
-              setPage("security");
-              setSelected(null);
-            }}
-          >
-            <Settings2 size={18} />
-            <span>Connection & security</span>
-          </button>
           <div className="operator">
             <span className="avatar">
               {initials(session.profile?.actor_id ?? "mac owner")}
@@ -535,7 +630,7 @@ function App() {
                 ? project.app_id
                 : page === "projects"
                   ? "Projects"
-                  : (nav.find((n) => n.id === page)?.label ?? "Security")}
+                  : (nav.find((n) => n.id === page)?.label ?? "Server details")}
             </strong>
             {project && (
               <>
@@ -682,6 +777,7 @@ function App() {
               jobs={shownJobs}
               updated={updated}
               loading={loading}
+              initialLoading={initialWorkspaceLoading}
               select={setSelected}
               selectObserved={(id) => setSelected(`observed:${id}`)}
               create={() => setModal({ kind: "create" })}
@@ -694,6 +790,7 @@ function App() {
             <Jobs
               jobs={shownJobs}
               preview={preview}
+              loading={!preview && !jobsReady}
               refresh={refresh}
               report={report}
             />
@@ -701,6 +798,7 @@ function App() {
             <Domains
               projects={shownProjects}
               inventory={shownInventory}
+              loading={initialWorkspaceLoading}
               select={(id) => {
                 setPage("projects");
                 setSelected(id);
@@ -711,6 +809,7 @@ function App() {
             <InventoryView
               inventory={shownInventory}
               loading={loading}
+              initialLoading={initialWorkspaceLoading}
               refresh={() => {
                 if (!preview) void refresh();
               }}
