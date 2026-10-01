@@ -1390,16 +1390,30 @@ export function ProjectDetail({
     { hostname: string; assigned: boolean; dns_record_id?: string }[]
   >([]);
   const serviceRevision = JSON.stringify(p.service_instances ?? {});
-  const needsServerUpdate = p.mode === "compose" && services.some(
-    (s) => s.slot === p.active_slot && s.updatable === undefined &&
-      s.seamless === undefined && !s.update_reason && !s.container_ports,
-  );
+  const needsServerUpdate =
+    p.mode === "compose" &&
+    services.some(
+      (s) =>
+        s.slot === p.active_slot &&
+        s.updatable === undefined &&
+        s.seamless === undefined &&
+        !s.update_reason &&
+        !s.container_ports,
+    );
   function updateBlockedReason(s: Service) {
     if (servicesLoading) return "Checking service availability…";
     if (servicesError) return "Could not check services. Refresh to try again.";
-    if (p.state !== "running") return "Start this project before updating services.";
-    if (status?.busy) return "Another operation is running. Refresh when it finishes.";
-    if (!s.updatable) return s.update_reason || "Update Dockyard on the server to enable this action.";
+    if (p.state !== "running")
+      return "Start this project before updating services.";
+    if (status?.busy)
+      return "Another operation is running. Refresh when it finishes.";
+    if (!s.updatable)
+      return (
+        s.update_reason ||
+        (s.updatable === false
+          ? "Individual updates are unavailable for this service."
+          : "Update Dockyard on the server to enable this action.")
+      );
     return "";
   }
   useEffect(() => {
@@ -1445,7 +1459,11 @@ export function ProjectDetail({
         project: p.id,
         view: "services",
       }),
-      api.read<NonNullable<typeof status>>({kind: "project", project: p.id, view: "status"}),
+      api.read<NonNullable<typeof status>>({
+        kind: "project",
+        project: p.id,
+        view: "status",
+      }),
     ])
       .then(([d, projectStatus]) => {
         if (!cancelled) {
@@ -1491,8 +1509,18 @@ export function ProjectDetail({
     return () => {
       cancelled = true;
     };
-  }, [p.id, p.releases.at(-1)?.id, p.domains.join(), p.state, p.active_slot,
-    p.service_updates, serviceRevision, servicesRefresh, preview, report]);
+  }, [
+    p.id,
+    p.releases.at(-1)?.id,
+    p.domains.join(),
+    p.state,
+    p.active_slot,
+    p.service_updates,
+    serviceRevision,
+    servicesRefresh,
+    preview,
+    report,
+  ]);
   async function check() {
     setBusy(true);
     try {
@@ -1715,10 +1743,16 @@ export function ProjectDetail({
           <div className="section-heading">
             <h2>Services</h2>
             <div className="service-heading-actions">
-              {!servicesLoading && !servicesError && <Tag>{services.length} recorded services</Tag>}
-              <button className="button small" disabled={servicesLoading}
-                onClick={() => setServicesRefresh((n) => n + 1)}>
-                <RefreshCw size={14} /> {servicesLoading ? "Refreshing…" : "Refresh"}
+              {!servicesLoading && !servicesError && (
+                <Tag>{services.length} recorded services</Tag>
+              )}
+              <button
+                className="button small"
+                disabled={servicesLoading}
+                onClick={() => setServicesRefresh((n) => n + 1)}
+              >
+                <RefreshCw size={14} />{" "}
+                {servicesLoading ? "Refreshing…" : "Refresh"}
               </button>
             </div>
           </div>
@@ -1729,7 +1763,11 @@ export function ProjectDetail({
             <div className="service-update-notice" role="status">
               <div>
                 <strong>Server update required</strong>
-                <p>This server hasn’t reported support for individual updates. In Server details → Server software, check and update Dockyard to version 0.7.0 or later. Then refresh Services.</p>
+                <p>
+                  This server hasn’t reported support for individual updates. In
+                  Server details → Server software, check and update Dockyard to
+                  version 0.7.0 or later. Then refresh Services.
+                </p>
               </div>
               <button className="button small" onClick={openServerDetails}>
                 <Server size={14} /> Server details
@@ -1757,9 +1795,13 @@ export function ProjectDetail({
                       : "Controlled restart"}
                   </small>
                 )}
-                {p.mode === "compose" && s.slot === p.active_slot &&
-                  updateBlockedReason(s) && !(needsServerUpdate && !s.update_reason && !s.updatable) && (
-                    <small className="service-update-hint">{updateBlockedReason(s)}</small>
+                {p.mode === "compose" &&
+                  s.slot === p.active_slot &&
+                  updateBlockedReason(s) &&
+                  !(needsServerUpdate && !s.update_reason && !s.updatable) && (
+                    <small className="service-update-hint">
+                      {updateBlockedReason(s)}
+                    </small>
                   )}
               </div>
               <Tag>{instanceLabel(s.slot)}</Tag>
