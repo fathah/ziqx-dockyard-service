@@ -118,6 +118,16 @@ sudo journalctl -u dockyard
 
 `-check` checks policy, ownership, TLS credentials, and HMAC material without starting the service. Startup additionally requires compatible Compose and a protected Caddy admin socket. The process lock prevents two agents or recovery commands from controlling the same state directory. Paths in the supplied unit match the example policy; update its `ReadWritePaths` if your root policy uses other locations.
 
+Importing reviewed existing domain routes requires write access to the main Caddyfile's **parent directory**, as well as the generated sites directory. Dockyard replaces files atomically by creating and renaming a temporary file in that parent. The supplied unit allows `/etc/caddy` while retaining `ProtectSystem=strict`. Older installations that allow only `/etc/caddy/dockyard` fail with `CADDY_FILE_WRITE_FAILED` during route import, even as root. Binary updates preserve the installed unit. Add the following systemd drop-in for such installations, then reload the unit configuration and restart Dockyard:
+
+```ini
+# /etc/systemd/system/dockyard.service.d/60-caddy-write.conf
+[Service]
+ReadWritePaths=/etc/caddy
+```
+
+Use the configured Caddyfile's parent and sites directory if they are elsewhere. This setting appends to existing writable paths. If an update already needs recovery, stop Dockyard and reconcile that exact job before starting it again (see below); do not retry while the recovery lock remains. Version 0.7.3 checks directory write access during route-import review and returns `CADDY_CONFIG_WRITE_REQUIRED` before admitting an update.
+
 Example client request from the backend/operator host:
 
 ```sh

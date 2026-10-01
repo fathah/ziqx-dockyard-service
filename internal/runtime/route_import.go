@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
@@ -36,6 +37,17 @@ func (c Caddy) PlanRouteImport(ctx context.Context, p model.Project, upstream st
 	st, err := os.Stat(c.Config.Caddyfile)
 	if err != nil {
 		return nil, err
+	}
+	// Atomic replacement needs write/search access to both parent directories.
+	// Check without modifying the reviewed files. In particular, access returns
+	// EROFS inside a read-only systemd mount even when the process runs as root.
+	// This is only a preflight; actual writes and recovery checks remain required.
+	const writeAndSearch = 2 | 1 // POSIX W_OK | X_OK
+	for _, dir := range []string{filepath.Dir(c.Config.Caddyfile), c.Config.CaddySites} {
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() || syscall.Access(dir, writeAndSearch) != nil {
+			return nil, model.Fail("CADDY_CONFIG_WRITE_REQUIRED")
+		}
 	}
 	return []model.RouteEdit{{Mode: uint32(st.Mode().Perm()), Path: c.Config.Caddyfile, Before: string(b), After: next}}, nil
 }

@@ -41,6 +41,8 @@ function explain(error: unknown) {
     SERVICE_DOMAIN_REQUIRED: "Assign a domain before using Seamless updates.",
     CADDY_UNAVAILABLE:
       "Dockyard cannot read Caddy’s live configuration to verify the traffic switch. Check its private admin connection on the server, then review again.",
+    CADDY_CONFIG_WRITE_REQUIRED:
+      "Dockyard needs write access to the Caddyfile’s folder and its generated sites folder before it can manage this domain. Check ReadWritePaths in Dockyard’s systemd service, then review again.",
     BLUE_GREEN_ROUTE_REVIEW_REQUIRED:
       "The existing Caddy site needs manual review before Dockyard can switch its traffic. Controlled restart keeps the current route.",
     BLUE_GREEN_ROUTE_TARGET_MISMATCH:

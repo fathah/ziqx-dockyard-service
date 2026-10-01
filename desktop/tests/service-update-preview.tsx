@@ -69,6 +69,11 @@ mockIPC((command, payload: any) => {
     data.mode === "seamless"
   )
     throw new Error("HTTP_503: CADDY_UNAVAILABLE");
+  if (
+    new URLSearchParams(location.search).get("caddy") === "readonly" &&
+    data.mode === "seamless"
+  )
+    throw new Error("HTTP_503: CADDY_CONFIG_WRITE_REQUIRED");
   return {
     review_sha256: "a".repeat(64),
     service: data.service,

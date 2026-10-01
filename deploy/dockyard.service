@@ -32,7 +32,9 @@ RestrictSUIDSGID=true
 RestrictRealtime=true
 LockPersonality=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/docker /var/lib/dockyard /etc/caddy/dockyard
+# Importing reviewed existing routes atomically replaces the main Caddyfile,
+# so its parent directory must be writable as well as the generated snippets.
+ReadWritePaths=/docker /var/lib/dockyard /etc/caddy
 LimitNOFILE=4096
 TasksMax=128
 MemoryMax=512M
