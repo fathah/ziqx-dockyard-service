@@ -163,6 +163,8 @@ sudo systemctl start dockyard
 
 Reconciliation requires the full live Caddy JSON to match the adapted disk config, an exact generated route snippet, and a healthy container with the recorded image/environment identity for any serving slot. DNS recovery recognizes or creates only the exact locally authorized ownership-marked record. It never guesses from health alone, reloads Caddy, or stops containers. The interrupted request remains failed with `JOB_INTERRUPTED_RECONCILED`; project state reflects the observed route. A fresh drain is required before the next deployment reuses a retained slot.
 
+For individual service updates, recovery verifies the original routes and service identity if traffic has not switched. An interruption in `pulling` occurs before any candidate start; reconciliation preserves the current services and the reusable reserved ports. If a candidate was journaled, recovery may clean up that verified candidate, or finish draining the old app after positively verifying the new route and app. Waiting or refreshing does not clear a recovery lock. Inspect the Dockyard journal for the interruption's cause before retrying. Version 0.7.2 fixes a crash after pulling the first individual service update from a persisted job; update the server before retrying that failure.
+
 If the filesystem/live route is divergent, no recognized snippet exists, or the serving container cannot be verified, reconciliation refuses to clear the block. Preserve evidence and restore a known, coherent configuration under an explicit operator recovery procedure. Automatic compensation of these cases is not implemented. A failed initial provisioning job is left visible rather than silently adopted or retried.
 
 ## Backups and quotas

@@ -1561,6 +1561,24 @@ pre {
 .job-row > div:last-child {
   text-align: right;
 }
+.job-row .job-recovery-help {
+  margin-top: 12px;
+  max-width: 760px;
+}
+.job-row:has(.job-recovery-help) {
+  align-items: start;
+}
+.job-recovery-help pre {
+  margin-top: 12px;
+  padding: 12px;
+  overflow-x: auto;
+  background: #f6f7f6;
+  border: 1px solid #e1e5e1;
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .job-icon {
   display: grid;
   place-items: center;

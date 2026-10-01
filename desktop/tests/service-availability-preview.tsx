@@ -2,11 +2,22 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import { ProjectDetail } from "../src/App";
-import type { Project, Service } from "../src/types";
+import { Jobs, ProjectDetail } from "../src/App";
+import type { Job, Project, Service } from "../src/types";
 import "../src/style.css";
 
 let mode = "legacy";
+const interrupted: Job = {
+  job_id: "job-bd0bd219b387d591fa22751a1c2262b6",
+  project_id: "shop-production",
+  action: "service_update",
+  status: "recovery_required",
+  phase: "pulling",
+  error_code: "JOB_INTERRUPTED",
+  actor_id: "fixture",
+  request_id: "req-fixture",
+  created_at: "2026-10-01T11:35:06Z",
+};
 const release = {
   id: "rel-original",
   image: "",
@@ -81,7 +92,7 @@ mockIPC((command, payload: any) => {
       return {
         health: "healthy",
         route: "healthy",
-        busy: mode === "busy",
+        busy: mode === "busy" || mode === "recovery",
         public_tls_state: "unverified",
       };
     case "domains":
@@ -98,24 +109,30 @@ const rejectMutation = async () => {
 function Fixture() {
   const [project, setProject] = useState(original);
   const [message, setMessage] = useState("Legacy server response");
+  const [showJobs, setShowJobs] = useState(false);
   return (
     <main style={{ maxWidth: 1100, margin: "24px auto", padding: 24 }}>
       <p className="eyebrow">TEST FIXTURE · NO SERVER ACCESS</p>
       <div
         style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}
       >
-        {["legacy", "current", "busy", "unavailable", "error"].map((value) => (
-          <button
-            className="button small"
-            key={value}
-            onClick={() => {
-              mode = value;
-              setMessage(`${value} response selected; refresh Services`);
-            }}
-          >
-            {value}
-          </button>
-        ))}
+        {["legacy", "current", "busy", "recovery", "unavailable", "error"].map(
+          (value) => (
+            <button
+              className="button small"
+              key={value}
+              onClick={() => {
+                mode = value;
+                setMessage(`${value} response selected; refresh Services`);
+              }}
+            >
+              {value}
+            </button>
+          ),
+        )}
+        <button className="button small" onClick={() => setShowJobs(false)}>
+          Show services
+        </button>
         <button
           className="button small"
           onClick={() => {
@@ -143,17 +160,29 @@ function Fixture() {
         </button>
       </div>
       <p role="status">{message}</p>
-      <ProjectDetail
-        project={project}
-        preview={false}
-        report={report}
-        open={() => {
-          throw new Error("No project mutations allowed");
-        }}
-        action={rejectMutation}
-        execute={rejectMutation}
-        openServerDetails={() => setMessage("Server details shortcut works")}
-      />
+      {showJobs ? (
+        <Jobs
+          jobs={mode === "recovery" ? [interrupted] : []}
+          loading={false}
+          preview={true}
+          refresh={async () => {}}
+          report={report}
+        />
+      ) : (
+        <ProjectDetail
+          project={project}
+          preview={false}
+          report={report}
+          open={() => {
+            throw new Error("No project mutations allowed");
+          }}
+          action={rejectMutation}
+          execute={rejectMutation}
+          openServerDetails={() => setMessage("Server details shortcut works")}
+          jobs={mode === "recovery" ? [interrupted] : []}
+          openDeployments={() => setShowJobs(true)}
+        />
+      )}
     </main>
   );
 }

@@ -60,6 +60,11 @@ func (e *Engine) updateService(ctx context.Context, j *model.Job, p *model.Proje
 	}
 	plan.Instance.Release.ID = state.NewID("rel-")
 	plan.Instance.Release.Created = time.Now().UTC()
+	// Accepted jobs are read back from SQLite. JSON omits an empty service map,
+	// so the first individual update must initialize it again before writing.
+	if next.ServiceInstances == nil {
+		next.ServiceInstances = make(map[string]model.ServiceInstance)
+	}
 	next.ServiceInstances[plan.Service] = plan.Instance
 	j.Input.Project = &next
 	if err := e.phase(j, "service_candidate_intent"); err != nil {

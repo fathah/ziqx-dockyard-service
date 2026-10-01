@@ -169,6 +169,38 @@ func TestServiceRestartNeverSwitchesTrafficOrTouchesDependencies(t *testing.T) {
 	}
 }
 
+func TestFirstServiceUpdateFromPersistedJob(t *testing.T) {
+	for _, mode := range []string{"seamless", "restart"} {
+		t.Run(mode, func(t *testing.T) {
+			e, admitted, _, _, events := serviceFixture(t, mode)
+			// The worker reads accepted jobs back from SQLite. An empty map is
+			// omitted from JSON and becomes nil, unlike the admission snapshot.
+			queued, err := e.Store.Job(admitted.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if queued.Input.Project.ServiceInstances != nil {
+				t.Fatal("fixture did not reproduce the first persisted service update")
+			}
+			e.execute(context.Background(), queued)
+			done, err := e.Store.Job(admitted.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			project, err := e.Store.Project(admitted.ProjectID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if done.Status != "succeeded" || project.ServiceInstances["web"].Release.Image != "new-image" || !e.Ready() {
+				t.Fatal("persisted first update did not complete", done, project)
+			}
+			if len(project.ServiceInstances) != 1 || len(project.ServicePorts) != 2 || strings.Contains(strings.Join(*events, ","), "postgres") {
+				t.Fatal("first update changed dependencies or lost its reserved ports", project, *events)
+			}
+		})
+	}
+}
+
 type observedServiceRoutes struct {
 	*fakeRoutes
 	next    bool

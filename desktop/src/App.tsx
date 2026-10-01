@@ -50,6 +50,7 @@ import ServiceUpdate from "./ServiceUpdate";
 import TerminalPage from "./TerminalPage";
 import { DomainProviderSettings, ProviderDomains } from "./DomainProviders";
 import Help from "./Help";
+import Accordion from "./Accordion";
 import Select from "./Select";
 import { flavorIdentity, projectIdentity } from "./projectNaming";
 import { demoInventory, demoJobs, demoProjects } from "./demo";
@@ -765,6 +766,12 @@ function App() {
               key={project.id + String(preview)}
               project={project}
               preview={preview}
+              jobs={shownJobs}
+              refreshWorkspace={refresh}
+              openDeployments={() => {
+                setSelected(null);
+                setPage("deployments");
+              }}
               open={setModal}
               action={simple}
               execute={perform}
@@ -1351,6 +1358,9 @@ export function ProjectDetail({
   execute,
   report,
   openServerDetails,
+  jobs = [],
+  refreshWorkspace,
+  openDeployments,
 }: {
   project: Project;
   preview: boolean;
@@ -1359,6 +1369,9 @@ export function ProjectDetail({
   execute: (m: unknown) => Promise<void>;
   report: (e: unknown) => void;
   openServerDetails: () => void;
+  jobs?: Job[];
+  refreshWorkspace?: () => Promise<void>;
+  openDeployments?: () => void;
 }) {
   const [tab, setTab] = useState("overview");
   const [configDirty, setConfigDirty] = useState(false);
@@ -1387,6 +1400,7 @@ export function ProjectDetail({
     { hostname: string; assigned: boolean; dns_record_id?: string }[]
   >([]);
   const serviceRevision = JSON.stringify(p.service_instances ?? {});
+  const recoveryJob = jobs.find((job) => job.status === "recovery_required");
   const needsServerUpdate =
     p.mode === "compose" &&
     services.some(
@@ -1400,6 +1414,8 @@ export function ProjectDetail({
   function updateBlockedReason(s: Service) {
     if (servicesLoading) return "Checking service availability…";
     if (servicesError) return "Could not check services. Refresh to try again.";
+    if (recoveryJob)
+      return "An interrupted operation needs recovery. Open Deployments.";
     if (p.state !== "running")
       return "Start this project before updating services.";
     if (status?.busy)
@@ -1762,7 +1778,10 @@ export function ProjectDetail({
                 type="button"
                 className="button small"
                 disabled={servicesLoading}
-                onClick={() => setServicesRefresh((n) => n + 1)}
+                onClick={() => {
+                  setServicesRefresh((n) => n + 1);
+                  if (!preview) void refreshWorkspace?.();
+                }}
               >
                 <RefreshCw size={14} />{" "}
                 {servicesLoading ? "Refreshing…" : "Refresh"}
@@ -1786,6 +1805,26 @@ export function ProjectDetail({
               >
                 <Server size={14} /> Server details
               </Button>
+            </div>
+          )}
+          {recoveryJob && (
+            <div className="service-update-notice" role="alert">
+              <div>
+                <strong>Recovery required</strong>
+                <p>
+                  An interrupted server operation blocks updates. Resolve it in
+                  Deployments, then refresh Services.
+                </p>
+              </div>
+              {openDeployments && (
+                <Button
+                  type="button"
+                  className="button small"
+                  onClick={openDeployments}
+                >
+                  <Layers3 size={14} /> View recovery
+                </Button>
+              )}
             </div>
           )}
           {servicesError && (
@@ -2103,7 +2142,7 @@ export function ProjectDetail({
     </>
   );
 }
-function Jobs({
+export function Jobs({
   jobs,
   preview,
   loading,
@@ -2120,7 +2159,10 @@ function Jobs({
   const [found, setFound] = useState<Job | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
   const activeJobs = jobs.filter((job) =>
-    ["queued", "running", "recovery_required"].includes(job.status),
+    ["queued", "running"].includes(job.status),
+  ).length;
+  const recoveryJobs = jobs.filter(
+    (job) => job.status === "recovery_required",
   ).length;
   return (
     <>
@@ -2179,7 +2221,12 @@ function Jobs({
       <section className="panel">
         <div className="section-heading">
           <h2>Recent operations</h2>
-          {!loading && <span className="count">{activeJobs} active</span>}
+          {!loading && (
+            <span className="count">
+              {activeJobs} active
+              {recoveryJobs ? ` · ${recoveryJobs} need recovery` : ""}
+            </span>
+          )}
         </div>
         {loading && <SkeletonRows count={3} label="Loading operations" />}
         {lookingUp && <SkeletonRows count={1} label="Looking up operation" />}
@@ -2203,6 +2250,7 @@ function Jobs({
                 {j.error_code ? ` · ${j.error_code}` : ""}
                 {j.warning_code ? ` · ${j.warning_code}` : ""}
               </p>
+              {j.status === "recovery_required" && <JobRecoveryHelp job={j} />}
             </div>
             <div>
               <Tag
@@ -2228,6 +2276,33 @@ function Jobs({
         )}
       </section>
     </>
+  );
+}
+
+function JobRecoveryHelp({ job }: { job: Job }) {
+  // Show an executable command only for an actual server-generated job ID.
+  const validID = /^job-[a-f0-9]{32}$/.test(job.job_id);
+  return (
+    <Accordion
+      title="Resolve interrupted operation"
+      icon={Terminal}
+      className="job-recovery-help"
+    >
+      <p>
+        This operation has stopped. Waiting or refreshing will not clear the
+        recovery lock. Run recovery in the VPS terminal.
+      </p>
+      {validID && (
+        <pre>
+          <code>{`systemctl stop dockyard\n/usr/local/bin/dockyard -config /etc/dockyard/config.json -reconcile-job ${job.job_id}\nsystemctl start dockyard`}</code>
+        </pre>
+      )}
+      <p>
+        Dockyard verifies the live deployment before clearing the lock. If the
+        command fails, keep the output for inspection. After it succeeds,
+        refresh Deployments and review a new update.
+      </p>
+    </Accordion>
   );
 }
 function Domains({
