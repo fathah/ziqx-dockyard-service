@@ -64,6 +64,11 @@ mockIPC((command, payload: any) => {
     throw new Error("Invalid service review");
   if (data.service === "postgres" && data.mode !== "restart")
     throw new Error("Database must restart only itself");
+  if (
+    new URLSearchParams(location.search).get("caddy") === "unavailable" &&
+    data.mode === "seamless"
+  )
+    throw new Error("HTTP_503: CADDY_UNAVAILABLE");
   return {
     review_sha256: "a".repeat(64),
     service: data.service,

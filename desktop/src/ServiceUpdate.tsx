@@ -8,6 +8,7 @@ import {
   Layers3,
   RefreshCw,
   ShieldCheck,
+  Terminal,
   X,
 } from "lucide-react";
 import Accordion from "./Accordion";
@@ -38,6 +39,8 @@ function explain(error: unknown) {
     SERVICE_IMAGE_REQUIRED:
       "This service is built locally. Use Edit & deploy to rebuild it.",
     SERVICE_DOMAIN_REQUIRED: "Assign a domain before using Seamless updates.",
+    CADDY_UNAVAILABLE:
+      "Dockyard cannot read Caddy’s live configuration to verify the traffic switch. Check its private admin connection on the server, then review again.",
     BLUE_GREEN_ROUTE_REVIEW_REQUIRED:
       "The existing Caddy site needs manual review before Dockyard can switch its traffic. Controlled restart keeps the current route.",
     BLUE_GREEN_ROUTE_TARGET_MISMATCH:
@@ -143,7 +146,7 @@ export default function ServiceUpdate({
         : await api.previewServiceUpdate(project.id, data);
       if (current === sequence.current) setChecked({ key, review: result });
     } catch (e) {
-      if (current === sequence.current) setError(explain(e));
+      if (current === sequence.current) setError(String(e));
     } finally {
       setBusy(false);
     }
@@ -160,7 +163,7 @@ export default function ServiceUpdate({
       });
       onClose();
     } catch (e) {
-      setError(explain(e));
+      setError(String(e));
       setChecked(undefined);
     } finally {
       setBusy(false);
@@ -295,8 +298,40 @@ export default function ServiceUpdate({
         )}
         {error && (
           <p className="alert error" role="alert">
-            {error}
+            {explain(error)}
           </p>
+        )}
+        {error.includes("CADDY_UNAVAILABLE") && (
+          <Accordion
+            title="Check Caddy on the server"
+            icon={Terminal}
+            className="caddy-connection-help"
+          >
+            <p>Run these checks in the VPS terminal:</p>
+            <pre>
+              <code>{`systemctl is-active caddy
+systemctl show dockyard -p User -p CapabilityBoundingSet
+test -S /run/caddy/admin.sock && echo socket-present || echo socket-missing
+curl --max-time 5 --unix-socket /run/caddy/admin.sock -sS -o /dev/null -w 'Caddy HTTP %{http_code}\\n' http://127.0.0.1/config/`}</code>
+            </pre>
+            <p>
+              Expect HTTP 200. A socket file can exist without Caddy listening
+              on it. If the connection fails, check Caddy’s active admin endpoint
+              and the private socket setting in its Caddyfile.
+            </p>
+            <p>
+              If Caddy is active and the socket exists, older root installations
+              with an empty capability bounding set need{" "}
+              <code>CAP_DAC_OVERRIDE</code>
+              restored in Dockyard’s systemd service. Updating the binaries
+              alone does not update those service settings.
+            </p>
+            <p>
+              If Caddy is inactive or its socket is missing, check its service
+              log and private admin configuration. Keep the admin connection
+              private. Seamless updates require a verified Caddy connection.
+            </p>
+          </Accordion>
         )}
         {review && (
           <div className="service-update-plan">

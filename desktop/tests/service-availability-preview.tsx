@@ -57,6 +57,7 @@ mockIPC((command, payload: any) => {
       if (mode !== "legacy") {
         items[0] = {
           ...items[0],
+          depends_on: ["postgres"],
           updatable: mode !== "unavailable",
           seamless: mode !== "unavailable",
           container_ports: [3000],
@@ -67,6 +68,7 @@ mockIPC((command, payload: any) => {
         };
         items[1] = {
           ...items[1],
+          depends_on: [],
           updatable: true,
           seamless: false,
           container_ports: [5432],

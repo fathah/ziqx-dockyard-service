@@ -38,6 +38,54 @@ The agent checks that the admin socket has mode 0600 and that its ancestors are 
 
 The root systemd service retains `CAP_DAC_OVERRIDE` so it can traverse Caddy's private service directory and connect to the caddy-owned socket. Its bounding set permits only this capability; `NoNewPrivileges`, the read-only filesystem mounts and configured writable paths still apply. An empty capability bounding set prevents the agent from reaching this private socket even when its Unix user is root.
 
+### Repair `CADDY_UNAVAILABLE` on an older installation
+
+This error means the agent could not read Caddy's live configuration. It does not by itself mean the website is down. Check the actual VPS before changing configuration:
+
+```sh
+sudo systemctl is-active caddy
+sudo systemctl show dockyard -p User -p CapabilityBoundingSet
+sudo test -S /run/caddy/admin.sock && echo socket-present || echo socket-missing
+sudo curl --max-time 5 --silent --show-error --output /dev/null --unix-socket /run/caddy/admin.sock --write-out 'Caddy HTTP %{http_code}\n' http://127.0.0.1/config/
+```
+
+Expect HTTP 200. A socket file can exist without a listener. If curl reports a connection failure and HTTP 000, inspect `sudo ss -xlpn` and Caddy's active admin endpoint. If the Caddyfile has no global `admin unix//run/caddy/admin.sock|0600` setting, Caddy may still be using its default loopback TCP endpoint. Verify that endpoint separately before applying a graceful reload to configure the private socket. Changing Dockyard's capabilities or updating its binary does not repair an absent Caddy listener.
+
+To repair that specific case, first verify `http://127.0.0.1:2019/config/` returns HTTP 200 and that the saved Caddyfile represents the running sites. Back up the Caddyfile and add the private admin option to its existing global block, or prepend this block if none exists. Preserve all website blocks and imports:
+
+```caddyfile
+{
+    admin unix//run/caddy/admin.sock|0600
+}
+```
+
+Ensure `/run/caddy` is owned by `caddy` with mode 0700 and has the runtime-directory drop-in above for future boots. Validate the updated Caddyfile, then reload through the **currently running TCP endpoint**, rather than the new socket:
+
+```sh
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --address 127.0.0.1:2019
+sudo curl --max-time 5 --silent --show-error --output /dev/null --unix-socket /run/caddy/admin.sock --write-out 'Caddy HTTP %{http_code}\n' http://127.0.0.1/config/
+```
+
+Run the reload only if validation succeeds. Caddy supports graceful configuration reloads ([reload documentation](https://caddyserver.com/docs/command-line#caddy-reload)). Verify HTTP 200 from the socket before retrying Dockyard's update review. If the TCP endpoint does not answer, identify the actual active endpoint before attempting this procedure.
+
+For the supplied root unit, if Caddy is active, its socket answers, and `CapabilityBoundingSet=` is empty, an old systemd unit is blocking socket access. The desktop binary updater preserves the installed service unit, so a binary upgrade does not repair this setting. Wait until no Dockyard jobs are queued or running, then run `sudo systemctl edit dockyard` and save this drop-in:
+
+```ini
+[Service]
+CapabilityBoundingSet=CAP_DAC_OVERRIDE
+```
+
+Apply it to the control service:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl restart dockyard
+sudo systemctl show dockyard -p CapabilityBoundingSet
+```
+
+Only Dockyard restarts; Docker, Caddy and application containers remain running. Retry the service update review. Do not loosen socket permissions or expose the Caddy admin API publicly. If the capability was already present, or the socket check failed, inspect `sudo journalctl -u caddy -u dockyard -n 50 --no-pager` and verify the configured `caddy_admin_socket` against the private admin option above. A missing/inactive socket or mismatched Caddy instance needs its own repair; the capability change will not fix it.
+
 The agent defaults to `127.0.0.1:9123`; only loopback/private IPs are accepted. Use a private control network or an SSH tunnel from the Super Admin backend. Restrict network ingress to that backend with your host/network firewall. The server certificate SAN must match the IP/name the backend verifies. Keep the agent's end-to-end mTLS connection intact; an ordinary public Caddy reverse proxy would change the peer certificate and must not be added without a separately designed gateway contract.
 
 ## Credentials

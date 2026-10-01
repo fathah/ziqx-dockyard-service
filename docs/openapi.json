@@ -43,9 +43,7 @@
       "get": {
         "operationId": "listProjects",
         "summary": "List authorized projects",
-        "tags": [
-          "Projects"
-        ],
+        "tags": ["Projects"],
         "description": "Only projects allowed for this signing key are returned.",
         "parameters": [
           {
@@ -100,16 +98,12 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.read"
-        ]
+        "x-required-scopes": ["deploy.read"]
       },
       "post": {
         "operationId": "createProject",
         "summary": "Provision a project",
-        "tags": [
-          "Projects"
-        ],
+        "tags": ["Projects"],
         "description": "Full Compose projects require an explicitly configured compose.admin grant and projects: [\"*\"] for the authenticated key, in addition to the signed operation scopes. Full Compose grants root-equivalent server control. Creates /docker/<id> files, reserves domains/ports and installs maintenance. Existing directories are rejected. Omit ports to allocate. A nonzero secondary_port requires zerodowntime=true and differs from port. Wait for success before first deployment. Requires app_id and an explicit environment choice. App/environment is unique and immutable; deploy the same app in the three environments through distinct project IDs. Full Compose projects default to a single instance; compatible production stacks can opt into blue-green. Legacy template projects keep their production default. Blue-green true outside production returns BLUE_GREEN_PRODUCTION_ONLY; duplicate app/environment returns APP_ENVIRONMENT_EXISTS. Missing environment returns HTTP 422 DEPLOYMENT_ENVIRONMENT_REQUIRED.",
         "parameters": [
           {
@@ -168,9 +162,7 @@
             "description": "Deployment environment choice is required."
           }
         },
-        "x-required-scopes": [
-          "projects.write"
-        ],
+        "x-required-scopes": ["projects.write"],
         "requestBody": {
           "required": true,
           "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
@@ -188,9 +180,7 @@
       "get": {
         "operationId": "getProject",
         "summary": "Read project metadata",
-        "tags": [
-          "Projects"
-        ],
+        "tags": ["Projects"],
         "description": "No environment values or host paths are returned.",
         "parameters": [
           {
@@ -251,18 +241,14 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.read"
-        ]
+        "x-required-scopes": ["deploy.read"]
       }
     },
     "/v1/projects/{id}/status": {
       "get": {
         "operationId": "getProjectStatus",
         "summary": "Inspect project status",
-        "tags": [
-          "Observability"
-        ],
+        "tags": ["Observability"],
         "description": "Reports route coherence, active container identity/readiness, busy state and expected downtime. Public TLS is currently unverified.",
         "parameters": [
           {
@@ -323,18 +309,14 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.read"
-        ]
+        "x-required-scopes": ["deploy.read"]
       }
     },
     "/v1/projects/{id}/releases": {
       "get": {
         "operationId": "listReleases",
         "summary": "Read activated releases",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Retained successful image/environment activation pairs.",
         "parameters": [
           {
@@ -395,18 +377,14 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.read"
-        ]
+        "x-required-scopes": ["deploy.read"]
       }
     },
     "/v1/projects/{id}/logs": {
       "get": {
         "operationId": "getProjectLogs",
         "summary": "Read container logs",
-        "tags": [
-          "Observability"
-        ],
+        "tags": ["Observability"],
         "description": "Bounded per-service log snapshot, redacted using all retained app and companion environment revisions. Only services in the selected slot revision can be read.",
         "parameters": [
           {
@@ -435,12 +413,7 @@
             "in": "query",
             "schema": {
               "type": "string",
-              "enum": [
-                "active",
-                "inactive",
-                "blue",
-                "green"
-              ],
+              "enum": ["active", "inactive", "blue", "green"],
               "default": "active"
             },
             "description": "green unavailable in single-slot mode; active/inactive need a recorded mapping."
@@ -510,18 +483,14 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.logs"
-        ]
+        "x-required-scopes": ["deploy.logs"]
       }
     },
     "/v1/jobs/{job_id}": {
       "get": {
         "operationId": "getJob",
         "summary": "Poll a job",
-        "tags": [
-          "Observability"
-        ],
+        "tags": ["Observability"],
         "description": "The signing key must allow the job's project. Accepted work may fail asynchronously; recovery_required preserves containers and blocks mutations.",
         "parameters": [
           {
@@ -582,18 +551,14 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.read"
-        ]
+        "x-required-scopes": ["deploy.read"]
       }
     },
     "/v1/ports/next": {
       "get": {
         "operationId": "getNextPort",
         "summary": "Find the next available port",
-        "tags": [
-          "Projects"
-        ],
+        "tags": ["Projects"],
         "description": "Advisory check of durable reservations, Docker published ports and host listeners. Does not reserve a port.",
         "parameters": [
           {
@@ -648,18 +613,14 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "projects.write"
-        ]
+        "x-required-scopes": ["projects.write"]
       }
     },
     "/v1/audit": {
       "get": {
         "operationId": "listAudit",
         "summary": "Read audit events",
-        "tags": [
-          "Observability"
-        ],
+        "tags": ["Observability"],
         "description": "Requires all-project key access (projects: [\"*\"]). Returns up to 100 events after the supplied ID. Event names use the persisted audit contract.",
         "parameters": [
           {
@@ -725,9 +686,7 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.read"
-        ],
+        "x-required-scopes": ["deploy.read"],
         "x-requires-all-projects": true
       }
     },
@@ -735,9 +694,7 @@
       "put": {
         "operationId": "updateRoutes",
         "summary": "Update Caddy domains or ports",
-        "tags": [
-          "Routing and DNS"
-        ],
+        "tags": ["Routing and DNS"],
         "description": "Replaces assigned domain list. Domain-only changes can apply while running; changed ports require stopped state. Removed reservations are retained. DNS creation is a separate operation.",
         "parameters": [
           {
@@ -798,9 +755,7 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "sites.write"
-        ],
+        "x-required-scopes": ["sites.write"],
         "requestBody": {
           "required": true,
           "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
@@ -818,9 +773,7 @@
       "post": {
         "operationId": "createDNS",
         "summary": "Create a Cloudflare subdomain",
-        "tags": [
-          "Routing and DNS"
-        ],
+        "tags": ["Routing and DNS"],
         "description": "Hostname must already belong to this project and lie below a configured zone. Root policy fixes origin IP, type and proxy settings. Reuses exact ownership-marked records; rejects foreign records. DNS propagation/TLS readiness are separate.",
         "parameters": [
           {
@@ -881,9 +834,7 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "dns.write"
-        ],
+        "x-required-scopes": ["dns.write"],
         "requestBody": {
           "required": true,
           "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
@@ -901,9 +852,7 @@
       "post": {
         "operationId": "deployProject",
         "summary": "Deploy a validated Compose stack",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Requires Compose YAML and an explicit environment matching the project. Full Compose mode requires a server-wide key with a configured compose.admin grant, plus signed deploy.execute and deploy.environment scopes. Docker Compose validates and resolves YAML and raw env_file contents before a durable job is accepted. Referenced external files must exist on the VPS. The job starts the stack and verifies running/healthy state; optional Caddy routing switches after those checks. Single-instance deployment can interrupt service; blue-green is production-only and requires independent stateless stacks with healthchecks. Full Compose can deploy to stopped projects. Legacy template projects retain their existing restricted validation and require start first. Missing environment returns 422 DEPLOYMENT_ENVIRONMENT_REQUIRED; a mismatched environment returns 409 DEPLOYMENT_ENVIRONMENT_MISMATCH.",
         "parameters": [
           {
@@ -967,9 +916,7 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.execute"
-        ],
+        "x-required-scopes": ["deploy.execute"],
         "requestBody": {
           "required": true,
           "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
@@ -984,9 +931,7 @@
         "x-conditional-scopes": [
           {
             "when": "variables or any services.<name>.environment is a non-null object",
-            "scopes": [
-              "deploy.environment"
-            ]
+            "scopes": ["deploy.environment"]
           }
         ]
       }
@@ -995,9 +940,7 @@
       "post": {
         "operationId": "rollbackProject",
         "summary": "Roll back to an activated release",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Requires running state. Activates a retained exact image/environment pair as a new release. Omit release_id for the preceding activation. Database migrations are not reversed.",
         "parameters": [
           {
@@ -1058,9 +1001,7 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.rollback"
-        ],
+        "x-required-scopes": ["deploy.rollback"],
         "requestBody": {
           "required": true,
           "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
@@ -1078,9 +1019,7 @@
       "post": {
         "operationId": "restartProject",
         "summary": "Restart the active release",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Requires running state. Blue-green restart uses the inactive slot; single-slot restart permits downtime. Submit {}.",
         "parameters": [
           {
@@ -1141,9 +1080,7 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.execute"
-        ],
+        "x-required-scopes": ["deploy.execute"],
         "requestBody": {
           "required": true,
           "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
@@ -1161,9 +1098,7 @@
       "post": {
         "operationId": "startProject",
         "summary": "Start a stopped project",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Requires stopped/initialized state. Restores the last successful image/environment pair. Submit {}.",
         "parameters": [
           {
@@ -1224,9 +1159,7 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.lifecycle"
-        ],
+        "x-required-scopes": ["deploy.lifecycle"],
         "requestBody": {
           "required": true,
           "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
@@ -1244,9 +1177,7 @@
       "post": {
         "operationId": "stopProject",
         "summary": "Stop a running project",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Confirmation must equal the path ID. Installs maintenance, drains requests and stops only managed services; no volume deletion or Docker prune.",
         "parameters": [
           {
@@ -1307,9 +1238,7 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.stop"
-        ],
+        "x-required-scopes": ["deploy.stop"],
         "requestBody": {
           "required": true,
           "description": "JSON without unknown/duplicate fields. Sign the exact bytes transmitted.",
@@ -1327,9 +1256,7 @@
       "get": {
         "operationId": "getHealth",
         "summary": "Check agent liveness",
-        "tags": [
-          "Health"
-        ],
+        "tags": ["Health"],
         "description": "mTLS at the listener; no HMAC. Readiness covers local state/admission, not full Docker/Caddy or public TLS availability.",
         "security": [
           {
@@ -1354,9 +1281,7 @@
       "get": {
         "operationId": "getReadiness",
         "summary": "Check local admission readiness",
-        "tags": [
-          "Health"
-        ],
+        "tags": ["Health"],
         "description": "mTLS at the listener; no HMAC. Readiness covers local state/admission, not full Docker/Caddy or public TLS availability.",
         "security": [
           {
@@ -1384,9 +1309,7 @@
       "get": {
         "operationId": "getDocs",
         "summary": "Browse the read-only API reference",
-        "tags": [
-          "Documentation"
-        ],
+        "tags": ["Documentation"],
         "description": "Bundled static resource; only mTLS at the agent listener. No HMAC, credentials, remote assets or operation execution.",
         "security": [
           {
@@ -1417,9 +1340,7 @@
       "get": {
         "operationId": "getDocsStyles",
         "summary": "Read bundled styles",
-        "tags": [
-          "Documentation"
-        ],
+        "tags": ["Documentation"],
         "description": "Bundled static resource; only mTLS at the agent listener. No HMAC, credentials, remote assets or operation execution.",
         "security": [
           {
@@ -1450,9 +1371,7 @@
       "get": {
         "operationId": "getDocsScript",
         "summary": "Read bundled renderer",
-        "tags": [
-          "Documentation"
-        ],
+        "tags": ["Documentation"],
         "description": "Bundled static resource; only mTLS at the agent listener. No HMAC, credentials, remote assets or operation execution.",
         "security": [
           {
@@ -1483,9 +1402,7 @@
       "get": {
         "operationId": "getOpenAPI",
         "summary": "Download the OpenAPI 3.1.1 document",
-        "tags": [
-          "Documentation"
-        ],
+        "tags": ["Documentation"],
         "description": "Bundled static resource; only mTLS at the agent listener. No HMAC, credentials, remote assets or operation execution.",
         "security": [
           {
@@ -1517,9 +1434,7 @@
       "get": {
         "operationId": "listProjectServices",
         "summary": "Read project services from SQLite",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Read recorded service inventory from SQLite. Native active services additionally verify the immutable Compose manifest and report update eligibility and dependency names, without Docker queries or environment values. Includes both recorded slots; candidates/old slots may be stopped, failed or draining. Use status/log endpoints for live checks.",
         "parameters": [
           {
@@ -1580,18 +1495,14 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.read"
-        ]
+        "x-required-scopes": ["deploy.read"]
       }
     },
     "/v1/projects/{id}/domains": {
       "get": {
         "operationId": "listProjectDomains",
         "summary": "Read project domains from SQLite",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Read assigned and conservatively retained reserved domains with recorded Cloudflare IDs from SQLite. Does not test DNS propagation, Caddy coherence or public TLS. Older hostname-to-record associations populate on the next DNS job/reconciliation.",
         "parameters": [
           {
@@ -1652,18 +1563,14 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.read"
-        ]
+        "x-required-scopes": ["deploy.read"]
       }
     },
     "/v1/inventory": {
       "get": {
         "operationId": "readExistingInventory",
         "summary": "Read existing Compose and Caddy inventory",
-        "tags": [
-          "Projects"
-        ],
+        "tags": ["Projects"],
         "description": "Requires deploy.read and all-project access. Returns safe cached SQLite observations of existing /docker Compose projects, effective Caddyfile host/upstream mappings and retained observed ports. Legacy projects are classified production and remain unmanaged; no adoption, environment-secret reads, Compose execution, Caddy reload or container changes occur during sync. GET performs no scan. Source timestamps/warnings indicate freshness; failed sources preserve their last success, missing directories remain present=false, and ports remain reserved. Aliases/interpolation/overrides may leave metadata incomplete; this is not live health or a full backup. Caddy associations use only unambiguous loopback published ports.",
         "parameters": [
           {
@@ -1718,9 +1625,7 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.read"
-        ],
+        "x-required-scopes": ["deploy.read"],
         "x-requires-all-projects": true
       }
     },
@@ -1728,9 +1633,7 @@
       "get": {
         "operationId": "assessExistingMigration",
         "summary": "Review adoption of an existing Compose project",
-        "tags": [
-          "Projects"
-        ],
+        "tags": ["Projects"],
         "description": "Requires deploy.read and all-project access. Reads live Docker Compose configuration and verifies the exact container IDs, project name, source files and working directory. Returns a review hash without Compose source or environment values. Does not change containers, volumes, ports or Caddy routes.",
         "parameters": [
           {
@@ -1791,9 +1694,7 @@
             "$ref": "#/components/responses/Error404"
           }
         },
-        "x-required-scopes": [
-          "deploy.read"
-        ],
+        "x-required-scopes": ["deploy.read"],
         "x-requires-all-projects": true
       }
     },
@@ -1801,9 +1702,7 @@
       "post": {
         "operationId": "adoptExistingProject",
         "summary": "Adopt a reviewed existing Compose project in place",
-        "tags": [
-          "Projects"
-        ],
+        "tags": ["Projects"],
         "description": "Requires projects.write, deploy.environment, credential compose.admin and all-project access. Revalidates source_sha256 before acceptance; changed sources return MIGRATION_SOURCE_CHANGED. Stores private Compose/environment snapshots in /docker/<inventory-id> and binds exact existing container ownership. Returns a durable metadata job. Preserves original source files, Compose project name, volumes, ports and Caddy routes. Future redeploys are single-instance and can interrupt service; existing Caddy routes are not edited by this project.",
         "parameters": [
           {
@@ -1828,10 +1727,7 @@
             "$ref": "#/components/parameters/ProjectID"
           }
         ],
-        "x-required-scopes": [
-          "deploy.environment",
-          "projects.write"
-        ],
+        "x-required-scopes": ["deploy.environment", "projects.write"],
         "requestBody": {
           "required": true,
           "content": {
@@ -1839,9 +1735,7 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "source_sha256"
-                ],
+                "required": ["source_sha256"],
                 "properties": {
                   "source_sha256": {
                     "type": "string",
@@ -1894,9 +1788,7 @@
       "get": {
         "operationId": "readProjectConfiguration",
         "summary": "Read saved Compose and environment files",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Returns verified source Compose and raw .env for the current release, or empty files and release_id for an undeployed project. Contains secrets: requires signed deploy.environment and server-wide compose.admin authority. Responses are no-store. The desktop requires Touch ID before fetching. Read-only metadata endpoints never include these contents.",
         "parameters": [
           {
@@ -1957,18 +1849,14 @@
             "$ref": "#/components/responses/Error503"
           }
         },
-        "x-required-scopes": [
-          "deploy.environment"
-        ]
+        "x-required-scopes": ["deploy.environment"]
       }
     },
     "/v1/projects/{id}/blue-green-preview": {
       "post": {
         "operationId": "previewBlueGreen",
         "summary": "Review existing-project blue\u2013green conversion",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Requires server-wide compose.admin. Validates the proposed Compose/.env and pins approval to the current release, route source, and allocated ports. Existing persistent mounts are not duplicated or stopped. Imported routes must be plain reverse_proxy sites in the main Caddyfile. Preview writes private validation snapshots but never changes live services or routes. Enable starts green, checks health, switches traffic, drains, and stops the original. Unknown outcomes require reconciliation; backups remain in the private job journal.",
         "parameters": [
           {
@@ -2004,9 +1892,7 @@
             "description": "Scope or Compose administrator permission missing"
           }
         },
-        "x-required-scopes": [
-          "deploy.environment"
-        ],
+        "x-required-scopes": ["deploy.environment"],
         "requestBody": {
           "required": true,
           "content": {
@@ -2057,9 +1943,7 @@
         "x-conditional-scopes": [
           {
             "when": "variables or any services.<name>.environment is a non-null object",
-            "scopes": [
-              "deploy.environment"
-            ]
+            "scopes": ["deploy.environment"]
           }
         ]
       }
@@ -2068,9 +1952,7 @@
       "post": {
         "operationId": "enableBlueGreen",
         "summary": "Enable blue\u2013green for an existing running production Compose project",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Requires server-wide compose.admin. Validates the proposed Compose/.env and pins approval to the current release, route source, and allocated ports. Existing persistent mounts are not duplicated or stopped. Imported routes must be plain reverse_proxy sites in the main Caddyfile. Preview writes private validation snapshots but never changes live services or routes. Enable starts green, checks health, switches traffic, drains, and stops the original. Unknown outcomes require reconciliation; backups remain in the private job journal.",
         "parameters": [
           {
@@ -2191,9 +2073,7 @@
         "x-conditional-scopes": [
           {
             "when": "variables or any services.<name>.environment is a non-null object",
-            "scopes": [
-              "deploy.environment"
-            ]
+            "scopes": ["deploy.environment"]
           }
         ]
       }
@@ -2202,9 +2082,7 @@
       "post": {
         "operationId": "previewServiceUpdate",
         "summary": "Review individual service update",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Requires server-wide compose.admin. Restart updates only the selected service. Seamless requires production, a routed app, a healthcheck and safe concurrent versions; it preserves databases and dependencies, switches the reviewed Caddy route, drains requests and stops only the previous app. Use the current full Compose release ID. Preview makes no live changes. Execute requires the preview review hash and returns a durable service_update job. Unchanged image IDs skip deployment. Unknown outcomes require local recovery.",
         "parameters": [
           {
@@ -2247,9 +2125,7 @@
             "description": "Scope or Compose administrator permission missing"
           }
         },
-        "x-required-scopes": [
-          "deploy.execute"
-        ],
+        "x-required-scopes": ["deploy.execute"],
         "requestBody": {
           "required": true,
           "content": {
@@ -2263,10 +2139,7 @@
         "x-conditional-scopes": [
           {
             "when": "mode is seamless",
-            "scopes": [
-              "projects.write",
-              "sites.write"
-            ]
+            "scopes": ["projects.write", "sites.write"]
           }
         ]
       }
@@ -2275,9 +2148,7 @@
       "post": {
         "operationId": "updateService",
         "summary": "Pull and update selected service",
-        "tags": [
-          "Deployments"
-        ],
+        "tags": ["Deployments"],
         "description": "Requires server-wide compose.admin. Restart updates only the selected service. Seamless requires production, a routed app, a healthcheck and safe concurrent versions; it preserves databases and dependencies, switches the reviewed Caddy route, drains requests and stops only the previous app. Use the current full Compose release ID. Preview makes no live changes. Execute requires the preview review hash and returns a durable service_update job. Unchanged image IDs skip deployment. Unknown outcomes require local recovery.",
         "parameters": [
           {
@@ -2320,9 +2191,7 @@
             }
           }
         },
-        "x-required-scopes": [
-          "deploy.execute"
-        ],
+        "x-required-scopes": ["deploy.execute"],
         "requestBody": {
           "required": true,
           "content": {
@@ -2336,10 +2205,7 @@
         "x-conditional-scopes": [
           {
             "when": "mode is seamless",
-            "scopes": [
-              "projects.write",
-              "sites.write"
-            ]
+            "scopes": ["projects.write", "sites.write"]
           }
         ]
       }
@@ -2559,17 +2425,11 @@
                 "description": "Empty if authentication did not establish trusted metadata."
               }
             },
-            "required": [
-              "code",
-              "message",
-              "request_id"
-            ],
+            "required": ["code", "message", "request_id"],
             "additionalProperties": false
           }
         },
-        "required": [
-          "error"
-        ],
+        "required": ["error"],
         "additionalProperties": false
       },
       "Health": {
@@ -2580,9 +2440,7 @@
             "const": "ok"
           }
         },
-        "required": [
-          "status"
-        ],
+        "required": ["status"],
         "additionalProperties": false
       },
       "Action": {
@@ -2621,12 +2479,7 @@
             "description": "Original acceptance envelope stays queued on replay. Poll the job for its actual status."
           }
         },
-        "required": [
-          "job_id",
-          "project_id",
-          "action",
-          "status"
-        ],
+        "required": ["job_id", "project_id", "action", "status"],
         "additionalProperties": false
       },
       "Release": {
@@ -2654,12 +2507,7 @@
             "description": "Immutable normalized Compose revision. Omitted for legacy releases."
           }
         },
-        "required": [
-          "id",
-          "image",
-          "environment_revision",
-          "created_at"
-        ],
+        "required": ["id", "image", "environment_revision", "created_at"],
         "additionalProperties": false
       },
       "Project": {
@@ -2702,19 +2550,11 @@
           },
           "active_slot": {
             "type": "string",
-            "enum": [
-              "blue",
-              "green"
-            ]
+            "enum": ["blue", "green"]
           },
           "state": {
             "type": "string",
-            "enum": [
-              "provisioning",
-              "awaiting_release",
-              "running",
-              "stopped"
-            ]
+            "enum": ["provisioning", "awaiting_release", "running", "stopped"]
           },
           "slots": {
             "type": "object",
@@ -2769,9 +2609,7 @@
           },
           "mode": {
             "type": "string",
-            "enum": [
-              "compose"
-            ],
+            "enum": ["compose"],
             "description": "Full Compose mode. Absent on legacy template projects."
           },
           "adoption": {
@@ -2910,9 +2748,7 @@
             }
           }
         },
-        "required": [
-          "projects"
-        ],
+        "required": ["projects"],
         "additionalProperties": false
       },
       "Releases": {
@@ -2925,9 +2761,7 @@
             }
           }
         },
-        "required": [
-          "releases"
-        ],
+        "required": ["releases"],
         "additionalProperties": false
       },
       "Job": {
@@ -3001,10 +2835,7 @@
         "properties": {
           "slot": {
             "type": "string",
-            "enum": [
-              "blue",
-              "green"
-            ]
+            "enum": ["blue", "green"]
           },
           "logs": {
             "type": "string",
@@ -3018,12 +2849,7 @@
             "pattern": "^[a-z][a-z0-9-]{0,47}$"
           }
         },
-        "required": [
-          "slot",
-          "logs",
-          "truncated",
-          "service"
-        ],
+        "required": ["slot", "logs", "truncated", "service"],
         "additionalProperties": false
       },
       "NextPort": {
@@ -3039,10 +2865,7 @@
             "const": false
           }
         },
-        "required": [
-          "port",
-          "reserved"
-        ],
+        "required": ["port", "reserved"],
         "additionalProperties": false
       },
       "AuditEvent": {
@@ -3099,10 +2922,7 @@
             "additionalProperties": false
           }
         },
-        "required": [
-          "event_id",
-          "event"
-        ],
+        "required": ["event_id", "event"],
         "additionalProperties": false
       },
       "Audit": {
@@ -3116,9 +2936,7 @@
             "maxItems": 100
           }
         },
-        "required": [
-          "events"
-        ],
+        "required": ["events"],
         "additionalProperties": false
       },
       "CreateProject": {
@@ -3201,11 +3019,7 @@
             "description": "Optional HTTP path on the routed service for readiness checks."
           }
         },
-        "required": [
-          "id",
-          "app_id",
-          "environment"
-        ],
+        "required": ["id", "app_id", "environment"],
         "additionalProperties": false,
         "examples": [
           {
@@ -3220,15 +3034,10 @@
             "if": {
               "properties": {
                 "environment": {
-                  "enum": [
-                    "development",
-                    "staging"
-                  ]
+                  "enum": ["development", "staging"]
                 }
               },
-              "required": [
-                "environment"
-              ]
+              "required": ["environment"]
             },
             "then": {
               "properties": {
@@ -3247,10 +3056,7 @@
         "type": "object",
         "properties": {
           "variables": {
-            "type": [
-              "object",
-              "null"
-            ],
+            "type": ["object", "null"],
             "writeOnly": true,
             "maxProperties": 100,
             "propertyNames": {
@@ -3285,10 +3091,7 @@
             "description": "Optional optimistic concurrency check against the current release. An empty string requires an undeployed project. A mismatch returns CONFIGURATION_CHANGED before any files are prepared."
           }
         },
-        "required": [
-          "compose_yaml",
-          "environment"
-        ],
+        "required": ["compose_yaml", "environment"],
         "additionalProperties": false,
         "examples": [
           {
@@ -3339,15 +3142,11 @@
             "description": "Omit/0 to allocate on creation or retain on a route update. Subject to root port policy."
           }
         },
-        "required": [
-          "domains"
-        ],
+        "required": ["domains"],
         "additionalProperties": false,
         "examples": [
           {
-            "domains": [
-              "new.example.com"
-            ],
+            "domains": ["new.example.com"],
             "port": 3005,
             "secondary_port": 3006
           }
@@ -3360,9 +3159,7 @@
             "$ref": "#/components/schemas/Hostname"
           }
         },
-        "required": [
-          "hostname"
-        ],
+        "required": ["hostname"],
         "additionalProperties": false,
         "examples": [
           {
@@ -3380,18 +3177,14 @@
         },
         "required": [],
         "additionalProperties": false,
-        "examples": [
-          {}
-        ]
+        "examples": [{}]
       },
       "Empty": {
         "type": "object",
         "properties": {},
         "required": [],
         "additionalProperties": false,
-        "examples": [
-          {}
-        ]
+        "examples": [{}]
       },
       "Stop": {
         "type": "object",
@@ -3403,9 +3196,7 @@
             "description": "Must exactly equal the path project ID."
           }
         },
-        "required": [
-          "confirmation"
-        ],
+        "required": ["confirmation"],
         "additionalProperties": false,
         "examples": [
           {
@@ -3415,9 +3206,7 @@
       },
       "ComposeService": {
         "type": "object",
-        "required": [
-          "image"
-        ],
+        "required": ["image"],
         "additionalProperties": false,
         "properties": {
           "image": {
@@ -3501,17 +3290,13 @@
       },
       "ComposeDocument": {
         "type": "object",
-        "required": [
-          "services"
-        ],
+        "required": ["services"],
         "additionalProperties": false,
         "description": "Legacy template-mode subset only. Full Compose projects use the installed Docker Compose schema.",
         "properties": {
           "services": {
             "type": "object",
-            "required": [
-              "app"
-            ],
+            "required": ["app"],
             "minProperties": 1,
             "maxProperties": 8,
             "propertyNames": {
@@ -3547,6 +3332,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "depends_on",
           "slot",
           "name",
           "image",
@@ -3562,10 +3348,7 @@
           },
           "slot": {
             "type": "string",
-            "enum": [
-              "blue",
-              "green"
-            ]
+            "enum": ["blue", "green"]
           },
           "name": {
             "type": "string"
@@ -3606,9 +3389,7 @@
       },
       "Services": {
         "type": "object",
-        "required": [
-          "services"
-        ],
+        "required": ["services"],
         "additionalProperties": false,
         "properties": {
           "services": {
@@ -3623,10 +3404,7 @@
       "DomainInfo": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "hostname",
-          "assigned"
-        ],
+        "required": ["hostname", "assigned"],
         "properties": {
           "hostname": {
             "$ref": "#/components/schemas/Hostname"
@@ -3643,9 +3421,7 @@
       },
       "Domains": {
         "type": "object",
-        "required": [
-          "domains"
-        ],
+        "required": ["domains"],
         "additionalProperties": false,
         "properties": {
           "domains": {
@@ -3658,11 +3434,7 @@
       },
       "DeploymentEnvironment": {
         "type": "string",
-        "enum": [
-          "development",
-          "staging",
-          "production"
-        ],
+        "enum": ["development", "staging", "production"],
         "description": "Required target choice. Development and staging use one Compose instance. Only production permits blue-green; selection must match the immutable project environment. This is distinct from secret environment variables/revisions.",
         "x-ui-question": "Which environment should receive this deployment?"
       },
@@ -3685,10 +3457,7 @@
             }
           }
         },
-        "required": [
-          "name",
-          "published_ports"
-        ],
+        "required": ["name", "published_ports"],
         "additionalProperties": false
       },
       "ExistingProject": {
@@ -3766,11 +3535,7 @@
             }
           }
         },
-        "required": [
-          "host_matcher",
-          "upstreams",
-          "project_ids"
-        ],
+        "required": ["host_matcher", "upstreams", "project_ids"],
         "additionalProperties": false
       },
       "Inventory": {
@@ -3819,21 +3584,13 @@
             }
           }
         },
-        "required": [
-          "projects",
-          "sites",
-          "reserved_ports",
-          "warnings"
-        ],
+        "required": ["projects", "sites", "reserved_ports", "warnings"],
         "additionalProperties": false
       },
       "MigrationCheck": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "code",
-          "status"
-        ],
+        "required": ["code", "status"],
         "properties": {
           "code": {
             "type": "string",
@@ -3855,32 +3612,21 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "passed",
-              "blocked"
-            ]
+            "enum": ["passed", "blocked"]
           }
         }
       },
       "MigrationAssessment": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "project_id",
-          "status",
-          "checks",
-          "execution_available"
-        ],
+        "required": ["project_id", "status", "checks", "execution_available"],
         "properties": {
           "project_id": {
             "type": "string"
           },
           "status": {
             "type": "string",
-            "enum": [
-              "blocked",
-              "candidate"
-            ]
+            "enum": ["blocked", "candidate"]
           },
           "source_sha256": {
             "type": "string",
@@ -3897,9 +3643,7 @@
           },
           "strategy": {
             "type": "string",
-            "enum": [
-              "adopt_in_place"
-            ]
+            "enum": ["adopt_in_place"]
           },
           "service_count": {
             "type": "integer",
@@ -3909,11 +3653,7 @@
       },
       "ProjectConfiguration": {
         "type": "object",
-        "required": [
-          "release_id",
-          "compose_yaml",
-          "env_file"
-        ],
+        "required": ["release_id", "compose_yaml", "env_file"],
         "properties": {
           "release_id": {
             "type": "string"
@@ -3929,11 +3669,7 @@
       "ServiceUpdate": {
         "type": "object",
         "additionalProperties": false,
-        "required": [
-          "expected_release_id",
-          "service",
-          "mode"
-        ],
+        "required": ["expected_release_id", "service", "mode"],
         "properties": {
           "expected_release_id": {
             "type": "string"
@@ -3945,10 +3681,7 @@
           },
           "mode": {
             "type": "string",
-            "enum": [
-              "restart",
-              "seamless"
-            ]
+            "enum": ["restart", "seamless"]
           },
           "container_port": {
             "type": "integer",
@@ -3976,10 +3709,7 @@
           },
           "mode": {
             "type": "string",
-            "enum": [
-              "restart",
-              "seamless"
-            ]
+            "enum": ["restart", "seamless"]
           },
           "domains": {
             "type": "array",

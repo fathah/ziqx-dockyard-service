@@ -3,14 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Terminal as XTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import {
-  Fingerprint,
-  Terminal,
-  Unplug,
-  ShieldCheck,
-  Trash2,
-  Box,
-} from "lucide-react";
+import { Fingerprint, Terminal, Unplug, Play, Box } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import Help from "./Help";
 import Select from "./Select";
@@ -53,7 +46,6 @@ export default function TerminalPage({
   const [mode, setMode] = useState("root");
   const [container, setContainer] = useState("");
   const [shell, setShell] = useState("/bin/sh");
-  const [remember, setRemember] = useState(false);
   const [busy, setBusy] = useState(false);
   const [active, setActive] = useState(false);
   const [message, setMessage] = useState("");
@@ -83,10 +75,10 @@ export default function TerminalPage({
       fontFamily: "Menlo, Monaco, monospace",
       convertEol: false,
       theme: {
-        background: "#102d25",
-        foreground: "#edf5e8",
-        cursor: "#cfdfae",
-        selectionBackground: "#47684a",
+        background: "#000000",
+        foreground: "#e5e5e5",
+        cursor: "#ffffff",
+        selectionBackground: "#3b3b3b",
       },
       allowProposedApi: false,
       windowOptions: {},
@@ -222,7 +214,9 @@ export default function TerminalPage({
     setMessage("");
     term.current?.reset();
     try {
-      const result = await invoke<Connection>("terminal_connect", { remember });
+      const result = await invoke<Connection>("terminal_connect", {
+        remember: true,
+      });
       if (epoch.current !== turn) {
         await invoke("terminal_close", { id: result.id });
         return;
@@ -250,23 +244,10 @@ export default function TerminalPage({
   return (
     <section
       className="terminal-page"
+      aria-label="SSH terminal"
       style={{ display: visible ? undefined : "none" }}
     >
-      <div className="page-heading">
-        <div>
-          <h1>
-            Terminal
-            <Help label="terminal access">
-              Connect to the enrolled VPS over pinned SSH. Each connection
-              requires Touch ID. The shell stays open when switching pages and
-              closes when Dockyard locks. Disconnecting does not stop commands
-              already running remotely.
-            </Help>
-          </h1>
-        </div>
-        <ShieldCheck size={28} />
-      </div>
-      <div className="terminal-access card">
+      <div className="terminal-access">
         <div className="terminal-controls">
           <div
             className="terminal-targets"
@@ -276,6 +257,7 @@ export default function TerminalPage({
             <Button
               type="button"
               className={`terminal-target ${mode === "root" ? "selected" : ""}`}
+              aria-pressed={mode === "root"}
               disabled={busy || !!connection}
               onClick={() => setMode("root")}
               title="Full server access"
@@ -286,6 +268,7 @@ export default function TerminalPage({
             <Button
               type="button"
               className={`terminal-target ${mode === "container" ? "selected" : ""}`}
+              aria-pressed={mode === "container"}
               disabled={busy || !!connection}
               onClick={() => setMode("container")}
               title="Configured container user"
@@ -294,36 +277,98 @@ export default function TerminalPage({
               <strong>Container</strong>
             </Button>
           </div>
-          <div className="terminal-toolbar">
-            <label className="terminal-remember">
-              <input
-                type="checkbox"
-                checked={remember}
-                disabled={busy || !!connection}
-                onChange={(e) => setRemember(e.target.checked)}
+          <div className="terminal-server">
+            <span
+              className="terminal-server-address"
+              title={server || "No server connected"}
+            >
+              {active && mode === "root"
+                ? `root@${server}`
+                : server || "No server connected"}
+            </span>
+            <span className="terminal-status" role="status" title={message}>
+              <span
+                className={`terminal-dot ${active ? "online" : ""}`}
+                aria-hidden="true"
               />
-              Save password for future app launches
-              <Help label="remembering the SSH password">
-                By default, root access is remembered only until Dockyard
-                closes. Enable this to also save the password in this Mac’s
-                Keychain. Touch ID still protects root access. Use Forget
-                password to remove an existing saved password.
-              </Help>
-            </label>
+              {active
+                ? "Connected"
+                : connection
+                  ? "Choose container"
+                  : busy
+                    ? "Connecting…"
+                    : "Disconnected"}
+            </span>
+          </div>
+          {connection && mode === "container" && !active && (
+            <div className="terminal-container-picker">
+              <Select
+                compact
+                triggerProps={{ "aria-label": "Running container" }}
+                value={container}
+                onValueChange={setContainer}
+                disabled={busy}
+                placeholder="Choose a container…"
+                options={connection.containers.map((c) => ({
+                  value: c.id,
+                  label: `${c.name} · ${c.image}`,
+                }))}
+              />
+              <Select
+                compact
+                triggerProps={{ "aria-label": "Container shell" }}
+                value={shell}
+                onValueChange={setShell}
+                disabled={busy}
+                options={[
+                  { value: "/bin/sh", label: "sh" },
+                  { value: "/bin/bash", label: "bash (if installed)" },
+                ]}
+              />
+              <Button
+                type="button"
+                className="button small terminal-open-shell"
+                aria-label="Open container shell"
+                title="Open container shell"
+                disabled={!container || busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError("");
+                  try {
+                    await start(connection);
+                  } catch (e) {
+                    fail(e);
+                    await disconnect();
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <Play size={16} aria-hidden="true" />
+              </Button>
+            </div>
+          )}
+          <div className="terminal-toolbar">
+            <Help label="SSH security">
+              Connect to the enrolled VPS over pinned SSH with Touch ID. Root
+              passwords are saved in this Mac’s Keychain only after successful
+              authentication and never enter the webview. Container shells use
+              the container’s configured user. The shell stays open across pages
+              and closes when Dockyard locks.
+            </Help>
             {connection ? (
               <Button
                 type="button"
-                className="button secondary"
+                className="button small"
                 disabled={busy}
                 onClick={() => void disconnect()}
               >
-                <Unplug size={16} />
-                Disconnect
+                <Unplug size={16} /> Disconnect
               </Button>
             ) : (
               <Button
                 type="button"
-                className="button"
+                className="button small"
                 disabled={busy || !native || !server}
                 onClick={() => void connect()}
               >
@@ -333,81 +378,6 @@ export default function TerminalPage({
             )}
           </div>
         </div>
-        <div className="terminal-access-meta">
-          <span>
-            {server || "No server connected"}
-            <Help label="SSH security">
-              The SSH fingerprint is checked before sending credentials.
-              Password entry uses a native macOS secure field and stays outside
-              the webview. Container mode also authenticates as root over SSH,
-              then starts the shell as the container’s configured user.
-            </Help>
-          </span>
-          <Button
-            type="button"
-            className="terminal-forget"
-            disabled={!native || busy || !server}
-            onClick={async () => {
-              setBusy(true);
-              setError("");
-              try {
-                await invoke("terminal_forget_password");
-                setMessage("Saved root SSH password removed from Keychain.");
-              } catch (e) {
-                fail(e);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <Trash2 size={14} />
-            Forget password
-          </Button>
-        </div>
-        {connection && mode === "container" && !active && (
-          <div className="terminal-container-picker">
-            <Select
-              label="Running container"
-              value={container}
-              onValueChange={setContainer}
-              disabled={busy}
-              placeholder="Choose a container…"
-              options={connection.containers.map((c) => ({
-                value: c.id,
-                label: `${c.name} · ${c.image}`,
-              }))}
-            />
-            <Select
-              label="Shell"
-              value={shell}
-              onValueChange={setShell}
-              disabled={busy}
-              options={[
-                { value: "/bin/sh", label: "sh" },
-                { value: "/bin/bash", label: "bash (if installed)" },
-              ]}
-            />
-            <Button
-              type="button"
-              className="button"
-              disabled={!container || busy}
-              onClick={async () => {
-                setBusy(true);
-                setError("");
-                try {
-                  await start(connection);
-                } catch (e) {
-                  fail(e);
-                  await disconnect();
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            >
-              Open container shell
-            </Button>
-          </div>
-        )}
         {connection &&
           mode === "container" &&
           !connection.containers.length &&
@@ -430,23 +400,8 @@ export default function TerminalPage({
         )}
       </div>
       <div className="terminal-window">
-        <div className="terminal-window-bar">
-          <span className={`terminal-dot ${active ? "online" : ""}`} />
-          <span>
-            {active
-              ? mode === "root"
-                ? `root@${server}`
-                : connection?.containers.find((c) => c.id === container)?.name
-              : "Terminal"}
-          </span>
-          <span>{active ? "Connected" : "Disconnected"}</span>
-        </div>
         <div ref={host} className="terminal-screen" />
       </div>
-      <p className="terminal-status" role="status">
-        {message ||
-          (native ? "Disconnected" : "Preview · use the Mac app to connect.")}
-      </p>
     </section>
   );
 }

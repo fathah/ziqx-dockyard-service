@@ -22,10 +22,10 @@ import (
 
 type ServiceOptions struct {
 	DependsOn []string `json:"depends_on"`
-	Updatable bool   `json:"updatable"`
-	Seamless  bool   `json:"seamless"`
-	Reason    string `json:"update_reason"`
-	Ports     []int  `json:"container_ports"`
+	Updatable bool     `json:"updatable"`
+	Seamless  bool     `json:"seamless"`
+	Reason    string   `json:"update_reason"`
+	Ports     []int    `json:"container_ports"`
 }
 
 func ValidateServiceInstance(c config.Config, p model.Project, instance model.ServiceInstance) error {

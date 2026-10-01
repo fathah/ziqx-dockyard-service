@@ -111,6 +111,9 @@ func TestServiceCandidateKeepsDatabaseAndUsesExistingNetwork(t *testing.T) {
 	if err != nil || !options["web"].Seamless || options["postgres"].Seamless || !options["postgres"].Updatable {
 		t.Fatal(options, err)
 	}
+	if strings.Join(options["web"].DependsOn, ",") != "postgres" || options["postgres"].DependsOn == nil || len(options["postgres"].DependsOn) != 0 {
+		t.Fatal("dependency metadata must distinguish a dependency from none", options)
+	}
 	plan, err := d.PlanServiceUpdate(context.Background(), p, "web", "seamless", 3000, 3010, "")
 	if err != nil {
 		t.Fatal(err)

@@ -6,11 +6,12 @@ import {
   Fingerprint,
   RefreshCw,
   Settings2,
+  AlignLeft,
   Upload,
 } from "lucide-react";
 import * as api from "./api";
 import Help from "./Help";
-import CodeEditor from "./CodeEditor";
+import CodeEditor, { type CodeEditorHandle } from "./CodeEditor";
 import { composeForEditor, lintCompose } from "./composeLint";
 import type { Project } from "./types";
 
@@ -71,6 +72,8 @@ export default function ProjectConfiguration({
   const [file, setFile] = useState<"compose" | "env">("compose");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const composeEditor = useRef<CodeEditorHandle>(null);
+  const isJson = compose.trimStart().startsWith("{");
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -145,7 +148,7 @@ export default function ProjectConfiguration({
   }
   return (
     <section className="panel project-configuration">
-      <div className="section-heading">
+      <div className="configuration-heading">
         <h2>
           Project files{" "}
           <Help label="Project files">
@@ -155,18 +158,8 @@ export default function ProjectConfiguration({
             additional files must exist on the VPS.
           </Help>
         </h2>
-        {saved?.release_id && (
-          <Button
-            type="button"
-            className="button small"
-            disabled={busy || preview}
-            onClick={load}
-          >
-            <RefreshCw size={16} /> Reload
-          </Button>
-        )}
       </div>
-      <p className="configuration-note">
+      <p className="configuration-subtitle">
         {project.environment} · /docker/
         {project.adoption?.source_name ?? project.id}/compose.yml and .env
         {project.releases.length === 0 &&
@@ -235,31 +228,72 @@ export default function ProjectConfiguration({
                 .env
               </Button>
             </div>
-            <Button
-              type="button"
-              className="button small"
-              disabled={busy || preview}
-              onClick={async () => {
-                try {
-                  const value =
-                    file === "compose"
-                      ? await api.importCompose()
-                      : await api.importEnv();
-                  if (value !== null && alive.current) {
-                    if (file === "compose") setCompose(composeForEditor(value));
-                    else setDotenv(value);
-                  }
-                } catch (e) {
-                  setError(message(e));
-                }
-              }}
+            <div
+              className="configuration-actions"
+              role="group"
+              aria-label="File actions"
             >
-              <Upload size={15} />{" "}
-              {file === "compose" ? "Import Compose" : "Import .env"}
-            </Button>
+              <Button
+                type="button"
+                className="button small"
+                disabled={busy || preview}
+                onClick={async () => {
+                  try {
+                    const value =
+                      file === "compose"
+                        ? await api.importCompose()
+                        : await api.importEnv();
+                    if (value !== null && alive.current) {
+                      if (file === "compose")
+                        setCompose(composeForEditor(value));
+                      else setDotenv(value);
+                    }
+                  } catch (e) {
+                    setError(message(e));
+                  }
+                }}
+              >
+                <Upload size={15} />{" "}
+                {file === "compose" ? "Import Compose" : "Import .env"}
+              </Button>
+              {file === "compose" && (
+                <>
+                  <Button
+                    type="button"
+                    className="button small"
+                    disabled={busy || preview}
+                    onClick={() => composeEditor.current?.format()}
+                  >
+                    <AlignLeft size={15} aria-hidden="true" /> Format
+                  </Button>
+                  {isJson && (
+                    <Button
+                      type="button"
+                      className="button small"
+                      disabled={busy || preview}
+                      onClick={() => composeEditor.current?.format(true)}
+                    >
+                      Convert to YAML
+                    </Button>
+                  )}
+                </>
+              )}
+              {saved.release_id && (
+                <Button
+                  type="button"
+                  className="button small"
+                  disabled={busy || preview}
+                  onClick={load}
+                >
+                  <RefreshCw size={15} aria-hidden="true" /> Reload
+                </Button>
+              )}
+            </div>
           </div>
           <div hidden={file !== "compose"}>
             <CodeEditor
+              ref={composeEditor}
+              showToolbar={false}
               value={compose}
               onChange={setCompose}
               readOnly={busy || preview}
@@ -268,6 +302,7 @@ export default function ProjectConfiguration({
           </div>
           <div hidden={file !== "env"}>
             <CodeEditor
+              showToolbar={false}
               kind="env"
               value={dotenv}
               onChange={setDotenv}
@@ -277,6 +312,7 @@ export default function ProjectConfiguration({
           </div>
           <div className="editor-meta">
             <span>
+              {file === "compose" ? (isJson ? "JSON" : "YAML") : ".env"} ·{" "}
               {bytes(file === "compose" ? compose : dotenv).toLocaleString()} /
               65,536 bytes
             </span>

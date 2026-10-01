@@ -1,5 +1,11 @@
 import Button from "./Button";
-import { useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { basicSetup } from "codemirror";
 import { EditorState, Compartment } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
@@ -97,21 +103,31 @@ const colors = syntaxHighlighting(
   ]),
 );
 
-export default function CodeEditor({
-  value,
-  onChange,
-  kind = "compose",
-  readOnly = false,
-  active = true,
-  onProblems,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  kind?: "compose" | "env";
-  readOnly?: boolean;
-  active?: boolean;
-  onProblems?: (problems: Diagnostic[]) => void;
-}) {
+export type CodeEditorHandle = { format: (toYaml?: boolean) => void };
+
+const CodeEditor = forwardRef<
+  CodeEditorHandle,
+  {
+    value: string;
+    onChange: (value: string) => void;
+    kind?: "compose" | "env";
+    readOnly?: boolean;
+    active?: boolean;
+    showToolbar?: boolean;
+    onProblems?: (problems: Diagnostic[]) => void;
+  }
+>(function CodeEditor(
+  {
+    value,
+    onChange,
+    kind = "compose",
+    readOnly = false,
+    active = true,
+    showToolbar = true,
+    onProblems,
+  },
+  ref,
+) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | undefined>(undefined);
   const change = useRef(onChange);
@@ -230,7 +246,7 @@ export default function CodeEditor({
     if (active) view.current?.requestMeasure();
   }, [active]);
   function format(toYaml = false) {
-    if (!view.current || readOnly) return;
+    if (!view.current || readOnly || kind !== "compose") return;
     try {
       const next = formatCompose(view.current.state.doc.toString(), toYaml);
       view.current.dispatch({
@@ -243,40 +259,43 @@ export default function CodeEditor({
       setFormatError(String(e).replace(/^Error: /, ""));
     }
   }
+  useImperativeHandle(ref, () => ({ format }));
   const errors = problems.filter((p) => p.severity === "error").length;
   return (
     <div className={`source-editor ${kind === "env" ? "env-editor" : ""}`}>
-      <div className="source-editor-tools">
-        <span>
-          {kind === "env"
-            ? ".env"
-            : isJson
-              ? "Compose · JSON"
-              : "Compose · YAML"}
-        </span>
-        {kind === "compose" && (
-          <div>
-            <Button
-              type="button"
-              className="button small"
-              disabled={readOnly}
-              onClick={() => format()}
-            >
-              Format
-            </Button>
-            {isJson && (
+      {showToolbar && (
+        <div className="source-editor-tools">
+          <span>
+            {kind === "env"
+              ? ".env"
+              : isJson
+                ? "Compose · JSON"
+                : "Compose · YAML"}
+          </span>
+          {kind === "compose" && (
+            <div>
               <Button
                 type="button"
                 className="button small"
                 disabled={readOnly}
-                onClick={() => format(true)}
+                onClick={() => format()}
               >
-                Convert to YAML
+                Format
               </Button>
-            )}
-          </div>
-        )}
-      </div>
+              {isJson && (
+                <Button
+                  type="button"
+                  className="button small"
+                  disabled={readOnly}
+                  onClick={() => format(true)}
+                >
+                  Convert to YAML
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div ref={host} />
       <div className="source-editor-status">
         <span>{cursor}</span>
@@ -300,4 +319,6 @@ export default function CodeEditor({
       )}
     </div>
   );
-}
+});
+
+export default CodeEditor;

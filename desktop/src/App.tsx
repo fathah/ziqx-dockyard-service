@@ -569,7 +569,13 @@ function App() {
     );
   }
   return (
-    <div className="app-shell">
+    <div
+      className={
+        page === "terminal" && canUse
+          ? "app-shell terminal-layout"
+          : "app-shell"
+      }
+    >
       <aside className="sidebar">
         <div className="brand">
           <Brand />
@@ -651,41 +657,6 @@ function App() {
         </div>
       </aside>
       <main className="main">
-        <header className="topbar">
-          <div className="breadcrumb">
-            Workspace <ChevronRight size={13} />
-            <strong>
-              {project
-                ? project.app_id
-                : page === "projects"
-                  ? "Projects"
-                  : (nav.find((n) => n.id === page)?.label ?? "Server details")}
-            </strong>
-            {project && (
-              <>
-                <ChevronRight size={13} />
-                {labels[project.environment]}
-              </>
-            )}
-          </div>
-          <div className="topbar-right">
-            <span className="connection">
-              <i
-                className={
-                  session.unlocked && !preview ? "green-dot" : "gray-dot"
-                }
-              />
-              {preview
-                ? "Preview · disconnected"
-                : session.unlocked
-                  ? "Session unlocked"
-                  : "Session locked"}
-            </span>
-            <span className="topbar-divider" />
-            <span className="mac-label">macOS</span>
-            <ShieldCheck size={16} />
-          </div>
-        </header>
         {preview && (
           <div className="preview-banner">
             <FileCode2 size={15} />
@@ -883,20 +854,22 @@ function App() {
             />
           )}
         </div>
-        <footer className="footer">
-          <span>
-            <span className="tiny-mark">D</span>DOCKYARD{" "}
-            <span className="footer-dot">/</span> Service manager.
-          </span>
-          <span>
-            {preview
-              ? "Read-only preview"
-              : updated
-                ? `Last read ${ago(updated)}`
-                : "Awaiting private connection"}
-            <span className="footer-dot">·</span>v0.1.0
-          </span>
-        </footer>
+        {page !== "terminal" && (
+          <footer className="footer">
+            <span>
+              <span className="tiny-mark">D</span>DOCKYARD{" "}
+              <span className="footer-dot">/</span> Service manager.
+            </span>
+            <span>
+              {preview
+                ? "Read-only preview"
+                : updated
+                  ? `Last read ${ago(updated)}`
+                  : "Awaiting private connection"}
+              <span className="footer-dot">·</span>v0.1.0
+            </span>
+          </footer>
+        )}
       </main>
       {modal && canUse && (
         <OperationModal
@@ -1777,7 +1750,9 @@ export function ProjectDetail({
           <div className="services-header">
             <div>
               <h2>Services</h2>
-              <p>Update one service at a time. Its dependencies keep running.</p>
+              <p>
+                Update one service at a time. Its dependencies keep running.
+              </p>
             </div>
             <div className="service-heading-actions">
               {!servicesLoading && !servicesError && (
@@ -1835,40 +1810,69 @@ export function ProjectDetail({
                     <th scope="col">Service</th>
                     <th scope="col">Depends on</th>
                     <th scope="col">Status</th>
-                    <th scope="col"><span className="services-sr-only">Actions</span></th>
+                    <th scope="col">
+                      <span className="services-sr-only">Actions</span>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
                   {services.map((s) => {
                     const active = s.slot === p.active_slot;
-                    const blocked = p.mode === "compose" && active ? updateBlockedReason(s) : "";
-                    const showReason = blocked && !(needsServerUpdate && !s.update_reason && !s.updatable);
-                    const recordedState = active ? p.state.replaceAll("_", " ") : "Recorded";
+                    const blocked =
+                      p.mode === "compose" && active
+                        ? updateBlockedReason(s)
+                        : "";
+                    const showReason =
+                      blocked &&
+                      !(needsServerUpdate && !s.update_reason && !s.updatable);
+                    const recordedState = active
+                      ? p.state.replaceAll("_", " ")
+                      : "Recorded";
                     return (
                       <tr key={s.slot + s.name}>
                         <th scope="row">
                           <div className="services-identity">
-                            <span className="services-icon"><Box size={20} aria-hidden="true" /></span>
+                            <span className="services-icon">
+                              <Box size={20} aria-hidden="true" />
+                            </span>
                             <div>
                               <strong>{s.name}</strong>
-                              <code title={s.image}>{s.image || "Built from Compose"}</code>
+                              <code title={s.image}>
+                                {s.image || "Built from Compose"}
+                              </code>
                             </div>
                           </div>
                         </th>
                         <td className="services-dependencies">
-                          {s.depends_on == null
-                            ? <span title="Dependency metadata is available with Dockyard 0.7.1 or later on the server.">Not recorded</span>
-                            : s.depends_on.length
-                              ? s.depends_on.map((dependency) => <code key={dependency}>{dependency}</code>)
-                              : <span aria-label="No dependencies">–</span>}
+                          {s.depends_on == null ? (
+                            <span title="Dependency metadata is available with Dockyard 0.7.1 or later on the server.">
+                              Not recorded
+                            </span>
+                          ) : s.depends_on.length ? (
+                            s.depends_on.map((dependency) => (
+                              <code key={dependency}>{dependency}</code>
+                            ))
+                          ) : (
+                            <span aria-label="No dependencies">–</span>
+                          )}
                         </td>
                         <td>
-                          <div className="services-status" title="Recorded project state. Check Overview to verify live container health.">
-                            <i data-state={active ? p.state : "recorded"} aria-hidden="true" />
-                            <span className="services-state-label">{recordedState}</span>
+                          <div
+                            className="services-status"
+                            title="Recorded project state. Check Overview to verify live container health."
+                          >
+                            <i
+                              data-state={active ? p.state : "recorded"}
+                              aria-hidden="true"
+                            />
+                            <span className="services-state-label">
+                              {recordedState}
+                            </span>
                             <span>· {instanceLabel(s.slot)}</span>
                           </div>
-                          <p className={`services-status-note ${showReason ? "blocked" : ""}`}>
+                          <p
+                            className={`services-status-note ${showReason ? "blocked" : ""}`}
+                          >
                             {showReason ? blocked : "Image recorded at deploy"}
                           </p>
                         </td>
@@ -1879,7 +1883,10 @@ export function ProjectDetail({
                               className="button"
                               variant="outline"
                               disabled={Boolean(blocked)}
-                              title={blocked || `Update only ${s.name} · ${s.seamless ? "Seamless updates" : "Controlled restart"}`}
+                              title={
+                                blocked ||
+                                `Update only ${s.name} · ${s.seamless ? "Seamless updates" : "Controlled restart"}`
+                              }
                               aria-label={`Pull & update ${s.name}`}
                               onClick={() => setUpdatingService(s)}
                             >
