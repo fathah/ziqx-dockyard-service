@@ -120,6 +120,7 @@ type ServiceSpec struct {
 }
 
 type ServiceInfo struct {
+	DependsOn      []string `json:"depends_on"`
 	Updatable      bool   `json:"updatable,omitempty"`
 	ContainerPorts []int  `json:"container_ports,omitempty"`
 	UpdateReason   string `json:"update_reason,omitempty"`

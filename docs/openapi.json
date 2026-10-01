@@ -1520,7 +1520,7 @@
         "tags": [
           "Deployments"
         ],
-        "description": "Read recorded service inventory from SQLite without accessing project files or Docker. Includes both recorded slots; candidates/old slots may be stopped, failed or draining. Use status/log endpoints for live checks.",
+        "description": "Read recorded service inventory from SQLite. Native active services additionally verify the immutable Compose manifest and report update eligibility and dependency names, without Docker queries or environment values. Includes both recorded slots; candidates/old slots may be stopped, failed or draining. Use status/log endpoints for live checks.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -3554,6 +3554,12 @@
           "environment_revision"
         ],
         "properties": {
+          "depends_on": {
+            "type": "array",
+            "nullable": true,
+            "items": { "type": "string" },
+            "description": "Sorted dependency service names from the active immutable Compose manifest. Empty means none; null or omitted means metadata is unavailable for this slot or server version."
+          },
           "slot": {
             "type": "string",
             "enum": [

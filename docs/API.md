@@ -14,7 +14,7 @@ The agent defaults to `https://127.0.0.1:9123`; it can bind an explicitly config
 | GET | `/v1/projects/{id}` | `deploy.read` | Safe metadata; no environment values |
 | GET | `/v1/projects/{id}/status` | `deploy.read` | Route coherence, active container health, busy state, expected downtime |
 | GET | `/v1/projects/{id}/releases` | `deploy.read` | Successfully activated image/environment pairs |
-| GET | `/v1/projects/{id}/services` | `deploy.read` | SQLite inventory of services and revisions in recorded slots |
+| GET | `/v1/projects/{id}/services` | `deploy.read` | Recorded service inventory; native active services also include update eligibility and dependency names from the immutable Compose manifest |
 | GET | `/v1/projects/{id}/domains` | `deploy.read` | SQLite inventory of assigned/reserved domains and known Cloudflare record IDs |
 | GET | `/v1/projects/{id}/logs` | `deploy.logs` | Bounded, redacted snapshot |
 | GET | `/v1/jobs/{job_id}` | `deploy.read` | Job outcome/phases/warnings; key must allow its project |

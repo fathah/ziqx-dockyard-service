@@ -1,3 +1,4 @@
+import Button from "./Button";
 import { useEffect, useRef, useState } from "react";
 import { basicSetup } from "codemirror";
 import { EditorState, Compartment } from "@codemirror/state";
@@ -255,23 +256,23 @@ export default function CodeEditor({
         </span>
         {kind === "compose" && (
           <div>
-            <button
+            <Button
               type="button"
               className="button small"
               disabled={readOnly}
               onClick={() => format()}
             >
               Format
-            </button>
+            </Button>
             {isJson && (
-              <button
+              <Button
                 type="button"
                 className="button small"
                 disabled={readOnly}
                 onClick={() => format(true)}
               >
                 Convert to YAML
-              </button>
+              </Button>
             )}
           </div>
         )}
@@ -280,7 +281,7 @@ export default function CodeEditor({
       <div className="source-editor-status">
         <span>{cursor}</span>
         {kind === "compose" && (
-          <button
+          <Button
             type="button"
             onClick={() => {
               if (view.current) openLintPanel(view.current);
@@ -288,7 +289,7 @@ export default function CodeEditor({
             className={errors ? "lint-errors" : ""}
           >
             {errors} errors · {problems.length - errors} warnings
-          </button>
+          </Button>
         )}
         <span>⌘F Find · Tab Indent</span>
       </div>

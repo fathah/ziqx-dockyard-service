@@ -1,3 +1,4 @@
+import Button from "./Button";
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Terminal as XTerminal } from "@xterm/xterm";
@@ -272,7 +273,8 @@ export default function TerminalPage({
             role="group"
             aria-label="Terminal target"
           >
-            <button
+            <Button
+              type="button"
               className={`terminal-target ${mode === "root" ? "selected" : ""}`}
               disabled={busy || !!connection}
               onClick={() => setMode("root")}
@@ -280,8 +282,9 @@ export default function TerminalPage({
             >
               <Terminal size={18} />
               <strong>VPS root</strong>
-            </button>
-            <button
+            </Button>
+            <Button
+              type="button"
               className={`terminal-target ${mode === "container" ? "selected" : ""}`}
               disabled={busy || !!connection}
               onClick={() => setMode("container")}
@@ -289,7 +292,7 @@ export default function TerminalPage({
             >
               <Box size={18} />
               <strong>Container</strong>
-            </button>
+            </Button>
           </div>
           <div className="terminal-toolbar">
             <label className="terminal-remember">
@@ -308,23 +311,25 @@ export default function TerminalPage({
               </Help>
             </label>
             {connection ? (
-              <button
+              <Button
+                type="button"
                 className="button secondary"
                 disabled={busy}
                 onClick={() => void disconnect()}
               >
                 <Unplug size={16} />
                 Disconnect
-              </button>
+              </Button>
             ) : (
-              <button
+              <Button
+                type="button"
                 className="button"
                 disabled={busy || !native || !server}
                 onClick={() => void connect()}
               >
                 <Fingerprint size={17} />
                 {busy ? "Connecting…" : "Connect with Touch ID"}
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -338,7 +343,8 @@ export default function TerminalPage({
               then starts the shell as the container’s configured user.
             </Help>
           </span>
-          <button
+          <Button
+            type="button"
             className="terminal-forget"
             disabled={!native || busy || !server}
             onClick={async () => {
@@ -356,7 +362,7 @@ export default function TerminalPage({
           >
             <Trash2 size={14} />
             Forget password
-          </button>
+          </Button>
         </div>
         {connection && mode === "container" && !active && (
           <div className="terminal-container-picker">
@@ -381,7 +387,8 @@ export default function TerminalPage({
                 { value: "/bin/bash", label: "bash (if installed)" },
               ]}
             />
-            <button
+            <Button
+              type="button"
               className="button"
               disabled={!container || busy}
               onClick={async () => {
@@ -398,7 +405,7 @@ export default function TerminalPage({
               }}
             >
               Open container shell
-            </button>
+            </Button>
           </div>
         )}
         {connection &&

@@ -1,3 +1,4 @@
+import Button from "./Button";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -141,25 +142,27 @@ function Pagination({
   return (
     <div className="dns-pagination">
       <span>{data.total} total</span>
-      <button
+      <Button
+        type="button"
         className="button small"
         aria-label="Previous page"
         disabled={data.page <= 1}
         onClick={() => change(data.page - 1)}
       >
         <ChevronLeft size={16} />
-      </button>
+      </Button>
       <span>
         {data.page} / {data.total_pages}
       </span>
-      <button
+      <Button
+        type="button"
         className="button small"
         aria-label="Next page"
         disabled={data.page >= data.total_pages}
         onClick={() => change(data.page + 1)}
       >
         <ChevronRight size={16} />
-      </button>
+      </Button>
     </div>
   );
 }
@@ -189,14 +192,15 @@ function Dialog({
     >
       <div className="provider-dialog-heading">
         <h2>{title}</h2>
-        <button
+        <Button
+          type="button"
           className="icon-button"
           disabled={busy}
           onClick={close}
           aria-label="Close"
         >
           <X size={20} />
-        </button>
+        </Button>
       </div>
       {children}
     </dialog>
@@ -234,13 +238,14 @@ export function DomainProviderSettings({
               in this Mac’s Keychain. DNS edits do not change your Caddy routes.
             </Help>
           </h2>
-          <button
+          <Button
+            type="button"
             className="button primary"
             disabled={preview}
             onClick={() => setEditing("new")}
           >
             <Plus size={17} /> Add Cloudflare
-          </button>
+          </Button>
         </div>
         {preview && (
           <p className="muted">
@@ -249,12 +254,13 @@ export function DomainProviderSettings({
         )}
         <ErrorBox error={error} />
         {error && (
-          <button
+          <Button
+            type="button"
             className="button small"
             onClick={() => setRevision((n) => n + 1)}
           >
             Retry
-          </button>
+          </Button>
         )}
         {loading ? (
           <Placeholder rows={2} />
@@ -268,13 +274,22 @@ export function DomainProviderSettings({
                 <strong>{p.name}</strong>
                 <p>Cloudflare · Token saved in Keychain</p>
               </div>
-              <button className="button small" onClick={() => manage(p.id)}>
+              <Button
+                type="button"
+                className="button small"
+                onClick={() => manage(p.id)}
+              >
                 Manage DNS <ArrowUpRight size={15} />
-              </button>
-              <button className="button small" onClick={() => setEditing(p)}>
+              </Button>
+              <Button
+                type="button"
+                className="button small"
+                onClick={() => setEditing(p)}
+              >
                 Reconnect
-              </button>
-              <button
+              </Button>
+              <Button
+                type="button"
                 className="icon-button"
                 aria-label={`Remove ${p.name}`}
                 onClick={() => {
@@ -283,7 +298,7 @@ export function DomainProviderSettings({
                 }}
               >
                 <Trash2 size={17} />
-              </button>
+              </Button>
             </div>
           ))
         )}
@@ -324,14 +339,16 @@ export function DomainProviderSettings({
           </p>
           <ErrorBox error={removeError} />
           <div className="provider-dialog-actions">
-            <button
+            <Button
+              type="button"
               className="button"
               disabled={busy}
               onClick={() => setRemoving(null)}
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              type="button"
               className="button primary"
               disabled={busy}
               onClick={async () => {
@@ -350,7 +367,7 @@ export function DomainProviderSettings({
             >
               <Fingerprint size={17} />
               {busy ? "Disconnecting…" : "Disconnect"}
-            </button>
+            </Button>
           </div>
         </Dialog>
       )}
@@ -412,7 +429,7 @@ function ConnectProvider({
               Choose <b>Zone → Zone → Read</b> and <b>Zone → DNS → Edit</b>.
               Select the domains you want Dockyard to access.
             </p>
-            <button
+            <Button
               type="button"
               className="button"
               disabled={busy}
@@ -423,7 +440,7 @@ function ConnectProvider({
               }
             >
               Open Cloudflare <ArrowUpRight size={16} />
-            </button>
+            </Button>
           </div>
         </div>
         <div className="provider-connect-step">
@@ -435,18 +452,18 @@ function ConnectProvider({
         </div>
         <ErrorBox error={error} />
         <div className="provider-dialog-actions">
-          <button
+          <Button
             className="button"
             type="button"
             disabled={busy}
             onClick={close}
           >
             Cancel
-          </button>
-          <button className="button primary" disabled={busy}>
+          </Button>
+          <Button type="submit" className="button primary" disabled={busy}>
             <Fingerprint size={17} />
             {busy ? "Connecting…" : "Enter token & connect"}
-          </button>
+          </Button>
         </div>
       </form>
     </Dialog>
@@ -469,18 +486,20 @@ export function ProviderDomains({
   return (
     <>
       <div className="dns-tabs">
-        <button
+        <Button
+          type="button"
           className={tab === "dns" ? "button primary" : "button"}
           onClick={() => setTab("dns")}
         >
           Provider DNS
-        </button>
-        <button
+        </Button>
+        <Button
+          type="button"
           className={tab === "routes" ? "button primary" : "button"}
           onClick={() => setTab("routes")}
         >
           Caddy routes
-        </button>
+        </Button>
       </div>
       {tab === "routes" ? (
         routes
@@ -536,9 +555,9 @@ function DNSWorkspace({
             Configure traffic routing separately in Caddy routes.
           </Help>
         </h1>
-        <button className="button" onClick={settings}>
+        <Button type="button" className="button" onClick={settings}>
           Domain Providers
-        </button>
+        </Button>
       </div>
       {preview ? (
         <section className="panel">
@@ -552,21 +571,26 @@ function DNSWorkspace({
         <>
           <ErrorBox error={providers.error} />
           {providers.error && (
-            <button
+            <Button
+              type="button"
               className="button"
               onClick={() => setRevision((n) => n + 1)}
             >
               Retry
-            </button>
+            </Button>
           )}
           {providers.data && !providers.data.length && (
             <section className="panel provider-empty">
               <Globe2 size={36} />
               <h2>Your domains, in one place</h2>
               <p>Connect Cloudflare to view domains and manage DNS.</p>
-              <button className="button primary" onClick={settings}>
+              <Button
+                type="button"
+                className="button primary"
+                onClick={settings}
+              >
                 <Plus size={17} /> Add provider
-              </button>
+              </Button>
             </section>
           )}
           {current && (
@@ -589,7 +613,8 @@ function DNSWorkspace({
                     })) ?? []
                   }
                 />
-                <button
+                <Button
+                  type="button"
                   className="button small"
                   disabled={zones.loading}
                   onClick={() => {
@@ -598,7 +623,7 @@ function DNSWorkspace({
                   }}
                 >
                   <RefreshCw size={16} /> Refresh domains
-                </button>
+                </Button>
               </div>
               {zone ? (
                 <DNSZone
@@ -622,12 +647,13 @@ function DNSWorkspace({
                   </div>
                   <ErrorBox error={zones.error} />
                   {zones.error && (
-                    <button
+                    <Button
+                      type="button"
                       className="button"
                       onClick={() => setRevision((n) => n + 1)}
                     >
                       Retry
-                    </button>
+                    </Button>
                   )}
                   {zones.loading ? (
                     <Placeholder />
@@ -639,7 +665,8 @@ function DNSWorkspace({
                           .includes(search.toLowerCase()),
                       )
                       .map((z) => (
-                        <button
+                        <Button
+                          type="button"
                           className="dns-zone-row"
                           key={z.id}
                           onClick={() => setZone(z)}
@@ -651,7 +678,7 @@ function DNSWorkspace({
                           </span>
                           <span className="badge">{z.status}</span>
                           <ChevronRight size={18} />
-                        </button>
+                        </Button>
                       ))
                   )}
                   {zones.data?.total === 0 && (
@@ -698,9 +725,9 @@ function DNSZone({
   const [error, setError] = useState("");
   return (
     <section className="panel">
-      <button className="text-button" onClick={back}>
+      <Button type="button" className="text-button" onClick={back}>
         <ChevronLeft size={16} /> All domains
-      </button>
+      </Button>
       <div className="provider-section-heading dns-zone-heading">
         <div>
           <h2>{zone.name}</h2>
@@ -709,17 +736,22 @@ function DNSZone({
           </span>
         </div>
         <div className="dns-row-actions">
-          <button
+          <Button
+            type="button"
             className="button"
             aria-label="Refresh DNS records"
             disabled={records.loading}
             onClick={() => setRevision((n) => n + 1)}
           >
             <RefreshCw size={17} />
-          </button>
-          <button className="button primary" onClick={() => setEdit("new")}>
+          </Button>
+          <Button
+            type="button"
+            className="button primary"
+            onClick={() => setEdit("new")}
+          >
             <Plus size={17} /> Add record
-          </button>
+          </Button>
         </div>
       </div>
       {zone.status !== "active" && (
@@ -776,7 +808,8 @@ function DNSZone({
                         <td>{r.ttl === 1 ? "Auto" : `${r.ttl}s`}</td>
                         <td>
                           <div className="dns-row-actions">
-                            <button
+                            <Button
+                              type="button"
                               className="icon-button"
                               disabled={!supported.includes(r.type)}
                               title={
@@ -788,8 +821,9 @@ function DNSZone({
                               onClick={() => setEdit(r)}
                             >
                               <Pencil size={16} />
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                              type="button"
                               className="icon-button"
                               aria-label={`Delete ${r.type} ${r.name}`}
                               onClick={() => {
@@ -798,7 +832,7 @@ function DNSZone({
                               }}
                             >
                               <Trash2 size={16} />
-                            </button>
+                            </Button>
                           </div>
                         </td>
                       </tr>
@@ -852,14 +886,16 @@ function DNSZone({
           </p>
           <ErrorBox error={error} />
           <div className="provider-dialog-actions">
-            <button
+            <Button
+              type="button"
               className="button"
               disabled={busy}
               onClick={() => setRemove(null)}
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
+              type="button"
               className="button primary"
               disabled={busy}
               onClick={async () => {
@@ -886,7 +922,7 @@ function DNSZone({
             >
               <Fingerprint size={17} />
               {busy ? "Deleting…" : "Delete record"}
-            </button>
+            </Button>
           </div>
         </Dialog>
       )}
@@ -1035,14 +1071,14 @@ function RecordEditor({
         {serverIP &&
           ((input.type === "A" && !serverIP.includes(":")) ||
             (input.type === "AAAA" && serverIP.includes(":"))) && (
-            <button
+            <Button
               type="button"
               className="text-button"
               disabled={busy}
               onClick={() => field("content", serverIP)}
             >
               Use VPS IP · {serverIP}
-            </button>
+            </Button>
           )}
         {input.type === "MX" && (
           <label className="provider-field">
@@ -1149,18 +1185,18 @@ function RecordEditor({
           </p>
         )}
         <div className="provider-dialog-actions">
-          <button
+          <Button
             type="button"
             className="button"
             disabled={busy}
             onClick={close}
           >
             Cancel
-          </button>
-          <button className="button primary" disabled={busy}>
+          </Button>
+          <Button type="submit" className="button primary" disabled={busy}>
             <Fingerprint size={17} />
             {busy ? "Saving…" : "Save with Touch ID"}
-          </button>
+          </Button>
         </div>
       </form>
     </Dialog>

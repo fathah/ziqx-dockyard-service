@@ -495,6 +495,7 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 				item := &services[i]
 				option := options[item.Name]
 				if item.Slot == project.Active {
+					item.DependsOn = option.DependsOn
 					item.Updatable = option.Updatable
 					item.Seamless = option.Seamless
 					item.UpdateReason = option.Reason

@@ -21,6 +21,7 @@ import (
 )
 
 type ServiceOptions struct {
+	DependsOn []string `json:"depends_on"`
 	Updatable bool   `json:"updatable"`
 	Seamless  bool   `json:"seamless"`
 	Reason    string `json:"update_reason"`
@@ -52,6 +53,20 @@ func ServiceUpdateOptions(c config.Config, p model.Project) (map[string]ServiceO
 	out := map[string]ServiceOptions{}
 	for name, raw := range object(doc["services"]) {
 		svc := object(raw)
+		dependencies := []string{}
+		switch value := svc["depends_on"].(type) {
+		case map[string]any:
+			for dependency := range value {
+				dependencies = append(dependencies, dependency)
+			}
+		case []any:
+			for _, dependency := range value {
+				if name, ok := dependency.(string); ok {
+					dependencies = append(dependencies, name)
+				}
+			}
+		}
+		sort.Strings(dependencies)
 		reason := serviceSeamlessReason(svc)
 		ports := []int{}
 		seen := map[int]bool{}
@@ -96,7 +111,7 @@ func ServiceUpdateOptions(c config.Config, p model.Project) (map[string]ServiceO
 		if p.State != "running" {
 			reason = "Start this project before updating individual services."
 		}
-		out[name] = ServiceOptions{updatable, updatable && reason == "", reason, ports}
+		out[name] = ServiceOptions{DependsOn: dependencies, Updatable: updatable, Seamless: updatable && reason == "", Reason: reason, Ports: ports}
 	}
 	return out, nil
 }

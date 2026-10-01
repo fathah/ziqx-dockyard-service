@@ -1,3 +1,4 @@
+import Button from "./Button";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ArrowUpRight,
@@ -155,13 +156,14 @@ export default function ProjectConfiguration({
           </Help>
         </h2>
         {saved?.release_id && (
-          <button
+          <Button
+            type="button"
             className="button small"
             disabled={busy || preview}
             onClick={load}
           >
             <RefreshCw size={16} /> Reload
-          </button>
+          </Button>
         )}
       </div>
       <p className="configuration-note">
@@ -197,13 +199,14 @@ export default function ProjectConfiguration({
             <>
               <FileCode2 size={32} />
               <p>Edit Docker Compose and .env, then deploy your changes.</p>
-              <button
+              <Button
+                type="button"
                 className="button primary"
                 disabled={preview}
                 onClick={load}
               >
                 <Fingerprint size={18} /> Edit files
-              </button>
+              </Button>
             </>
           )}
         </div>
@@ -211,7 +214,7 @@ export default function ProjectConfiguration({
         <form onSubmit={deploy}>
           <div className="configuration-toolbar">
             <div className="tabs" role="tablist" aria-label="Project files">
-              <button
+              <Button
                 type="button"
                 role="tab"
                 aria-selected={file === "compose"}
@@ -220,8 +223,8 @@ export default function ProjectConfiguration({
               >
                 <FileCode2 size={18} aria-hidden="true" />
                 compose.yml
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 role="tab"
                 aria-selected={file === "env"}
@@ -230,9 +233,9 @@ export default function ProjectConfiguration({
               >
                 <Settings2 size={18} aria-hidden="true" />
                 .env
-              </button>
+              </Button>
             </div>
-            <button
+            <Button
               type="button"
               className="button small"
               disabled={busy || preview}
@@ -253,7 +256,7 @@ export default function ProjectConfiguration({
             >
               <Upload size={15} />{" "}
               {file === "compose" ? "Import Compose" : "Import .env"}
-            </button>
+            </Button>
           </div>
           <div hidden={file !== "compose"}>
             <CodeEditor
@@ -299,7 +302,7 @@ export default function ProjectConfiguration({
                 ? "Health checks before traffic switches."
                 : "Deploys all services with a maintenance interruption. Use Pull & update in Services for individual updates."}
             </span>
-            <button
+            <Button
               type="submit"
               className="button primary"
               disabled={
@@ -316,7 +319,7 @@ export default function ProjectConfiguration({
                 : saved.release_id
                   ? "Deploy all services"
                   : "Deploy all services"}
-            </button>
+            </Button>
           </div>
         </form>
       )}

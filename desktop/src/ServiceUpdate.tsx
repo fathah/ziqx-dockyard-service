@@ -1,3 +1,4 @@
+import Button from "./Button";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
@@ -182,14 +183,15 @@ export default function ServiceUpdate({
           </div>
           <h2 id={title}>Update {service.name}</h2>
         </div>
-        <button
+        <Button
+          type="button"
           className="icon-button"
           aria-label="Close update dialog"
           disabled={busy}
           onClick={onClose}
         >
           <X size={20} />
-        </button>
+        </Button>
       </div>
       <div className="wizard-body">
         <p className="service-update-intro">
@@ -200,7 +202,7 @@ export default function ServiceUpdate({
           <fieldset className="deployment-strategy" disabled={busy}>
             <legend>How to update</legend>
             <div className="strategy-options">
-              <button
+              <Button
                 type="button"
                 aria-pressed={mode === "seamless"}
                 disabled={!service.seamless || busy}
@@ -212,8 +214,8 @@ export default function ServiceUpdate({
                   <strong>Seamless updates</strong>
                   <small>Check the new version, then switch visitors</small>
                 </span>
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 aria-pressed={mode === "restart"}
                 disabled={busy}
@@ -225,7 +227,7 @@ export default function ServiceUpdate({
                   <strong>Controlled restart</strong>
                   <small>Briefly stops only this service</small>
                 </span>
-              </button>
+              </Button>
             </div>
           </fieldset>
         )}
@@ -336,11 +338,17 @@ export default function ServiceUpdate({
         )}
       </div>
       <div className="modal-footer">
-        <button className="button" disabled={busy} onClick={onClose}>
+        <Button
+          type="button"
+          className="button"
+          disabled={busy}
+          onClick={onClose}
+        >
           Cancel
-        </button>
+        </Button>
         {review && (
-          <button
+          <Button
+            type="button"
             className="button"
             disabled={busy}
             onClick={() => {
@@ -350,26 +358,28 @@ export default function ServiceUpdate({
             }}
           >
             Change settings
-          </button>
+          </Button>
         )}
         {review ? (
-          <button
+          <Button
+            type="button"
             className="button primary"
             disabled={busy || preview}
             onClick={() => void submit()}
           >
             <Download size={17} />
             {busy ? "Submitting…" : "Pull & update"}
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
+            type="button"
             className="button primary"
             disabled={busy || !valid}
             onClick={() => void check()}
           >
             <ShieldCheck size={17} />
             {busy ? "Reviewing…" : "Review update"}
-          </button>
+          </Button>
         )}
       </div>
     </dialog>,

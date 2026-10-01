@@ -1,3 +1,4 @@
+import Button from "./Button";
 import { useId, useState, type ReactNode } from "react";
 import { ChevronDown, type LucideIcon } from "lucide-react";
 import "./Accordion.css";
@@ -19,7 +20,7 @@ export default function Accordion({
   const id = useId();
   return (
     <div className={`t-acc accordion ${className}`} data-open={open}>
-      <button
+      <Button
         type="button"
         className="t-acc-head accordion-trigger"
         id={`${id}-trigger`}
@@ -34,7 +35,7 @@ export default function Accordion({
         <span className="t-acc-chevron" aria-hidden="true">
           <ChevronDown size={18} />
         </span>
-      </button>
+      </Button>
       <div
         className="t-acc-panel"
         id={`${id}-panel`}

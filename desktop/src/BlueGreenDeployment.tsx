@@ -1,3 +1,4 @@
+import Button from "./Button";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
@@ -295,7 +296,7 @@ export default function BlueGreenDeployment({
         </p>
       )}
       {!review ? (
-        <button
+        <Button
           type="button"
           className="button primary"
           disabled={busy || !valid}
@@ -303,7 +304,7 @@ export default function BlueGreenDeployment({
         >
           <ShieldCheck size={18} />
           {busy ? "Checking compatibility…" : "Review seamless updates"}
-        </button>
+        </Button>
       ) : (
         <div className="blue-green-plan">
           <h3>
@@ -345,7 +346,7 @@ export default function BlueGreenDeployment({
             </p>
           </Accordion>
           <div className="action-row">
-            <button
+            <Button
               type="button"
               className="button primary"
               disabled={busy || preview}
@@ -353,8 +354,8 @@ export default function BlueGreenDeployment({
             >
               <Layers3 size={18} />
               {busy ? "Submitting…" : "Enable seamless updates"}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               className="button"
               disabled={busy}
@@ -362,7 +363,7 @@ export default function BlueGreenDeployment({
             >
               <RefreshCw size={17} />
               Check again
-            </button>
+            </Button>
           </div>
         </div>
       )}

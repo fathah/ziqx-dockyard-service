@@ -1,3 +1,4 @@
+import Button from "./Button";
 import {
   useCallback,
   useEffect,
@@ -44,7 +45,7 @@ import SetupWizard from "./SetupWizard";
 import CodeEditor from "./CodeEditor";
 import { composeForEditor, lintCompose } from "./composeLint";
 import ProjectConfiguration from "./ProjectConfiguration";
-import ProjectHeader from "./ProjectHeader";
+import ProjectHeader, { ProjectSummary } from "./ProjectHeader";
 import ServiceUpdate from "./ServiceUpdate";
 import TerminalPage from "./TerminalPage";
 import { DomainProviderSettings, ProviderDomains } from "./DomainProviders";
@@ -284,7 +285,8 @@ function LockedScreen({
             {error}
           </p>
         )}
-        <button
+        <Button
+          type="button"
           className="button primary lock-unlock"
           disabled={loading || busy}
           onClick={unlock}
@@ -298,7 +300,7 @@ function LockedScreen({
               : retry
                 ? "Retry"
                 : "Unlock with Touch ID"}
-        </button>
+        </Button>
       </div>
     </main>
   );
@@ -575,7 +577,8 @@ function App() {
         <div className="nav-label">WORKSPACE</div>
         <nav>
           {nav.map((n) => (
-            <button
+            <Button
+              type="button"
               key={n.id}
               className={page === n.id ? "nav-item active" : "nav-item"}
               onClick={() => {
@@ -589,7 +592,7 @@ function App() {
               {n.id === "projects" && canUse && !initialWorkspaceLoading && (
                 <small>{projectCount}</small>
               )}
-            </button>
+            </Button>
           ))}
         </nav>
         <div className="sidebar-bottom">
@@ -598,7 +601,8 @@ function App() {
               page === "security" ? "server-footer active" : "server-footer"
             }
           >
-            <button
+            <Button
+              type="button"
               className="server-summary"
               onClick={() => {
                 setPage("security");
@@ -629,8 +633,9 @@ function App() {
                       : "Not connected"}
                 </span>
               </span>
-            </button>
-            <button
+            </Button>
+            <Button
+              type="button"
               className="sidebar-lock"
               aria-label="Lock session"
               title="Lock session"
@@ -641,7 +646,7 @@ function App() {
               }}
             >
               <LockKeyhole size={16} />
-            </button>
+            </Button>
           </div>
         </div>
       </aside>
@@ -687,7 +692,8 @@ function App() {
             <span>
               <strong>Preview</strong> · Sample data
             </span>
-            <button
+            <Button
+              type="button"
               onClick={() => {
                 setPreview(false);
                 setSelected(null);
@@ -695,15 +701,19 @@ function App() {
               }}
             >
               Connect your VPS <ArrowRight size={14} />
-            </button>
+            </Button>
           </div>
         )}
         {error && (
           <div className="alert error" role="alert">
             {error}
-            <button aria-label="Dismiss error" onClick={() => setError("")}>
+            <Button
+              type="button"
+              aria-label="Dismiss error"
+              onClick={() => setError("")}
+            >
               <X size={15} />
-            </button>
+            </Button>
           </div>
         )}
         {pending && !preview && canUse && (
@@ -719,13 +729,14 @@ function App() {
                 ? `Tracking ${pending.job_id}. Further writes wait for its result.`
                 : "The outcome is uncertain. Retry uses the same request IDs and exact payload."}
             </span>
-            <button
+            <Button
+              type="button"
               className="button small"
               disabled={busy}
               onClick={() => void doRetry()}
             >
               {pending.job_id ? "Check result" : "Retry safely"}
-            </button>
+            </Button>
           </div>
         )}
         <div
@@ -958,33 +969,40 @@ function Connect({
         </Help>
       </h1>
       <div className="connect-actions">
-        <button className="button primary" disabled={busy} onClick={setup}>
+        <Button
+          type="button"
+          className="button primary"
+          disabled={busy}
+          onClick={setup}
+        >
           <Server size={17} />
           Set up Dockyard on your server
-        </button>
+        </Button>
       </div>
 
       <div className="connect-actions">
-        <button
+        <Button
+          type="button"
           className="button"
           disabled={busy}
           onClick={() => authenticate("enroll")}
         >
           <ShieldCheck size={17} />
           {busy ? "Waiting for macOS…" : "Import existing enrollment"}
-        </button>
-        <button
+        </Button>
+        <Button
+          type="button"
           className="button"
           disabled={busy}
           onClick={() => authenticate("unlock")}
         >
           <Fingerprint size={16} />
           Unlock with Touch ID
-        </button>
+        </Button>
       </div>
-      <button className="text-button" onClick={explore}>
+      <Button type="button" className="text-button" onClick={explore}>
         Explore the interface <ArrowRight size={14} />
-      </button>
+      </Button>
       <div className="trust-row">
         <span>
           <Check size={14} />
@@ -1056,9 +1074,9 @@ function Projects({
       <>
         <div className="page-heading">
           <h1>Projects</h1>
-          <button className="button primary" onClick={create}>
+          <Button type="button" className="button primary" onClick={create}>
             <Plus size={17} /> New project
-          </button>
+          </Button>
         </div>
         <SkeletonStats />
         <div className="section-heading">
@@ -1085,10 +1103,10 @@ function Projects({
             </Help>
           </h1>
         </div>
-        <button className="button primary" onClick={create}>
+        <Button type="button" className="button primary" onClick={create}>
           <Plus size={17} />
           New project
-        </button>
+        </Button>
       </div>
       <div className="stats-grid three">
         <Stat
@@ -1116,7 +1134,8 @@ function Projects({
             <h2>
               Projects <span>{entries.length}</span>
             </h2>
-            <button
+            <Button
+              type="button"
               className="icon-button"
               aria-label="Refresh workspace"
               title="Refresh workspace"
@@ -1124,12 +1143,13 @@ function Projects({
               onClick={refresh}
             >
               <RefreshCw size={16} className={loading ? "spin" : ""} />
-            </button>
+            </Button>
           </div>
           <div className="filters">
             <div className="segments">
               {["all", ...environments].map((e) => (
-                <button
+                <Button
+                  type="button"
                   key={e}
                   className={filter === e ? "selected" : ""}
                   onClick={() => {
@@ -1138,7 +1158,7 @@ function Projects({
                   }}
                 >
                   {e === "all" ? "All environments" : labels[e as Environment]}
-                </button>
+                </Button>
               ))}
             </div>
             <label className="search">
@@ -1171,7 +1191,8 @@ function Projects({
                 );
                 const ports = p.services.flatMap((s) => s.published_ports);
                 return (
-                  <button
+                  <Button
+                    type="button"
                     className="project-row"
                     key={`observed:${p.id}`}
                     onClick={() => selectObserved(p.id)}
@@ -1208,12 +1229,13 @@ function Projects({
                       </small>
                     </span>
                     <ChevronRight size={16} />
-                  </button>
+                  </Button>
                 );
               }
               const p = entry.project;
               return (
-                <button
+                <Button
+                  type="button"
                   className="project-row"
                   key={p.id}
                   onClick={() => select(p.id)}
@@ -1271,7 +1293,7 @@ function Projects({
                     </small>
                   </span>
                   <ChevronRight size={16} />
-                </button>
+                </Button>
               );
             })}
             {slice.length === 0 && (
@@ -1298,23 +1320,25 @@ function Projects({
               {updated ? ` · Read ${ago(updated)}` : ""}
             </span>
             <div>
-              <button
+              <Button
+                type="button"
                 aria-label="Previous page"
                 disabled={page === 0}
                 onClick={() => setPage((p) => p - 1)}
               >
                 <ChevronLeft size={15} />
-              </button>
+              </Button>
               <span>
                 {Math.min(page, maxPage) + 1} / {maxPage + 1}
               </span>
-              <button
+              <Button
+                type="button"
                 aria-label="Next page"
                 disabled={page >= maxPage}
                 onClick={() => setPage((p) => p + 1)}
               >
                 <ChevronRight size={15} />
-              </button>
+              </Button>
             </div>
           </div>
         </div>
@@ -1424,6 +1448,7 @@ export function ProjectDetail({
       setServices([
         {
           name: "app",
+          depends_on: [],
           updatable: true,
           seamless: p.environment === "production" && !p.zerodowntime,
           container_ports: [3000],
@@ -1435,6 +1460,7 @@ export function ProjectDetail({
         },
         {
           name: "worker",
+          depends_on: ["app"],
           updatable: true,
           seamless: false,
           update_reason: "Background workers use a controlled restart.",
@@ -1579,15 +1605,6 @@ export function ProjectDetail({
             ? setTab("configuration")
             : open({ kind: "deploy", project: p })
         }
-        onConfigure={() => setTab("services")}
-        onDomains={() => {
-          if (
-            configDirty &&
-            !window.confirm("Discard your unsaved configuration edits?")
-          )
-            return;
-          setTab("domains");
-        }}
       />
       <nav className="tabs project-tabs" aria-label="Project sections">
         {[
@@ -1600,7 +1617,7 @@ export function ProjectDetail({
           { id: "logs", label: "Logs", icon: Terminal },
           { id: "domains", label: "Domains", icon: Globe2 },
         ].map(({ id, label, icon: Icon }) => (
-          <button
+          <Button
             key={id}
             type="button"
             aria-pressed={tab === id}
@@ -1617,7 +1634,7 @@ export function ProjectDetail({
           >
             <Icon size={19} aria-hidden="true" />
             <span>{label}</span>
-          </button>
+          </Button>
         ))}
       </nav>
       {tab === "configuration" && (
@@ -1628,137 +1645,155 @@ export function ProjectDetail({
           onDirtyChange={setConfigDirty}
         />
       )}
-      {p.adoption && (
-        <p className="alert pending">
-          {p.service_updates
-            ? "Managed in place · individual app updates use Dockyard's website routes. Database services remain in this project."
-            : "Managed in place · Caddy routes remain in the existing Caddyfile. Update individual services from Services."}
-        </p>
-      )}
       {tab === "overview" && (
-        <div className="detail-grid">
-          <section className="panel">
-            <div className="section-heading">
-              <h2>App instances</h2>
-              <Tag>
-                {p.zerodowntime
-                  ? "Traffic switch after readiness"
-                  : "Brief maintenance on deploy"}
-              </Tag>
-            </div>
-            <div className="slot-grid">
-              {(p.zerodowntime ? ["blue", "green"] : ["blue"]).map((s) => (
-                <div
-                  key={s}
-                  className={`slot-card ${s} ${p.active_slot === s ? "serving" : ""}`}
-                >
-                  <div>
-                    <span className="eyebrow">{instanceLabel(s)}</span>
-                    <Tag tone={p.active_slot === s ? "green" : "neutral"}>
-                      {p.active_slot === s ? "Live" : "Standby"}
-                    </Tag>
+        <>
+          <ProjectSummary
+            project={p}
+            onConfigure={() => setTab("services")}
+            onDomains={() => setTab("domains")}
+          />
+          {p.adoption && (
+            <p className="alert pending">
+              {p.service_updates
+                ? "Managed in place · individual app updates use Dockyard's website routes. Database services remain in this project."
+                : "Managed in place · Caddy routes remain in the existing Caddyfile. Update individual services from Services."}
+            </p>
+          )}
+          <div className="detail-grid">
+            <section className="panel">
+              <div className="section-heading">
+                <h2>App instances</h2>
+                <Tag>
+                  {p.zerodowntime
+                    ? "Traffic switch after readiness"
+                    : "Brief maintenance on deploy"}
+                </Tag>
+              </div>
+              <div className="slot-grid">
+                {(p.zerodowntime ? ["blue", "green"] : ["blue"]).map((s) => (
+                  <div
+                    key={s}
+                    className={`slot-card ${s} ${p.active_slot === s ? "serving" : ""}`}
+                  >
+                    <div>
+                      <span className="eyebrow">{instanceLabel(s)}</span>
+                      <Tag tone={p.active_slot === s ? "green" : "neutral"}>
+                        {p.active_slot === s ? "Live" : "Standby"}
+                      </Tag>
+                    </div>
+                    <Server size={28} />
+                    <h3>
+                      127.0.0.1:
+                      {s === p.active_slot &&
+                      p.route_service &&
+                      p.service_instances?.[p.route_service]?.port
+                        ? p.service_instances[p.route_service].port
+                        : s === "blue"
+                          ? p.blue_port
+                          : p.green_port}
+                    </h3>
+                    <p>
+                      {s === p.active_slot &&
+                      p.route_service &&
+                      p.service_instances?.[p.route_service]
+                        ? p.service_instances[p.route_service].release.id
+                        : (p.slots[s]?.id ?? "No release recorded")}
+                    </p>
+                    <small className="mono">
+                      {p.slots[s]?.image.split("@")[1]?.slice(0, 22) ??
+                        "Awaiting Compose deployment"}
+                      …
+                    </small>
                   </div>
-                  <Server size={28} />
-                  <h3>
-                    127.0.0.1:
-                    {s === p.active_slot &&
-                    p.route_service &&
-                    p.service_instances?.[p.route_service]?.port
-                      ? p.service_instances[p.route_service].port
-                      : s === "blue"
-                        ? p.blue_port
-                        : p.green_port}
-                  </h3>
-                  <p>
-                    {s === p.active_slot &&
-                    p.route_service &&
-                    p.service_instances?.[p.route_service]
-                      ? p.service_instances[p.route_service].release.id
-                      : (p.slots[s]?.id ?? "No release recorded")}
-                  </p>
-                  <small className="mono">
-                    {p.slots[s]?.image.split("@")[1]?.slice(0, 22) ??
-                      "Awaiting Compose deployment"}
-                    …
-                  </small>
-                </div>
-              ))}
-            </div>
-            <p className="muted">
-              Instances show recorded metadata. Check live status to verify
-              container health and the Caddy route.
-            </p>
-          </section>
-          <section className="panel">
-            <div className="section-heading">
-              <h2>Live verification</h2>
-              <button
-                className="button small"
-                disabled={busy}
-                onClick={() => void check()}
-              >
-                <RefreshCw size={14} />
-                Check now
-              </button>
-            </div>
-            <details className="connection-details">
-              <summary>Connection details</summary>
-              <dl className="facts">
-                <dt>Container health</dt>
-                <dd>{status?.health ?? "Not checked"}</dd>
-                <dt>Caddy route</dt>
-                <dd>{status?.route ?? "Not checked"}</dd>
-                <dt>Job in progress</dt>
-                <dd>{status ? String(status.busy) : "Not checked"}</dd>
-                <dt>Public HTTPS</dt>
-                <dd>{status?.public_tls_state ?? "Unverified"}</dd>
-              </dl>
-            </details>
-            <hr />
-            <h3>Service controls</h3>
-            <div className="controls">
-              <button className="button" onClick={() => action("start", p)}>
-                <Zap size={14} />
-                Start
-              </button>
-              <button className="button" onClick={() => action("restart", p)}>
-                <RefreshCw size={14} />
-                Restart
-              </button>
-              <button
-                className="button danger"
-                onClick={() => open({ kind: "stop", project: p })}
-              >
-                Stop services
-              </button>
-            </div>
-            <p className="muted">
-              Stopping preserves Compose files, releases and data volumes.
-            </p>
-          </section>
-        </div>
+                ))}
+              </div>
+              <p className="muted">
+                Instances show recorded metadata. Check live status to verify
+                container health and the Caddy route.
+              </p>
+            </section>
+            <section className="panel">
+              <div className="section-heading">
+                <h2>Live verification</h2>
+                <Button
+                  type="button"
+                  className="button small"
+                  disabled={busy}
+                  onClick={() => void check()}
+                >
+                  <RefreshCw size={14} />
+                  Check now
+                </Button>
+              </div>
+              <details className="connection-details">
+                <summary>Connection details</summary>
+                <dl className="facts">
+                  <dt>Container health</dt>
+                  <dd>{status?.health ?? "Not checked"}</dd>
+                  <dt>Caddy route</dt>
+                  <dd>{status?.route ?? "Not checked"}</dd>
+                  <dt>Job in progress</dt>
+                  <dd>{status ? String(status.busy) : "Not checked"}</dd>
+                  <dt>Public HTTPS</dt>
+                  <dd>{status?.public_tls_state ?? "Unverified"}</dd>
+                </dl>
+              </details>
+              <hr />
+              <h3>Service controls</h3>
+              <div className="controls">
+                <Button
+                  type="button"
+                  className="button"
+                  onClick={() => action("start", p)}
+                >
+                  <Zap size={14} />
+                  Start
+                </Button>
+                <Button
+                  type="button"
+                  className="button"
+                  onClick={() => action("restart", p)}
+                >
+                  <RefreshCw size={14} />
+                  Restart
+                </Button>
+                <Button
+                  type="button"
+                  className="button danger"
+                  onClick={() => open({ kind: "stop", project: p })}
+                >
+                  Stop services
+                </Button>
+              </div>
+              <p className="muted">
+                Stopping preserves Compose files, releases and data volumes.
+              </p>
+            </section>
+          </div>
+        </>
       )}
       {tab === "services" && (
-        <section className="panel">
-          <div className="section-heading">
-            <h2>Services</h2>
+        <section className="panel services-panel">
+          <div className="services-header">
+            <div>
+              <h2>Services</h2>
+              <p>Update one service at a time. Its dependencies keep running.</p>
+            </div>
             <div className="service-heading-actions">
               {!servicesLoading && !servicesError && (
                 <Tag>{services.length} recorded services</Tag>
               )}
-              <button
+              <Button
+                type="button"
                 className="button small"
                 disabled={servicesLoading}
                 onClick={() => setServicesRefresh((n) => n + 1)}
               >
                 <RefreshCw size={14} />{" "}
                 {servicesLoading ? "Refreshing…" : "Refresh"}
-              </button>
+              </Button>
             </div>
           </div>
-          <p className="muted">
-            Update one service at a time. Its dependencies keep running.
-          </p>
           {!servicesLoading && needsServerUpdate && (
             <div className="service-update-notice" role="status">
               <div>
@@ -1769,9 +1804,13 @@ export function ProjectDetail({
                   version 0.7.0 or later. Then refresh Services.
                 </p>
               </div>
-              <button className="button small" onClick={openServerDetails}>
+              <Button
+                type="button"
+                className="button small"
+                onClick={openServerDetails}
+              >
                 <Server size={14} /> Server details
-              </button>
+              </Button>
             </div>
           )}
           {servicesError && (
@@ -1782,42 +1821,79 @@ export function ProjectDetail({
           {servicesLoading && (
             <SkeletonRows count={3} label="Loading services" />
           )}
-          {services.map((s) => (
-            <div className="service-row" key={s.slot + s.name}>
-              <Box size={22} />
-              <div>
-                <strong>{s.name}</strong>
-                <p className="mono">{s.image}</p>
-                {s.updatable && (
-                  <small className="service-update-hint">
-                    {s.seamless
-                      ? "Seamless updates available"
-                      : "Controlled restart"}
-                  </small>
-                )}
-                {p.mode === "compose" &&
-                  s.slot === p.active_slot &&
-                  updateBlockedReason(s) &&
-                  !(needsServerUpdate && !s.update_reason && !s.updatable) && (
-                    <small className="service-update-hint">
-                      {updateBlockedReason(s)}
-                    </small>
-                  )}
-              </div>
-              <Tag>{instanceLabel(s.slot)}</Tag>
-              {s.template_id && <Tag>{s.template_id}</Tag>}
-              {p.mode === "compose" && s.slot === p.active_slot && (
-                <button
-                  className="button small"
-                  disabled={Boolean(updateBlockedReason(s))}
-                  title={updateBlockedReason(s) || `Update only ${s.name}`}
-                  onClick={() => setUpdatingService(s)}
-                >
-                  <RefreshCw size={14} /> Pull & update
-                </button>
-              )}
+          {!!services.length && (
+            <div className="services-table-scroll">
+              <table className="services-table" aria-label="Project services">
+                <colgroup>
+                  <col className="services-column-name" />
+                  <col className="services-column-dependencies" />
+                  <col />
+                  <col className="services-column-action" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col">Service</th>
+                    <th scope="col">Depends on</th>
+                    <th scope="col">Status</th>
+                    <th scope="col"><span className="services-sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {services.map((s) => {
+                    const active = s.slot === p.active_slot;
+                    const blocked = p.mode === "compose" && active ? updateBlockedReason(s) : "";
+                    const showReason = blocked && !(needsServerUpdate && !s.update_reason && !s.updatable);
+                    const recordedState = active ? p.state.replaceAll("_", " ") : "Recorded";
+                    return (
+                      <tr key={s.slot + s.name}>
+                        <th scope="row">
+                          <div className="services-identity">
+                            <span className="services-icon"><Box size={20} aria-hidden="true" /></span>
+                            <div>
+                              <strong>{s.name}</strong>
+                              <code title={s.image}>{s.image || "Built from Compose"}</code>
+                            </div>
+                          </div>
+                        </th>
+                        <td className="services-dependencies">
+                          {s.depends_on == null
+                            ? <span title="Dependency metadata is available with Dockyard 0.7.1 or later on the server.">Not recorded</span>
+                            : s.depends_on.length
+                              ? s.depends_on.map((dependency) => <code key={dependency}>{dependency}</code>)
+                              : <span aria-label="No dependencies">–</span>}
+                        </td>
+                        <td>
+                          <div className="services-status" title="Recorded project state. Check Overview to verify live container health.">
+                            <i data-state={active ? p.state : "recorded"} aria-hidden="true" />
+                            <span className="services-state-label">{recordedState}</span>
+                            <span>· {instanceLabel(s.slot)}</span>
+                          </div>
+                          <p className={`services-status-note ${showReason ? "blocked" : ""}`}>
+                            {showReason ? blocked : "Image recorded at deploy"}
+                          </p>
+                        </td>
+                        <td className="services-action">
+                          {p.mode === "compose" && active && (
+                            <Button
+                              type="button"
+                              className="button"
+                              variant="outline"
+                              disabled={Boolean(blocked)}
+                              title={blocked || `Update only ${s.name} · ${s.seamless ? "Seamless updates" : "Controlled restart"}`}
+                              aria-label={`Pull & update ${s.name}`}
+                              onClick={() => setUpdatingService(s)}
+                            >
+                              <RefreshCw size={16} /> Pull & update
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
-          ))}
+          )}
           {!services.length && !servicesLoading && !servicesError && (
             <Empty title="No services recorded">
               Deploy your first validated Compose stack.
@@ -1860,14 +1936,15 @@ export function ProjectDetail({
                 <code>{r.image}</code>
               </div>
               <Tag>{r.compose_revision ? "Compose" : "Legacy"}</Tag>
-              <button
+              <Button
+                type="button"
                 className="button small"
                 onClick={() =>
                   open({ kind: "rollback", project: { ...p, releases: [r] } })
                 }
               >
                 Rollback <ArrowDownLeft size={14} />
-              </button>
+              </Button>
             </div>
           ))}
           {!p.releases.length && (
@@ -1913,14 +1990,15 @@ export function ProjectDetail({
                 label: s,
               }))}
             />
-            <button
+            <Button
+              type="button"
               className="button"
               disabled={busy}
               onClick={() => void loadLogs()}
             >
               <RefreshCw size={14} />
               Read logs
-            </button>
+            </Button>
           </div>
           {logsLoading ? (
             <div
@@ -1954,13 +2032,14 @@ export function ProjectDetail({
         <section className="panel">
           <div className="section-heading">
             <h2>Domains & Caddy</h2>
-            <button
+            <Button
+              type="button"
               className="button small"
               disabled={!!p.adoption}
               onClick={() => open({ kind: "routes", project: p })}
             >
               Edit routes <Settings2 size={14} />
-            </button>
+            </Button>
           </div>
           {dnsLoading && (
             <SkeletonRows count={3} label="Loading project domains" />
@@ -1987,7 +2066,8 @@ export function ProjectDetail({
                 </p>
               </div>
               <Tag tone="green">{d.assigned ? "Assigned" : "Unassigned"}</Tag>
-              <button
+              <Button
+                type="button"
                 className="button small"
                 disabled={Boolean(d.dns_record_id)}
                 onClick={() => {
@@ -2004,7 +2084,7 @@ export function ProjectDetail({
               >
                 <Cloud size={14} />
                 Create DNS
-              </button>
+              </Button>
             </div>
           ))}
           <p className="muted">
@@ -2047,7 +2127,8 @@ function Jobs({
             </Help>
           </h1>
         </div>
-        <button
+        <Button
+          type="button"
           className="button"
           onClick={() => {
             if (!preview) void refresh();
@@ -2055,7 +2136,7 @@ function Jobs({
         >
           <RefreshCw size={15} />
           Refresh
-        </button>
+        </Button>
       </div>
       <form
         className="job-search"
@@ -2080,9 +2161,13 @@ function Jobs({
           value={lookup}
           onChange={(e) => setLookup(e.target.value)}
         />
-        <button className="button small" disabled={preview || lookingUp}>
+        <Button
+          type="submit"
+          className="button small"
+          disabled={preview || lookingUp}
+        >
           Look up
-        </button>
+        </Button>
       </form>
       <section className="panel">
         <div className="section-heading">
@@ -2193,22 +2278,27 @@ function Domains({
             <div className="domain-row" key={d}>
               <Globe2 size={20} />
               <div>
-                <button className="text-button" onClick={() => select(p.id)}>
+                <Button
+                  type="button"
+                  className="text-button"
+                  onClick={() => select(p.id)}
+                >
                   {d} <ArrowUpRight size={13} />
-                </button>
+                </Button>
                 <p>
                   {p.id} · 127.0.0.1:
                   {p.active_slot === "green" ? p.green_port : p.blue_port}
                 </p>
               </div>
               <Tag>{labels[p.environment]}</Tag>
-              <button
+              <Button
+                type="button"
                 className="button small"
                 disabled={!!p.adoption}
                 onClick={() => open({ kind: "routes", project: p })}
               >
                 Edit route
-              </button>
+              </Button>
             </div>
           )),
         )}
@@ -2260,20 +2350,21 @@ function ObservedProjectDetail({
     <>
       <div className="page-heading">
         <div>
-          <button className="text-button" onClick={back}>
+          <Button type="button" className="text-button" onClick={back}>
             <ChevronLeft size={15} /> Projects
-          </button>
+          </Button>
           <h1>{project.name}</h1>
           <p>/docker/{project.name}</p>
         </div>
         <div className="heading-actions">
           <Tag>Existing Compose · read-only</Tag>
-          <button
+          <Button
+            type="button"
             className="button primary"
             onClick={() => setMigrationOpen(true)}
           >
             Migrate Now <ArrowRight size={16} />
-          </button>
+          </Button>
         </div>
       </div>
       <div className="alert pending">
@@ -2463,14 +2554,15 @@ function MigrationReview({
             <span className="eyebrow">Existing project</span>
             <h2>Manage {project.name} with Dockyard</h2>
           </div>
-          <button
+          <Button
+            type="button"
             className="icon-button"
             disabled={busy}
             aria-label="Close"
             onClick={close}
           >
             <X size={19} />
-          </button>
+          </Button>
         </div>
         <div className="wizard-body">
           <p>
@@ -2531,13 +2623,19 @@ function MigrationReview({
           )}
         </div>
         <div className="modal-footer">
-          <button className="button" disabled={busy} onClick={close}>
+          <Button
+            type="button"
+            className="button"
+            disabled={busy}
+            onClick={close}
+          >
             Close
-          </button>
+          </Button>
           {assessment?.execution_available &&
           assessment.source_sha256 &&
           !oldServer ? (
-            <button
+            <Button
+              type="button"
               className="button primary"
               disabled={busy || preview || !!error}
               onClick={async () => {
@@ -2559,28 +2657,30 @@ function MigrationReview({
             >
               <Fingerprint size={18} />
               {busy ? "Migrating…" : "Migrate with Touch ID"}
-            </button>
+            </Button>
           ) : null}
           {(oldServer ||
             error.includes("HTTP_404") ||
             error.includes("SCOPE_REQUIRED") ||
             error.includes("COMPOSE_ACCESS_REQUIRED")) && (
-            <button
+            <Button
+              type="button"
               className="button primary"
               disabled={busy}
               onClick={openServerDetails}
             >
               Server details <ArrowRight size={15} />
-            </button>
+            </Button>
           )}
           {!preview && (error || (!oldServer && blocked.length > 0)) && (
-            <button
+            <Button
+              type="button"
               className="button"
               disabled={busy}
               onClick={() => setRevision((n) => n + 1)}
             >
               Check again <RefreshCw size={15} />
-            </button>
+            </Button>
           )}
         </div>
       </section>
@@ -2626,10 +2726,15 @@ function InventoryView({
             </Help>
           </h1>
         </div>
-        <button className="button" disabled={loading} onClick={refresh}>
+        <Button
+          type="button"
+          className="button"
+          disabled={loading}
+          onClick={refresh}
+        >
           <RefreshCw size={15} />
           Read inventory
-        </button>
+        </Button>
       </div>
       <div className="stats-grid three">
         <Stat
@@ -2743,14 +2848,15 @@ function AuditView({
             </Help>
           </h1>
         </div>
-        <button
+        <Button
+          type="button"
           className="button"
           disabled={preview || busy}
           onClick={() => void load(true)}
         >
           <RefreshCw size={15} />
           Read from start
-        </button>
+        </Button>
       </div>
       <section className="panel">
         {events.map((e) => {
@@ -2794,13 +2900,14 @@ function AuditView({
           />
         )}
         {events.length > 0 && more && (
-          <button
+          <Button
+            type="button"
             className="button"
             disabled={busy}
             onClick={() => void load()}
           >
             Load next 100
-          </button>
+          </Button>
         )}
       </section>
     </>
@@ -2889,32 +2996,35 @@ function Security({
           )}
           <div className="controls">
             {!p && (
-              <button
+              <Button
+                type="button"
                 className="button primary"
                 disabled={busy}
                 onClick={setup}
               >
                 <Server size={15} />
                 Set up your server
-              </button>
+              </Button>
             )}
-            <button
+            <Button
+              type="button"
               className={p ? "button" : "button primary"}
               disabled={!native || busy}
               onClick={() => authenticate("enroll")}
             >
               <Plus size={15} />
               Import existing enrollment
-            </button>
+            </Button>
             {!unlocked && (
-              <button
+              <Button
+                type="button"
                 className="button"
                 disabled={!native || busy}
                 onClick={() => authenticate("unlock")}
               >
                 <Fingerprint size={15} />
                 Unlock with Touch ID
-              </button>
+              </Button>
             )}
           </div>
           {!native && (
@@ -2922,18 +3032,19 @@ function Security({
           )}
           <div className="enrollment-secondary-actions">
             {p && native && (
-              <button
+              <Button
+                type="button"
                 className="text-button danger-text"
                 disabled={busy}
                 onClick={forget}
               >
                 Remove local enrollment
-              </button>
+              </Button>
             )}
             {!p && (
-              <button className="text-button" onClick={explore}>
+              <Button type="button" className="text-button" onClick={explore}>
                 Explore sample workspace <ArrowRight size={14} />
-              </button>
+              </Button>
             )}
           </div>
         </section>
@@ -3046,10 +3157,15 @@ function ServerAccess() {
     <section className="panel server-access">
       <div className="server-updater-heading">
         <h2>Required server access</h2>
-        <button className="button" disabled={busy} onClick={() => void check()}>
+        <Button
+          type="button"
+          className="button"
+          disabled={busy}
+          onClick={() => void check()}
+        >
           <RefreshCw size={16} />
           {busy ? "Checking…" : "Check access"}
-        </button>
+        </Button>
       </div>
       <div className="server-access-row">
         <span>
@@ -3060,7 +3176,8 @@ function ServerAccess() {
             restarts briefly.
           </Help>
         </span>
-        <button
+        <Button
+          type="button"
           className="button"
           disabled={busy}
           onClick={async () => {
@@ -3077,7 +3194,7 @@ function ServerAccess() {
           }}
         >
           Enable with Touch ID
-        </button>
+        </Button>
       </div>
       {report && (
         <>
@@ -3099,13 +3216,14 @@ function ServerAccess() {
             ))}
           </div>
           {report.update_directory === "can_prepare" && (
-            <button
+            <Button
+              type="button"
               className="button primary"
               disabled={busy}
               onClick={() => void prepare()}
             >
               Prepare updater access with Touch ID
-            </button>
+            </Button>
           )}
           {report.update_directory === "manual_review" && (
             <p className="muted">
@@ -3203,10 +3321,15 @@ function ServerUpdater() {
             Check the VPS against the verified Ubuntu build in this Mac app.
           </p>
         </div>
-        <button className="button" disabled={busy} onClick={() => void check()}>
+        <Button
+          type="button"
+          className="button"
+          disabled={busy}
+          onClick={() => void check()}
+        >
           <RefreshCw size={16} />
           {busy ? "Working…" : "Check version"}
-        </button>
+        </Button>
       </div>
       {preview && (
         <div className="server-updater-status">
@@ -3238,13 +3361,14 @@ function ServerUpdater() {
               : `v${preview.candidate_version}`}
           </span>
           {preview.update_available && !review && (
-            <button
+            <Button
+              type="button"
               className="button primary"
               disabled={busy}
               onClick={() => setReview(true)}
             >
               Update server <ArrowRight size={15} />
-            </button>
+            </Button>
           )}
         </div>
       )}
@@ -3277,30 +3401,33 @@ function ServerUpdater() {
             </strong>
           </div>
           <div className="controls">
-            <button
+            <Button
+              type="button"
               className="button primary"
               disabled={busy}
               onClick={() => void update()}
             >
               {busy ? "Updating…" : "Confirm update with Touch ID"}
-            </button>
-            <button
+            </Button>
+            <Button
+              type="button"
               className="button"
               disabled={busy}
               onClick={() => setReview(false)}
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
-      <button
+      <Button
+        type="button"
         className="text-button server-updater-forget"
         disabled={busy}
         onClick={() => void forgetPassword()}
       >
         Forget saved root password
-      </button>
+      </Button>
       {error && (
         <div className="alert error" role="alert">
           {error}
@@ -3569,14 +3696,15 @@ function OperationModal({
             </div>
             <h2 id="modal-title">{name}</h2>
           </div>
-          <button
+          <Button
+            type="button"
             className="icon-button"
             aria-label="Close dialog"
             disabled={busy}
             onClick={close}
           >
             <X size={20} />
-          </button>
+          </Button>
         </div>
         {(m.kind === "create" || m.kind === "deploy") && (
           <div className="wizard-steps">
@@ -3621,7 +3749,8 @@ function OperationModal({
             </h3>
             <div className="environment-options">
               {environments.map((e) => (
-                <button
+                <Button
+                  type="button"
                   key={e}
                   className={env === e ? "chosen" : ""}
                   disabled={
@@ -3658,7 +3787,7 @@ function OperationModal({
                     )}
                   </span>
                   <span className="radio-choice">{env === e && <i />}</span>
-                </button>
+                </Button>
               ))}
             </div>
             {m.kind === "create" && (
@@ -3670,13 +3799,14 @@ function OperationModal({
             )}
             <div className="modal-footer">
               <span />
-              <button
+              <Button
+                type="button"
                 className="button primary"
                 disabled={!env || (m.kind === "deploy" && !target)}
                 onClick={() => setStep(1)}
               >
                 Continue <ArrowRight size={15} />
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
@@ -3689,7 +3819,7 @@ function OperationModal({
               )}
               {accessRequired && m.kind === "create" && (
                 <div className="project-access-recovery">
-                  <button
+                  <Button
                     type="button"
                     className="button primary"
                     disabled={busy || preview}
@@ -3710,7 +3840,7 @@ function OperationModal({
                     }}
                   >
                     <Fingerprint size={18} /> Enable access with Touch ID
-                  </button>
+                  </Button>
                   <Help label="enable project access">
                     Grants this Mac full Compose management on the server using
                     root SSH. Dockyard restarts briefly; running containers stay
@@ -3847,7 +3977,7 @@ function OperationModal({
                           </label>
                         )}
                       </div>
-                      <button
+                      <Button
                         type="button"
                         className="text-button"
                         disabled={preview || busy}
@@ -3864,7 +3994,7 @@ function OperationModal({
                       >
                         <Search size={14} />
                         Check next available port
-                      </button>
+                      </Button>
                       {suggestion && (
                         <p className="muted">
                           Available port: {suggestion}
@@ -3902,7 +4032,7 @@ function OperationModal({
                           : "This older project uses its existing server template policy."}
                       </Help>
                     </span>
-                    <button
+                    <Button
                       type="button"
                       className="button small"
                       disabled={preview || busy}
@@ -3917,7 +4047,7 @@ function OperationModal({
                     >
                       <Upload size={14} />
                       Import file
-                    </button>
+                    </Button>
                   </div>
                   <CodeEditor
                     value={compose}
@@ -3967,7 +4097,7 @@ function OperationModal({
                     )}
                   </label>
                   {target?.mode === "compose" && (
-                    <button
+                    <Button
                       type="button"
                       className="button small"
                       disabled={preview || busy}
@@ -3982,7 +4112,7 @@ function OperationModal({
                       }}
                     >
                       <Upload size={14} /> Import .env
-                    </button>
+                    </Button>
                   )}
                 </>
               )}
@@ -4031,7 +4161,7 @@ function OperationModal({
             </div>
             <div className="modal-footer">
               {m.kind === "create" || m.kind === "deploy" ? (
-                <button
+                <Button
                   className="text-button"
                   type="button"
                   disabled={busy}
@@ -4039,11 +4169,11 @@ function OperationModal({
                 >
                   <ChevronLeft size={14} />
                   Environment
-                </button>
+                </Button>
               ) : (
                 <span className="muted">Touch ID required</span>
               )}
-              <button
+              <Button
                 className={`button ${m.kind === "stop" ? "danger" : "primary"}`}
                 disabled={
                   busy ||
@@ -4064,7 +4194,7 @@ function OperationModal({
                       ? "Review stop"
                       : "Review & submit"}
                 <ArrowRight size={15} />
-              </button>
+              </Button>
             </div>
           </form>
         )}

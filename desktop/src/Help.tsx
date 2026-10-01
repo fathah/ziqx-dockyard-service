@@ -1,3 +1,4 @@
+import Button from "./Button";
 import {
   useEffect,
   useId,
@@ -88,7 +89,7 @@ export default function Help({
   useEffect(() => () => cancelHide(), []);
   return (
     <span className="help-inline">
-      <button
+      <Button
         ref={trigger}
         type="button"
         className="help-trigger t-tt-trigger"
@@ -106,7 +107,7 @@ export default function Help({
         }}
       >
         <CircleHelp size={15} aria-hidden="true" />
-      </button>
+      </Button>
       <span className="help-description" id={id} aria-hidden={!open}>
         {children}
       </span>

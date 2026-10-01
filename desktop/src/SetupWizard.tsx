@@ -1,3 +1,4 @@
+import Button from "./Button";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
@@ -186,14 +187,15 @@ export default function SetupWizard({
             <div className="eyebrow">SERVER SETUP</div>
             <h2 id="setup-title">Set up your server</h2>
           </div>
-          <button
+          <Button
+            type="button"
             className="icon-button"
             aria-label="Close server setup"
             disabled={busy}
             onClick={dismiss}
           >
             <X size={20} />
-          </button>
+          </Button>
         </div>
         {step >= 0 && (
           <div className="wizard-steps">
@@ -225,7 +227,7 @@ export default function SetupWizard({
                     <div className="setup-command">
                       <span>Run in your VPS terminal</span>
                       <code tabIndex={0}>{advice.command}</code>
-                      <button
+                      <Button
                         className="button"
                         type="button"
                         onClick={async () => {
@@ -242,7 +244,7 @@ export default function SetupWizard({
                         }}
                       >
                         <Copy size={14} /> Copy command
-                      </button>
+                      </Button>
                       {copyStatus && <span role="status">{copyStatus}</span>}
                     </div>
                   )}
@@ -264,7 +266,8 @@ export default function SetupWizard({
               <h3>Continue setup</h3>
               <div className="setup-options">
                 <div className="setup-option">
-                  <button
+                  <Button
+                    type="button"
                     className="setup-choice recommended"
                     disabled={!api.native || busy}
                     onClick={() => void install(true)}
@@ -276,14 +279,15 @@ export default function SetupWizard({
                       <strong>Resume setup</strong>
                     </span>
                     <ArrowRight size={20} />
-                  </button>
+                  </Button>
                   <Help label="resume setup">
                     Continue the saved installation using the same server,
                     credentials and checksums.
                   </Help>
                 </div>
                 <div className="setup-option">
-                  <button
+                  <Button
+                    type="button"
                     className="setup-choice"
                     disabled={busy}
                     onClick={startOver}
@@ -295,7 +299,7 @@ export default function SetupWizard({
                       <strong>Start over</strong>
                     </span>
                     <ArrowRight size={20} />
-                  </button>
+                  </Button>
                   <Help label="start over">
                     Choose Ubuntu and enter server details again. This resets
                     the questions; your saved installation is preserved and can
@@ -315,14 +319,18 @@ export default function SetupWizard({
                   yet. Dockyard runs continuously on the VPS.
                 </Help>
               </h3>
-              <button className="setup-os selected" onClick={() => setStep(1)}>
+              <Button
+                type="button"
+                className="setup-os selected"
+                onClick={() => setStep(1)}
+              >
                 <div className="ubuntu-mark">◎</div>
                 <div>
                   <strong>Ubuntu</strong>
                   <span>22.04 / 24.04 LTS · x86-64</span>
                 </div>
                 <Check size={19} />
-              </button>
+              </Button>
               <div className="help-row">
                 Automatic enrollment
                 <Help label="automatic enrollment">
@@ -398,7 +406,8 @@ export default function SetupWizard({
                 <span>
                   Import advanced settings
                   <Help label="deployment policy">
-                    Optional JSON configuration for server limits and legacy policies. New projects use Compose and .env.
+                    Optional JSON configuration for server limits and legacy
+                    policies. New projects use Compose and .env.
                   </Help>
                 </span>
               </label>
@@ -498,7 +507,8 @@ export default function SetupWizard({
           )}
         </div>
         <div className="modal-footer">
-          <button
+          <Button
+            type="button"
             className="button"
             disabled={busy}
             onClick={
@@ -518,14 +528,19 @@ export default function SetupWizard({
               : step === 1 || step === 2
                 ? "Back"
                 : "Close"}
-          </button>
+          </Button>
           {step === 0 && (
-            <button className="button primary" onClick={() => setStep(1)}>
+            <Button
+              type="button"
+              className="button primary"
+              onClick={() => setStep(1)}
+            >
               Continue <ArrowRight size={15} />
-            </button>
+            </Button>
           )}
           {step === 1 && (
-            <button
+            <Button
+              type="button"
               className="button primary"
               disabled={
                 !api.native ||
@@ -547,24 +562,26 @@ export default function SetupWizard({
                   Connect and inspect <ArrowRight size={15} />
                 </>
               )}
-            </button>
+            </Button>
           )}
           {step === 2 && (
-            <button
+            <Button
+              type="button"
               className="button primary"
               disabled={busy}
               onClick={() => void install()}
             >
               <Terminal size={16} /> Install Dockyard
-            </button>
+            </Button>
           )}
           {step === 3 && attempted && !busy && !installedLocked && (
-            <button
+            <Button
+              type="button"
               className="button primary"
               onClick={() => void install(true)}
             >
               Resume server setup <ArrowRight size={15} />
-            </button>
+            </Button>
           )}
         </div>
       </section>

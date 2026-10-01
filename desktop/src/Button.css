@@ -1,0 +1,36 @@
+@layer ziqx-buttons, dockyard-controls;
+@import "@ziqx/react-comps/button/styles.css" layer(ziqx-buttons);
+
+/* Tabs, disclosure triggers and navigation retain their surrounding layout.
+   Action buttons use the package's variants, focus ring and interaction styles. */
+@layer dockyard-controls {
+  .dockyard-control {
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: inherit;
+    font: inherit;
+    white-space: normal;
+    justify-content: normal;
+  }
+  .dockyard-control:is(:hover, :active) {
+    transform: none;
+    background: transparent;
+    box-shadow: none;
+  }
+  .dockyard-control:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .dockyard-control:focus-visible {
+    outline: 2px solid #6e9e4f;
+    outline-offset: 3px;
+    box-shadow: none;
+  }
+  .dockyard-control > .ziqx-button-content {
+    display: contents;
+  }
+}

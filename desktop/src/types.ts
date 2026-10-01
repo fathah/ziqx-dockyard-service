@@ -32,6 +32,7 @@ export type Project = {
   releases: Release[];
 };
 export type Service = {
+  depends_on?: string[] | null;
   updatable?: boolean;
   seamless?: boolean;
   container_ports?: number[];
