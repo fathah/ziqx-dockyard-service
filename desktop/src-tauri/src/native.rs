@@ -65,6 +65,7 @@ fn credential_delete(service: &str, account: &str) -> Result<(), String> {
     Ok(())
 }
 pub fn clear_credential_cache() {
+    clear_authentication();
     // Never block the main-thread exit on a Keychain dialog running on a worker.
     // Process exit releases all remaining memory if a read is still in flight.
     if let Ok(mut values) = cache().try_lock() { values.clear(); }
@@ -109,7 +110,25 @@ fn authentication_error(code: isize) -> &'static str {
 pub fn authenticate() -> Result<(), String> {
     authenticate_reason("Unlock Dockyard to manage your VPS")
 }
+static AUTHENTICATION: std::sync::OnceLock<std::sync::Mutex<crate::auth_window::AuthWindow>> = std::sync::OnceLock::new();
+fn authentication() -> &'static std::sync::Mutex<crate::auth_window::AuthWindow> {
+    AUTHENTICATION.get_or_init(Default::default)
+}
+pub fn clear_authentication() {
+    authentication().lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
 pub fn authenticate_reason(reason_text: &str) -> Result<(), String> {
+    use std::time::{Instant, SystemTime};
+    let epoch = authentication().lock().map_err(|_| "Authentication unavailable")?
+        .begin(Instant::now(), SystemTime::now());
+    let Some(epoch) = epoch else { return Ok(()); };
+    let result = authenticate_fresh(reason_text);
+    let current = authentication().lock().map_err(|_| "Authentication unavailable")?
+        .complete(epoch, result.is_ok(), Instant::now(), SystemTime::now());
+    if !current { return Err("SESSION_LOCKED".into()); }
+    result
+}
+fn authenticate_fresh(reason_text: &str) -> Result<(), String> {
     let _prompt = PromptScope::new();
     use objc::runtime::{Object, BOOL, YES};
     use objc::{class, msg_send, sel, sel_impl};
@@ -133,7 +152,7 @@ pub fn authenticate_reason(reason_text: &str) -> Result<(), String> {
             let _: () = msg_send![context, release];
             return Err(authentication_error(code).into());
         }
-        // Hide the fallback button and require a fresh finger touch for every unlock.
+        // Expired/cleared app approval requires a fresh finger touch, never Mac-unlock reuse.
         let empty: *mut Object = msg_send![class!(NSString), string];
         let _: () = msg_send![context, setLocalizedFallbackTitle:empty];
         let _: () = msg_send![context, setTouchIDAuthenticationAllowableReuseDuration:0.0f64];

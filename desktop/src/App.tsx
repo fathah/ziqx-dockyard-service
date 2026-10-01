@@ -2831,7 +2831,7 @@ function Security({
             {
               icon: Server,
               title: "Private connection",
-              text: "API access uses a private connection and restricted SSH tunnel. Terminal access uses a separate root SSH connection with fresh Touch ID.",
+              text: "API access uses a private connection and restricted SSH tunnel. Terminal access uses a separate root SSH connection. Touch ID is requested when your last Dockyard verification is more than two minutes old.",
             },
           ].map((s) => (
             <div className="security-item" key={s.title}>

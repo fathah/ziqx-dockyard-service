@@ -30,7 +30,6 @@ fn load() -> Result<Vec<Credential>, String> {
         None => Ok(vec![]),
     }
 }
-pub fn preload() -> Result<(), String> { load().map(|_| ()) }
 fn save(entries: &[Credential]) -> Result<(), String> {
     let bytes = Zeroizing::new(serde_json::to_vec(entries).map_err(|_| "Could not encode domain providers")?);
     native::credential_save(SERVICE, "providers", &bytes)

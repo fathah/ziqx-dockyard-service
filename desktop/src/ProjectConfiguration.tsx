@@ -203,7 +203,7 @@ export default function ProjectConfiguration({
                 disabled={preview}
                 onClick={load}
               >
-                <Fingerprint size={18} /> Edit files with Touch ID
+                <Fingerprint size={18} /> Edit files
               </button>
             </>
           )}

@@ -3,6 +3,7 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("Dockyard Desktop currently requires macOS Keychain and LocalAuthentication");
 mod native;
+mod auth_window;
 mod credential_cache;
 mod protocol;
 mod providers;
@@ -157,6 +158,7 @@ impl Control {
         }
     }
     async fn clear(&self) {
+        native::clear_authentication();
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.terminal.lock().expect("terminal poisoned").take();
         self.inner.lock().await.session = None;
@@ -176,6 +178,7 @@ fn observe_focus(c: &Control, app: &tauri::AppHandle, focused: bool) {
         )
     };
     if expired {
+        native::clear_authentication();
         // Revoke immediately even when an API call holds the async session mutex.
         let revoked = c.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let _ = app.emit("session-locked", ());
@@ -583,7 +586,7 @@ async fn enroll(c: State<'_, Control>) -> Result<Value, String> {
     Ok(json!({"unlocked":true,"profile":p,"jobs":[]}))
 }
 #[tauri::command]
-async fn unlock(app: tauri::AppHandle, c: State<'_, Control>) -> Result<Value, String> {
+async fn unlock(c: State<'_, Control>) -> Result<Value, String> {
     c.clear().await;
     let generation = c.generation.load(Ordering::SeqCst);
     let saved: Saved = native_task(&c, move || {
@@ -592,12 +595,6 @@ async fn unlock(app: tauri::AppHandle, c: State<'_, Control>) -> Result<Value, S
         let saved: Saved = serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid")?;
         if saved.setup.is_none() {
             let _validated_secret = Zeroizing::new(saved.enrollment.validate()?);
-            providers::preload()?;
-            if let Some(ssh) = &saved.enrollment.ssh {
-                let account = terminal::account(&ssh.server_ip, ssh.port, &ssh.host_sha256);
-                let password = native::root_credential(&app, format!("{}:{}", ssh.server_ip, ssh.port), &account, false)?;
-                native::terminal_remember_for_run(&account, password.as_bytes())?;
-            }
         }
         Ok(saved)
     })
