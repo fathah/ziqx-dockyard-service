@@ -110,7 +110,7 @@ func TestNativeDeploymentQueuesRevisionsWithoutSecrets(t *testing.T) {
 	if err := a.Engine.Store.Update(job, &p); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"environment":"production","compose_yaml":"services:\n  web:\n    image: nginx:alpine\n","env_file":"TOKEN=private-test-token\n"}`
+	body := `{"environment":"production","compose_yaml":"services:\n  web:\n    image: nginx:alpine\n","env_file":"TOKEN=private-test-token\n","expected_release_id":""}`
 	if w := send("POST", "/v1/projects/demo/deploy", body, "deploy.execute", "env-denied"); w.Code != 403 {
 		t.Fatal("dotenv write requires scope", w.Code)
 	}
@@ -173,6 +173,10 @@ func TestNativeDeploymentQueuesRevisionsWithoutSecrets(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	// Editing an older release must not silently overwrite a newer deployment.
+	w = send("POST", "/v1/projects/demo/deploy", body, "deploy.environment deploy.execute", "stale-first-deploy")
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "CONFIGURATION_CHANGED") {
+		t.Fatal("a stale first-deployment editor overwrote a release", w.Code, w.Body.String())
+	}
 	stale, _ := json.Marshal(map[string]any{"environment": "production", "compose_yaml": editable.Compose, "env_file": "", "expected_release_id": "rel-old"})
 	w = send("POST", "/v1/projects/demo/deploy", string(stale), "deploy.environment deploy.execute", "stale-edit")
 	if w.Code != 409 || !strings.Contains(w.Body.String(), "CONFIGURATION_CHANGED") {

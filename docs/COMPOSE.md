@@ -6,12 +6,17 @@ New Dockyard projects use **Docker Compose YAML and `.env` contents**. No templa
 
 1. Update the VPS service using **Server details → Server software**.
 2. For an existing enrollment, select **Required server access → Compose management → Enable with Touch ID** once. New installations enable management during setup.
-3. Create a project and choose development, staging, or production.
-4. Deploy the Compose YAML and paste the `.env` contents. Leave the desktop field blank to reuse saved values on redeploy; a new project starts with no values. To clear saved values, submit a comment-only file such as `# empty`.
+3. Create a project and choose a flavor: development, staging, or production. Configure its domains and web service if using Caddy. Deploy the complete stack first; update individual services from Services afterward.
+4. Once creation succeeds, open the project and choose **Deploy Compose**. Import or paste Compose YAML and `.env` in **Configuration**, then choose **Deploy all services**. New projects open an empty editor without fetching a nonexistent release. The native `.env` picker supports hidden files with Command–Shift–period.
+5. For another flavor, choose **Add flavor** on the project, select an unused environment, and give it its own domains and files. This preserves the same application identity. Existing flavors cannot be created twice.
 
-Dockyard assigns its own Compose project identity and ownership labels; supplied top-level `name` and `COMPOSE_PROJECT_NAME` do not override them.
+Configuration always submits both files; an empty `.env` clears saved values. The older Deploy Compose dialog leaves saved values unchanged when its environment field is blank; import an empty file or enter `# empty` there to clear them.
+
+Dockyard assigns its own Compose project identity and ownership labels; supplied top-level `name` and `COMPOSE_PROJECT_NAME` do not override them. All services in the supplied Compose file are deployed, including services behind `profiles`; Dockyard explicitly enables every profile during resolution. Supply a separate Compose file per flavor when the service set should differ.
 
 Domains are optional. To use Caddy, provide domains, the web service name, and its container port when creating the project. Dockyard assigns a loopback host port for that service. With no domains, your Compose ports are used as supplied. Caddy routes and allocated ports remain subject to ownership/conflict checks.
+
+Each flavor has a separate directory, such as `/docker/shop-development`, `/docker/shop-staging`, and `/docker/shop-production`, containing its own `compose.yml` and `.env`. Caddy web ports are allocated separately. Any additional explicit host ports, fixed container names, external networks, and bind paths in your files must also be distinct where isolation is needed; Dockyard does not rewrite arbitrary shared resources.
 
 ```yaml
 services:
@@ -43,13 +48,21 @@ Full Compose can mount the Docker socket, host directories, or run privileged se
 
 Fresh desktop setup grants this access. For existing servers, the desktop's Touch ID action validates the updated configuration, saves a private backup, and restarts Dockyard. If startup fails it restores the previous configuration. Containers and Caddy are not restarted by that action.
 
-## Environments and blue-green
+## Individual service updates
 
-Single-instance deployment is the default in every environment. It supports ordinary Compose features, including databases and persistent volumes. Updating that stack can cause downtime. Docker storage is retained; Dockyard does not run `down --volumes`.
+Open **Services → Pull & update** beside a service. Review its update strategy, then approve the selected service. This requires the desktop and VPS service 0.7.0 or later.
 
-Production can opt into blue-green with a Caddy route. Both copies must run independently: no shared volumes, external/named shared networks, fixed container names, extra host ports, or host namespace sharing. Every service needs a healthcheck. If incompatible, use a single instance. Image-declared persistent mounts also prevent a blue-green traffic switch. Compose validity alone cannot guarantee zero downtime.
+**Seamless updates** are available for the production service serving the project's domains. Dockyard pulls only its image, skips deployment when the image ID is unchanged, starts a replacement on another loopback port, checks its Compose healthcheck and optional HTTP path, switches Caddy, drains requests, and stops only the previous application container. Databases and other dependencies continue running in the same Compose project and on the same networks. There is no need to split your database into another project or another supplied Compose file.
 
-Rollback reuses the saved Compose/environment configuration. It does not roll back volume contents, database migrations, external files, or mutable image tags. Pin a digest if exact image repeatability is needed.
+The app must safely support two running versions. Writable persistent mounts, image-declared volumes, extra published ports, fixed IPs, shared runtime namespaces require a controlled restart. Individual service updates currently support one container per service; services with multiple replicas use the full-stack deployment workflow. A fixed `container_name` is removed only from the generated app replacement. Database names, volumes, networks and the full supplied Compose file are retained. Readiness checks and a traffic switch alone cannot guarantee uninterrupted connections: the app must handle graceful shutdown, compatible database migrations and the configured drain interval.
+
+**Controlled restart** pulls and recreates only the selected service with `--no-deps`. Other services and data volumes remain in place. Use it for databases, background workers, development and staging. Locally built services use **Edit & deploy** instead; the button pulls registry images, not a build context. Database image upgrades still require the operator's usual backup and version-compatibility process.
+
+Service updates use the saved Compose and `.env`. Generated immutable manifests and image IDs, reusable app ports, active service versions and recovery plans are tracked privately in SQLite and the project folder. The two app update ports alternate across updates. Logs follow the active service version. **Start** and **Restart** preserve those selected versions. **Deploy all services** and full-stack rollback are explicit maintenance operations and replace individual overrides with the full saved configuration. They do not roll back volume contents, database migrations or external files.
+
+For adopted projects, the first seamless update reviews the existing plain `reverse_proxy` Caddy sites and imports those routes into Dockyard while preserving the existing Compose identity. Custom handlers need manual route review. Existing projects using the older whole-stack update strategy retain that behavior; the desktop does not automatically convert them.
+
+If readiness fails before switching, the existing app remains live and the failed replacement is stopped. If a traffic switch has an uncertain outcome, both versions are preserved and writes are blocked until local reconciliation verifies which route is live. After a completed switch, an unhealthy replacement is routed back to the previous app before cleanup when the old route can be verified. Controlled-restart failures also require reconciliation of the selected image and running container.
 
 ## API
 
@@ -67,4 +80,4 @@ Then submit to `/v1/projects/demo-production/deploy`:
 
 `env_file` contains raw file contents. Omitting it reuses the current snapshot; `""` supplies an empty `.env`. Input limits are 64 KiB each, within the HTTP body limit. Refer to `/docs` for signed headers and job polling.
 
-Existing template-managed projects keep their previous behavior; see [legacy Compose policy](LEGACY_COMPOSE.md). Existing VPS inventory still needs a separate takeover/traffic migration implementation before Dockyard can manage it in place. Migration assessment no longer requires templates or pinned images.
+Existing template-managed projects keep their previous behavior; see [legacy Compose policy](LEGACY_COMPOSE.md). Existing VPS inventory can be adopted conservatively in place. Migration assessment does not require templates or pinned images.

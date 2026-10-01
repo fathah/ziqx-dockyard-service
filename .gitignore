@@ -8,6 +8,7 @@
 .env
 config.json
 /desktop/node_modules/
+/desktop/.cache/
 /desktop/dist/
 /desktop/src-tauri/target/
 /desktop/src-tauri/gen/

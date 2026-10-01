@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { projectIdentity } from '../src/projectNaming.ts';
+import { flavorIdentity, projectIdentity } from '../src/projectNaming.ts';
 
 const existing = (app_id, environment = 'production', id = `${app_id}-${environment}`) => ({ app_id, environment, id });
 
@@ -36,4 +36,23 @@ test('long duplicate names retain room for suffixes and environment', () => {
   const second = projectIdentity(name, 'development', [existing(first.app_id, 'development')]);
   assert.notEqual(first.app_id, second.app_id);
   assert.match(second.id, /^[a-z][a-z0-9-]{0,47}$/);
+});
+
+test('explicit flavors preserve application identity and refuse duplicate targets', () => {
+  const projects = [existing('payments-2')];
+  assert.equal(flavorIdentity('payments-2', 'production', projects), null);
+  assert.equal(flavorIdentity('payments-2', '', projects), null);
+  assert.deepEqual(flavorIdentity('payments-2', 'staging', projects), {
+    id: 'payments-2-staging', app_id: 'payments-2', adjusted: false,
+  });
+});
+
+test('flavors handle legacy long IDs and folder collisions without creating another application', () => {
+  const app = 'a'.repeat(48);
+  const first = flavorIdentity(app, 'development', [existing(app)]);
+  const next = flavorIdentity(app, 'development', [existing(app)], [first.id]);
+  assert.equal(next.app_id, app);
+  assert.match(next.id, /^[a-z][a-z0-9-]{0,47}$/);
+  assert.notEqual(next.id, first.id);
+  assert.equal(next.adjusted, true);
 });

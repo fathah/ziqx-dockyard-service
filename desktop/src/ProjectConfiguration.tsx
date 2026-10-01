@@ -2,8 +2,6 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   ArrowUpRight,
   FileCode2,
-  Layers3,
-  Box,
   Fingerprint,
   RefreshCw,
   Settings2,
@@ -11,9 +9,8 @@ import {
 } from "lucide-react";
 import * as api from "./api";
 import Help from "./Help";
-import BlueGreenDeployment from "./BlueGreenDeployment";
 import CodeEditor from "./CodeEditor";
-import { lintCompose } from "./composeLint";
+import { composeForEditor, lintCompose } from "./composeLint";
 import type { Project } from "./types";
 
 type Configuration = {
@@ -57,19 +54,20 @@ export default function ProjectConfiguration({
   onDirtyChange: (dirty: boolean) => void;
   execute: (mutation: unknown) => Promise<void>;
 }) {
-  const sample: Configuration | undefined = preview
+  const initial: Configuration | undefined = preview
     ? {
         release_id: "preview",
         compose_yaml:
           "services:\n  web:\n    image: nginx:alpine\n    environment:\n      APP_URL: ${APP_URL}\n",
         env_file: "APP_URL=https://example.com\n",
       }
-    : undefined;
-  const [saved, setSaved] = useState<Configuration | undefined>(sample);
-  const [compose, setCompose] = useState(sample?.compose_yaml ?? "");
-  const [dotenv, setDotenv] = useState(sample?.env_file ?? "");
+    : project.releases.length === 0
+      ? { release_id: "", compose_yaml: "", env_file: "" }
+      : undefined;
+  const [saved, setSaved] = useState<Configuration | undefined>(initial);
+  const [compose, setCompose] = useState(initial?.compose_yaml ?? "");
+  const [dotenv, setDotenv] = useState(initial?.env_file ?? "");
   const [file, setFile] = useState<"compose" | "env">("compose");
-  const [blueGreen, setBlueGreen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const alive = useRef(true);
@@ -102,8 +100,9 @@ export default function ProjectConfiguration({
         project: project.id,
       });
       if (!alive.current) return;
-      setSaved(data);
-      setCompose(data.compose_yaml);
+      const source = composeForEditor(data.compose_yaml);
+      setSaved({ ...data, compose_yaml: source });
+      setCompose(source);
       setDotenv(data.env_file);
     } catch (e) {
       if (alive.current) setError(message(e));
@@ -114,12 +113,6 @@ export default function ProjectConfiguration({
   async function deploy(e: FormEvent) {
     e.preventDefault();
     if (!saved) return;
-    if (blueGreen) {
-      setError(
-        "Use Review blue–green below to check this draft before switching deployment strategy.",
-      );
-      return;
-    }
     if (lintCompose(compose).some((p) => p.severity === "error")) {
       setFile("compose");
       setError("Fix the highlighted Compose syntax errors before deploying.");
@@ -161,7 +154,7 @@ export default function ProjectConfiguration({
             additional files must exist on the VPS.
           </Help>
         </h2>
-        {saved && (
+        {saved?.release_id && (
           <button
             className="button small"
             disabled={busy || preview}
@@ -171,6 +164,12 @@ export default function ProjectConfiguration({
           </button>
         )}
       </div>
+      <p className="configuration-note">
+        {project.environment} · /docker/
+        {project.adoption?.source_name ?? project.id}/compose.yml and .env
+        {project.releases.length === 0 &&
+          " · Import or paste both files to deploy your services."}
+      </p>
       {error && (
         <p className="alert error" role="alert">
           {error}
@@ -210,37 +209,6 @@ export default function ProjectConfiguration({
         </div>
       ) : (
         <form onSubmit={deploy}>
-          {!project.zerodowntime && project.environment === "production" && (
-            <fieldset className="deployment-strategy">
-              <legend>Deployment strategy</legend>
-              <div className="strategy-options">
-                <button
-                  type="button"
-                  aria-pressed={!blueGreen}
-                  className={!blueGreen ? "selected" : ""}
-                  onClick={() => setBlueGreen(false)}
-                >
-                  <Box size={21} />
-                  <span>
-                    <strong>Single instance</strong>
-                    <small>Replaces the current containers</small>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={blueGreen}
-                  className={blueGreen ? "selected" : ""}
-                  onClick={() => setBlueGreen(true)}
-                >
-                  <Layers3 size={21} />
-                  <span>
-                    <strong>Blue–green</strong>
-                    <small>Health checks before switching traffic</small>
-                  </span>
-                </button>
-              </div>
-            </fieldset>
-          )}
           <div className="configuration-toolbar">
             <div className="tabs" role="tablist" aria-label="Project files">
               <button
@@ -251,7 +219,7 @@ export default function ProjectConfiguration({
                 onClick={() => setFile("compose")}
               >
                 <FileCode2 size={18} aria-hidden="true" />
-                compose.yaml
+                compose.yml
               </button>
               <button
                 type="button"
@@ -264,23 +232,28 @@ export default function ProjectConfiguration({
                 .env
               </button>
             </div>
-            {file === "compose" && (
-              <button
-                type="button"
-                className="button small"
-                disabled={busy || preview}
-                onClick={async () => {
-                  try {
-                    const value = await api.importCompose();
-                    if (value && alive.current) setCompose(value);
-                  } catch (e) {
-                    setError(message(e));
+            <button
+              type="button"
+              className="button small"
+              disabled={busy || preview}
+              onClick={async () => {
+                try {
+                  const value =
+                    file === "compose"
+                      ? await api.importCompose()
+                      : await api.importEnv();
+                  if (value !== null && alive.current) {
+                    if (file === "compose") setCompose(composeForEditor(value));
+                    else setDotenv(value);
                   }
-                }}
-              >
-                <Upload size={15} /> Import Compose
-              </button>
-            )}
+                } catch (e) {
+                  setError(message(e));
+                }
+              }}
+            >
+              <Upload size={15} />{" "}
+              {file === "compose" ? "Import Compose" : "Import .env"}
+            </button>
           </div>
           <div hidden={file !== "compose"}>
             <CodeEditor
@@ -309,7 +282,9 @@ export default function ProjectConfiguration({
                 ? "Sample files · read-only"
                 : dirty
                   ? "Unsaved changes"
-                  : "Saved configuration"}
+                  : saved.release_id
+                    ? "Saved configuration"
+                    : "New deployment"}
             </span>
           </div>
           {file === "env" && (
@@ -318,44 +293,31 @@ export default function ProjectConfiguration({
               values take precedence.
             </p>
           )}
-          {blueGreen ? (
-            <BlueGreenDeployment
-              project={project}
-              compose={compose}
-              dotenv={dotenv}
-              release={saved.release_id}
-              preview={preview}
-              execute={execute}
-              onAccepted={() => {
-                setSaved(undefined);
-                setCompose("");
-                setDotenv("");
-                setBlueGreen(false);
-              }}
-            />
-          ) : (
-            <div className="configuration-footer">
-              <span>
-                {project.zerodowntime
-                  ? "Health checks before traffic switches."
-                  : "Single instance · deployment may briefly interrupt service."}
-              </span>
-              <button
-                type="submit"
-                className="button primary"
-                disabled={
-                  preview ||
-                  busy ||
-                  !compose.trim() ||
-                  bytes(compose) > 65536 ||
-                  bytes(dotenv) > 65536
-                }
-              >
-                <ArrowUpRight size={18} />{" "}
-                {busy ? "Preparing deployment…" : "Update & deploy"}
-              </button>
-            </div>
-          )}
+          <div className="configuration-footer">
+            <span>
+              {project.zerodowntime
+                ? "Health checks before traffic switches."
+                : "Deploys all services with a maintenance interruption. Use Pull & update in Services for individual updates."}
+            </span>
+            <button
+              type="submit"
+              className="button primary"
+              disabled={
+                preview ||
+                busy ||
+                !compose.trim() ||
+                bytes(compose) > 65536 ||
+                bytes(dotenv) > 65536
+              }
+            >
+              <ArrowUpRight size={18} />{" "}
+              {busy
+                ? "Preparing deployment…"
+                : saved.release_id
+                  ? "Deploy all services"
+                  : "Deploy all services"}
+            </button>
+          </div>
         </form>
       )}
     </section>

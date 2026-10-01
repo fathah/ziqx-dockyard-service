@@ -12,6 +12,7 @@ export const mutate = (mutation: unknown) =>
 export const retry = () => invoke<{ job_id: string }>("retry_pending");
 export const pendingInfo = () => invoke<Pending>("pending_info");
 export const importCompose = () => invoke<string | null>("import_compose");
+export const importEnv = () => invoke<string | null>("import_env");
 export const inspectServer = (request: {
   os: "ubuntu";
   server_ip: string;
@@ -83,3 +84,26 @@ export type BlueGreenReview = {
 };
 export const previewBlueGreen = (project: string, data: BlueGreenInput) =>
   invoke<BlueGreenReview>("preview_blue_green", { project, data });
+
+export type ServiceUpdateInput = {
+  expected_release_id: string;
+  service: string;
+  mode: "seamless" | "restart";
+  container_port?: number;
+  readiness_path?: string;
+  review_sha256?: string;
+};
+export type ServiceUpdateReview = {
+  review_sha256: string;
+  service: string;
+  mode: "seamless" | "restart";
+  domains: string[];
+  container_port: number;
+  host_port: number;
+  imports_routes: boolean;
+  dependencies_unchanged: boolean;
+};
+export const previewServiceUpdate = (
+  project: string,
+  data: ServiceUpdateInput,
+) => invoke<ServiceUpdateReview>("preview_service_update", { project, data });

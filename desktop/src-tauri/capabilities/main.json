@@ -17,6 +17,7 @@
     "allow-retry-pending",
     "allow-pending-info",
     "allow-import-compose",
+    "allow-import-env",
     "allow-setup-inspect",
     "allow-setup-install",
     "allow-setup-resume",
@@ -40,6 +41,7 @@
     "allow-provider-zones",
     "allow-provider-records",
     "allow-provider-write",
-    "allow-preview-blue-green"
+    "allow-preview-blue-green",
+    "allow-preview-service-update"
   ]
 }

@@ -218,9 +218,36 @@ impl BlueGreen {
  }
 }
 impl Drop for BlueGreen { fn drop(&mut self) {self.compose_yaml.zeroize();self.env_file.zeroize();} }
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceUpdate {
+    pub expected_release_id: String,
+    pub service: String,
+    pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub readiness_path: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub review_sha256: String,
+}
+impl ServiceUpdate {
+    pub fn valid(&self) -> bool {
+        token(&self.expected_release_id) && service_name(&self.service)
+        && matches!(self.mode.as_str(), "restart" | "seamless")
+        && (self.mode != "seamless" || self.container_port.is_some_and(|p| p > 0))
+        && self.readiness_path.len() <= 2048
+        && (self.readiness_path.is_empty() || (self.readiness_path.starts_with('/') && !self.readiness_path.contains(['?', '#', '\r', '\n', '\0'])))
+        && (self.mode != "restart" || (self.container_port.is_none() && self.readiness_path.is_empty()))
+    }
+    pub fn scopes(&self) -> &'static str {
+        if self.mode == "seamless" { "deploy.execute projects.write sites.write" } else { "deploy.execute" }
+    }
+}
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Mutation {
+ ServiceUpdate {project: String, data: ServiceUpdate},
  BlueGreen {project: String, data: BlueGreen},
     Migrate { project: String, source_sha256: String },
     Create {
@@ -296,8 +323,14 @@ fn service_name(s: &str) -> bool {
 impl Mutation {
     pub fn plan(self) -> Result<Operation, String> {
         let (method, project, action, scopes, body) = match self {
+            Self::ServiceUpdate { project, data } => {
+                if !data.valid() || data.review_sha256.len()!=64 || !data.review_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
+                    return Err("Review the service update first".into());
+                }
+                ("POST",project,"service-update",data.scopes(),serde_json::to_string(&data))
+            }
             Self::BlueGreen { project, data } => {
-                if !data.valid() || data.review_sha256.len()!=64 || !data.review_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {return Err("Review the blue–green deployment first".into());}
+                if !data.valid() || data.review_sha256.len()!=64 || !data.review_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {return Err("Review seamless updates first".into());}
                 ("POST",project,"blue-green","deploy.environment deploy.execute projects.write sites.write",serde_json::to_string(&data))
             }
             Self::Migrate { project, source_sha256 } => {
@@ -657,5 +690,22 @@ mod tests {
             sign(&[42u8; 32], &e, &op, "1700000000"),
             "5681f2392d91fe8b3eb330325236b1eb277cc348dc845509a02eaf33d82e12a0"
         );
+    }
+    #[test]
+    fn service_update_requires_review_and_only_selected_service_authority() {
+        let base=serde_json::json!({"action":"service_update","project":"demo","data":{"expected_release_id":"rel-original","service":"postgres","mode":"restart","review_sha256":"a".repeat(64)}});
+        let op=serde_json::from_value::<Mutation>(base.clone()).unwrap().plan().unwrap();
+        assert_eq!(op.target,"/v1/projects/demo/service-update");
+        assert_eq!(op.scopes,"deploy.execute");
+        assert!(!op.body.contains("env_file"));
+        let mut seamless=base.clone();seamless["data"]["service"]=serde_json::json!("web");seamless["data"]["mode"]=serde_json::json!("seamless");seamless["data"]["container_port"]=serde_json::json!(3000);
+        let op=serde_json::from_value::<Mutation>(seamless).unwrap().plan().unwrap();
+        assert_eq!(op.scopes,"deploy.execute projects.write sites.write");
+        for (field,value) in [("service",serde_json::json!("../postgres")),("mode",serde_json::json!("all")),("review_sha256",serde_json::json!("")),("readiness_path",serde_json::json!("https://evil.test")),("container_port",serde_json::json!(5432))] {
+            let mut bad=base.clone();bad["data"][field]=value;
+            assert!(serde_json::from_value::<Mutation>(bad).unwrap().plan().is_err());
+        }
+        let mut unknown=base;unknown["data"]["compose_yaml"]=serde_json::json!("services: {}");
+        assert!(serde_json::from_value::<Mutation>(unknown).is_err());
     }
 }

@@ -147,7 +147,7 @@ func (c Caddy) ImportRoutes(ctx context.Context, edits []model.RouteEdit, p mode
 			return model.Uncertain("CADDY_FILE_WRITE_FAILED")
 		}
 	}
-	if err = secure.Atomic(path, Snippet(p, "green"), 0644); err != nil {
+	if err = secure.Atomic(path, Snippet(p, importSlot(p)), 0644); err != nil {
 		return model.Uncertain("CADDY_FILE_WRITE_FAILED")
 	}
 	expected, err := c.adapted(ctx)
@@ -265,7 +265,7 @@ func (c Caddy) RestoreImportedRoutes(ctx context.Context, edits []model.RouteEdi
 	}
 	path := filepath.Join(c.Config.CaddySites, p.ID+".caddy")
 	b, err := os.ReadFile(path)
-	if err != nil || string(b) != string(Snippet(p, "green")) {
+	if err != nil || string(b) != string(Snippet(p, importSlot(p))) {
 		return model.Uncertain("STATE_DIVERGED")
 	}
 	if _, err = c.coherent(ctx); err != nil {
@@ -291,4 +291,11 @@ func (c Caddy) RestoreImportedRoutes(ctx context.Context, edits []model.RouteEdi
 		return nil
 	}
 	return model.Uncertain("ROUTE_OUTCOME_UNKNOWN")
+}
+
+func importSlot(p model.Project) string {
+	if p.ServiceMode {
+		return p.Active
+	}
+	return "green"
 }

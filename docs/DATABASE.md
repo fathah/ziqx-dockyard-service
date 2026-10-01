@@ -4,7 +4,7 @@ SQLite is the authoritative inventory and job journal. The default database is `
 
 | Data | Storage |
 | --- | --- |
-| Project configuration, lifecycle state, release history | `projects` snapshots |
+| Project configuration, lifecycle state, full-stack history and active individual service versions | `projects` snapshots |
 | Unique immutable app/environment-to-project identity | `project_targets` |
 | Safe existing Compose/Caddy observations and source timestamps | `inventory` |
 | Retained observed published ports | `inventory_ports` |
@@ -19,14 +19,14 @@ Project snapshots, slot/domain indexes, DNS outcomes, job state and audit events
 
 ## Inventory APIs
 
-All reads below require the signed `deploy.read` scope and access to the project. They read SQLite without scanning `/docker`, invoking Docker/Caddy, or calling Cloudflare:
+All reads below require the signed `deploy.read` scope and access to the project. They read SQLite without scanning `/docker`, invoking Docker/Caddy, or calling Cloudflare. Native service eligibility additionally reads the current verified immutable Compose manifest:
 
 - `GET /v1/projects` and `GET /v1/projects/{id}`
 - `GET /v1/projects/{id}/releases`
 - `GET /v1/projects/{id}/services`
 - `GET /v1/projects/{id}/domains`
 
-Services return a `services` array with `slot`, `name`, `image`, `template_id`, `compose_revision` and `environment_revision`. Both retained slots may appear, including stopped or candidate stacks; this is recorded inventory, not a report of running containers. Legacy releases omit `compose_revision`.
+Services return a `services` array with `slot`, `name`, `image`, `template_id`, `compose_revision` and `environment_revision`. Both retained slots may appear, including stopped or candidate stacks; this is recorded inventory, not a report of running containers. Legacy releases omit `compose_revision`. Native services also include safe update eligibility and detected container ports; per-service active image/manifest overrides come from the SQLite project snapshot. Private service-update job inputs retain the previous version, candidate version, network identities, route edits and recovery phase. No schema change is needed for these additional snapshot fields.
 
 Domains return a `domains` array with `hostname`, `assigned` and an optional `dns_record_id`. Removed domains stay reserved with `assigned: false`. Assignment reflects recorded project configuration; it does not prove DNS propagation or the live Caddy route. The OpenAPI contract documents both endpoints.
 

@@ -2,6 +2,31 @@ import type { Environment, Project } from "./types";
 
 type ExistingProject = Pick<Project, "id" | "app_id" | "environment">;
 
+// An explicit flavor keeps the application's exact identity, including legacy
+// IDs that are longer than the name generator's 36-character base.
+export function flavorIdentity(
+  appID: string,
+  environment: Environment | "",
+  projects: ExistingProject[],
+  observedIDs: string[] = [],
+) {
+  if (
+    !appID ||
+    !environment ||
+    projects.some((p) => p.app_id === appID && p.environment === environment)
+  )
+    return null;
+  const suffix = `-${environment}`;
+  const prefix = `${appID.slice(0, 48 - suffix.length).replace(/-+$/, "")}${suffix}`;
+  const used = new Set([...projects.map((p) => p.id), ...observedIDs]);
+  let id = prefix;
+  for (let n = 2; used.has(id); n++) {
+    const collision = `-${n}`;
+    id = `${prefix.slice(0, 48 - collision.length).replace(/-+$/, "")}${collision}`;
+  }
+  return { id, app_id: appID, adjusted: id !== prefix };
+}
+
 export function projectIdentity(
   name: string,
   environment: Environment | "",

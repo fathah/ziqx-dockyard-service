@@ -225,7 +225,7 @@ func (s *Store) Accept(j model.Job, p *model.Project, key, fingerprint string, m
 	}
 	if j.Input.Project != nil {
 		candidate := j.Input.Project
-		for _, port := range []int{candidate.BluePort, candidate.GreenPort} {
+		for _, port := range append([]int{candidate.BluePort, candidate.GreenPort}, candidate.ServicePorts...) {
 			if port == 0 {
 				continue
 			}

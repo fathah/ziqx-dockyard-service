@@ -82,10 +82,18 @@ services:
     environment:
       POSTGRES_PASSWORD: ${PASSWORD}
     volumes: [data:/shared]
+  worker:
+    image: busybox:latest
+    profiles: [background]
+    command: [sleep, infinity]
+  reports:
+    image: busybox:latest
+    profiles: [reports]
+    command: [sleep, infinity]
 volumes:
   data: {}
 `
-	dotenv := "TAG=alpine\nPASSWORD='a$HOME${NOT_SET}$$'\n"
+	dotenv := "TAG=alpine\nPASSWORD='a$HOME${NOT_SET}$$'\nCOMPOSE_PROFILES=background\n"
 	r, err := d.PrepareNative(context.Background(), p, source, dotenv)
 	if err != nil {
 		t.Fatal(err)
@@ -107,8 +115,14 @@ volumes:
 	if web["image"] != "nginx:alpine" || env["PASSWORD"] != "a$HOME${NOT_SET}$$" || env["INLINE"] != "$HOME literal" || array(web["command"])[1] != "$LITERAL" {
 		t.Fatalf("literal values were re-interpolated: %#v command=%#v", env, web["command"])
 	}
-	if len(array(web["volumes"])) != 1 || len(array(web["ports"])) != 1 || len(object(doc["services"])) != 2 {
+	if len(array(web["volumes"])) != 1 || len(array(web["ports"])) != 1 || len(object(doc["services"])) != 4 {
 		t.Fatal("stack features were lost")
+	}
+	for _, name := range []string{"worker", "reports"} {
+		svc := object(object(doc["services"])[name])
+		if svc == nil || svc["profiles"] != nil {
+			t.Fatalf("profile service %s is missing or still gated", name)
+		}
 	}
 	b, err := ComposeMirror(c, p, r)
 	if err != nil || string(b) != source {

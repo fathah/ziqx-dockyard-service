@@ -20,7 +20,7 @@ sudo install -o root -g root -m 0600 deploy/config.example.json /etc/dockyard/co
 
 Review the example configuration and replace every placeholder before startup. New Compose projects need no templates. The sample grants `compose.admin` to its server-wide credential, which permits root-equivalent host control through Compose. Keep this credential private. Configure project quotas, reserved ports/control-plane hostnames, and optional Cloudflare settings.
 
-Docker Compose validates submitted stacks and `.env` contents. Ordinary image tags, multiple services, networks, builds, mounts and volumes are supported. Additional files/build contexts must exist on the VPS. Use single-instance mode for persistent stacks; production blue-green requires independent stateless services and healthchecks. See [Compose deployments](COMPOSE.md). The [legacy sample](../deploy/config.legacy.example.json) is retained for existing template-mode installations; do not remove templates referenced by existing projects.
+Docker Compose validates submitted stacks and `.env` contents. Ordinary image tags, multiple services, networks, builds, mounts and volumes are supported. Additional files/build contexts must exist on the VPS. Keep databases in the same Compose stack; eligible production apps can use individual Seamless updates with healthchecks. Database and worker updates use a controlled restart. See [Compose deployments](COMPOSE.md). The [legacy sample](../deploy/config.legacy.example.json) is retained for existing template-mode installations; do not remove templates referenced by existing projects.
 
 ## Caddy and API network access
 

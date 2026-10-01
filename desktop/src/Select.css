@@ -1,0 +1,42 @@
+.dockyard-select-field .ziqx-field-label {
+  font-size: 12px;
+  color: #617057;
+  font-weight: 500;
+}
+.dockyard-select {
+  border-radius: 6px;
+}
+.operation-modal .dockyard-select {
+  height: 48px;
+  font-size: 16px;
+}
+.operation-modal .dockyard-select-field .ziqx-field-label {
+  font-size: 14px;
+  color: #405942;
+  font-weight: 600;
+}
+.wizard-body > .dockyard-select-field {
+  margin-bottom: 24px;
+}
+.log-filters > .dockyard-select-field {
+  min-width: 100px;
+  flex: 1;
+}
+.terminal-container-picker > .dockyard-select-field:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.terminal-container-picker > .dockyard-select-field:last-of-type {
+  width: 180px;
+}
+.dockyard-select-field.provider-field .ziqx-field-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #405942;
+}
+.dockyard-select-field.provider-field .dockyard-select {
+  background: #fff;
+  border-color: #cdd8c8;
+  border-radius: 8px;
+  font-size: 14px;
+}

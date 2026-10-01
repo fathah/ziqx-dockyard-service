@@ -18,27 +18,30 @@ type Adoption struct {
 }
 
 type Project struct {
-	Adoption         *Adoption          `json:"adoption,omitempty"`
-	ExternalDomains  []string           `json:"external_domains,omitempty"`
-	Mode             string             `json:"mode,omitempty"`
-	RouteService     string             `json:"route_service,omitempty"`
-	RoutePort        int                `json:"route_port,omitempty"`
-	ReadinessPath    string             `json:"readiness_path,omitempty"`
-	ID               string             `json:"id"`
-	AppID            string             `json:"app_id"`
-	Environment      string             `json:"environment"`
-	Template         string             `json:"template_id"`
-	TemplateRevision string             `json:"template_revision"`
-	Domains          []string           `json:"domains"`
-	ZeroDowntime     bool               `json:"zerodowntime"`
-	BluePort         int                `json:"blue_port"`
-	GreenPort        int                `json:"green_port,omitempty"`
-	Active           string             `json:"active_slot,omitempty"`
-	State            string             `json:"state"`
-	Slots            map[string]Release `json:"slots"`
-	Releases         []Release          `json:"releases"`
-	DNS              []string           `json:"dns_records,omitempty"`
-	RecoveryDrain    bool               `json:"recovery_drain_pending,omitempty"`
+	ServiceInstances map[string]ServiceInstance `json:"service_instances,omitempty"`
+	ServicePorts     []int                      `json:"service_ports,omitempty"`
+	ServiceMode      bool                       `json:"service_updates,omitempty"`
+	Adoption         *Adoption                  `json:"adoption,omitempty"`
+	ExternalDomains  []string                   `json:"external_domains,omitempty"`
+	Mode             string                     `json:"mode,omitempty"`
+	RouteService     string                     `json:"route_service,omitempty"`
+	RoutePort        int                        `json:"route_port,omitempty"`
+	ReadinessPath    string                     `json:"readiness_path,omitempty"`
+	ID               string                     `json:"id"`
+	AppID            string                     `json:"app_id"`
+	Environment      string                     `json:"environment"`
+	Template         string                     `json:"template_id"`
+	TemplateRevision string                     `json:"template_revision"`
+	Domains          []string                   `json:"domains"`
+	ZeroDowntime     bool                       `json:"zerodowntime"`
+	BluePort         int                        `json:"blue_port"`
+	GreenPort        int                        `json:"green_port,omitempty"`
+	Active           string                     `json:"active_slot,omitempty"`
+	State            string                     `json:"state"`
+	Slots            map[string]Release         `json:"slots"`
+	Releases         []Release                  `json:"releases"`
+	DNS              []string                   `json:"dns_records,omitempty"`
+	RecoveryDrain    bool                       `json:"recovery_drain_pending,omitempty"`
 }
 
 func (p Project) NativeCompose() bool { return p.Mode == "compose" }
@@ -54,7 +57,7 @@ func ValidEnvironment(value string) bool {
 }
 
 func (p Project) ValidateTarget() error {
-	if p.Adoption != nil && (!p.NativeCompose() || p.ZeroDowntime || len(p.Domains) != 0 || p.RouteService != "" || p.BluePort != 0 || p.GreenPort != 0) {
+	if p.Adoption != nil && (!p.NativeCompose() || p.ZeroDowntime || !p.ServiceMode && (len(p.Domains) != 0 || p.RouteService != "" || p.BluePort != 0 || p.GreenPort != 0)) {
 		return Uncertain("ADOPTED_ROUTES_PRESERVED")
 	}
 	if p.AppID == "" || !ValidEnvironment(p.Environment) {
@@ -68,6 +71,11 @@ func (p Project) ValidateTarget() error {
 }
 
 func (p Project) Port(slot string) int {
+	if slot == p.Active {
+		if instance, ok := p.ServiceInstances[p.RouteService]; ok && instance.Port > 0 {
+			return instance.Port
+		}
+	}
 	if slot == "green" {
 		return p.GreenPort
 	}
@@ -91,12 +99,13 @@ type RouteEdit struct {
 }
 
 type Input struct {
-	Previous    *Project    `json:"previous,omitempty"`
-	RouteEdits  []RouteEdit `json:"route_edits,omitempty"`
-	Project     *Project    `json:"project,omitempty"`
-	Release     *Release    `json:"release,omitempty"`
-	Hostname    string      `json:"hostname,omitempty"`
-	DNSRecordID string      `json:"dns_record_id,omitempty"`
+	ServiceUpdate *ServiceUpdate `json:"service_update,omitempty"`
+	Previous      *Project       `json:"previous,omitempty"`
+	RouteEdits    []RouteEdit    `json:"route_edits,omitempty"`
+	Project       *Project       `json:"project,omitempty"`
+	Release       *Release       `json:"release,omitempty"`
+	Hostname      string         `json:"hostname,omitempty"`
+	DNSRecordID   string         `json:"dns_record_id,omitempty"`
 }
 
 // ServiceSpec is safe revision metadata, not raw user YAML or secret values.
@@ -111,12 +120,34 @@ type ServiceSpec struct {
 }
 
 type ServiceInfo struct {
-	Slot        string `json:"slot"`
-	Name        string `json:"name"`
-	Image       string `json:"image"`
-	Template    string `json:"template_id"`
-	Compose     string `json:"compose_revision,omitempty"`
-	Environment string `json:"environment_revision"`
+	Updatable      bool   `json:"updatable,omitempty"`
+	ContainerPorts []int  `json:"container_ports,omitempty"`
+	UpdateReason   string `json:"update_reason,omitempty"`
+	Seamless       bool   `json:"seamless,omitempty"`
+	Slot           string `json:"slot"`
+	Name           string `json:"name"`
+	Image          string `json:"image"`
+	Template       string `json:"template_id"`
+	Compose        string `json:"compose_revision,omitempty"`
+	Environment    string `json:"environment_revision"`
+}
+
+// A service version runs under the original Compose project identity. Its
+// immutable manifest is separate so pulls cannot recreate sibling services.
+type ServiceInstance struct {
+	Name           string              `json:"name"`
+	ContainerID    string              `json:"container_id,omitempty"`
+	Release        Release             `json:"release"`
+	Port           int                 `json:"port,omitempty"`
+	NetworkAliases map[string][]string `json:"network_aliases,omitempty"`
+}
+type ServiceUpdate struct {
+	Service        string              `json:"service"`
+	Mode           string              `json:"mode"`
+	Instance       ServiceInstance     `json:"instance"`
+	Previous       *ServiceInstance    `json:"previous,omitempty"`
+	NetworkAliases map[string][]string `json:"network_aliases,omitempty"`
+	NetworkIDs     map[string]string   `json:"network_ids,omitempty"`
 }
 
 type DomainInfo struct {

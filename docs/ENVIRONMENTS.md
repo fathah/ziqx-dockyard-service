@@ -6,15 +6,17 @@ Before creating or deploying a Compose stack, choose **development**, **staging*
 | --- | --- |
 | `development` | One Compose instance; replacement may cause downtime |
 | `staging` | One Compose instance; replacement may cause downtime |
-| `production` | Blue-green by default; health-gated traffic switch and drain |
+| `production` | One complete stack; eligible app services can use Seamless updates independently |
 
-Only production allows `zerodowntime: true`. Production can explicitly choose `zerodowntime: false` for stacks with persistent named volumes; the existing policy refuses persistent-volume stacks in blue-green mode. Stateless production deployments retain the previous serving slot until the candidate passes checks and the route switches. Live VPS traffic acceptance is still required before claiming zero downtime.
+New Compose projects deploy one complete stack, including their databases. **Services → Pull & update** updates a selected service without recreating dependencies. Eligible production apps can use Seamless updates with readiness checks, a Caddy traffic switch and request drain. Databases, workers, development and staging use Controlled restart. See [Compose deployments](COMPOSE.md) for eligibility and recovery. Older `zerodowntime: true` projects retain their existing whole-stack behavior.
 
 ## One app, three independent deployments
 
 Use the same `app_id` and a different project `id` for each environment. SQLite enforces one project per `(app_id, environment)`. Both values are immutable after creation. Each project has its own domains, reserved ports, Docker Compose project names/networks/volumes, secrets, releases, logs and job history under `/docker/<id>`.
 
 For example, `app_id: shop` can have `shop-development`, `shop-staging` and `shop-production`. Root key policy grants access to each project ID explicitly; sharing `app_id` does not grant cross-environment access. List authorized projects and match `app_id` plus `environment` to resolve an existing deployment target.
+
+In the desktop, choose **Add flavor** from an existing project or select that project in the New project dialog. Already-created flavors are disabled. Each flavor receives its own files and domain settings; secrets are not copied from another environment. Managed Caddy ports are allocated independently. Explicit additional Compose host ports and shared external resources remain the operator's responsibility.
 
 Create staging:
 
@@ -23,23 +25,21 @@ Create staging:
   "id": "shop-staging",
   "app_id": "shop",
   "environment": "staging",
-  "template_id": "web-node",
+  "route_service": "web",
+  "route_port": 80,
   "domains": ["staging.shop.example.com"]
 }
 ```
 
-Creation defaults `zerodowntime` to false here, allocates one port and installs maintenance. Use a distinct domain and ID for development and production; production defaults to two slots/ports. Explicit secondary ports are rejected for single-instance deployments. Wait for creation to succeed before submitting Compose.
+Creation defaults `zerodowntime` to false here, allocates one port and installs maintenance. Use a distinct domain and ID for development and production. Production reserves a reusable pair of app update ports on the first seamless service update. Explicit secondary ports are rejected for single-instance deployments. Wait for creation to succeed before submitting Compose.
 
 Deploy to `/v1/projects/shop-staging/deploy`:
 
 ```json
 {
   "environment": "staging",
-  "compose_yaml": "services:\n  app:\n    image: ghcr.io/your-org/your-app@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
-  "variables": {
-    "DATABASE_URL": "provide-your-staging-secret-value",
-    "APP_URL": "https://staging.shop.example.com"
-  }
+  "compose_yaml": "services:\n  web:\n    image: nginx:${NGINX_TAG}\n",
+  "env_file": "NGINX_TAG=alpine\n"
 }
 ```
 

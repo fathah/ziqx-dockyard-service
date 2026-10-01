@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-service-update"
+description = "Enables the preview_service_update command without any pre-configured scope."
+commands.allow = ["preview_service_update"]
+
+[[permission]]
+identifier = "deny-preview-service-update"
+description = "Denies the preview_service_update command without any pre-configured scope."
+commands.deny = ["preview_service_update"]

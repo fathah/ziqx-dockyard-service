@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import Help from "./Help";
+import Select from "./Select";
 import "./providers.css";
 
 type Provider = { id: string; name: string; kind: "cloudflare" };
@@ -571,24 +572,23 @@ function DNSWorkspace({
           {current && (
             <>
               <div className="dns-toolbar">
-                <label className="provider-field">
-                  Provider
-                  <select
-                    value={current.id}
-                    onChange={(e) => {
-                      setSelected(e.target.value);
-                      setZone(null);
-                      setZonePage(1);
-                      setSearch("");
-                    }}
-                  >
-                    {providers.data?.map((p) => (
-                      <option value={p.id} key={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <Select
+                  label="Provider"
+                  containerClassName="provider-field"
+                  value={current.id}
+                  onValueChange={(value) => {
+                    setSelected(value);
+                    setZone(null);
+                    setZonePage(1);
+                    setSearch("");
+                  }}
+                  options={
+                    providers.data?.map((p) => ({
+                      value: p.id,
+                      label: p.name,
+                    })) ?? []
+                  }
+                />
                 <button
                   className="button small"
                   disabled={zones.loading}
@@ -960,58 +960,40 @@ function RecordEditor({
         }}
       >
         <div className="dns-form-grid">
-          <label className="provider-field">
-            Type
-            <select
-              value={input.type}
-              disabled={!!record || busy}
-              onChange={(e) => {
-                const type = e.target.value;
-                setInput((p) => ({
-                  ...p,
-                  type,
-                  proxied: false,
-                  content: "",
-                  data:
-                    type === "CAA"
-                      ? { flags: 0, tag: "issue", value: "" }
-                      : type === "SRV"
-                        ? { priority: 0, weight: 0, port: 443, target: "" }
-                        : null,
-                }));
-              }}
-            >
-              {supported.map((t) => (
-                <option key={t}>{t}</option>
-              ))}
-            </select>
-          </label>
-          <label className="provider-field">
-            TTL
-            <select
-              value={input.proxied ? 1 : input.ttl}
-              disabled={input.proxied || busy}
-              onChange={(e) => field("ttl", Number(e.target.value))}
-            >
-              {[
-                ...new Set([
-                  1,
-                  60,
-                  120,
-                  300,
-                  600,
-                  1800,
-                  3600,
-                  86400,
-                  input.ttl,
-                ]),
-              ].map((n) => (
-                <option value={n} key={n}>
-                  {n === 1 ? "Auto" : `${n} seconds`}
-                </option>
-              ))}
-            </select>
-          </label>
+          <Select
+            label="Type"
+            containerClassName="provider-field"
+            value={input.type}
+            disabled={!!record || busy}
+            onValueChange={(type) => {
+              setInput((p) => ({
+                ...p,
+                type,
+                proxied: false,
+                content: "",
+                data:
+                  type === "CAA"
+                    ? { flags: 0, tag: "issue", value: "" }
+                    : type === "SRV"
+                      ? { priority: 0, weight: 0, port: 443, target: "" }
+                      : null,
+              }));
+            }}
+            options={supported.map((t) => ({ value: t, label: t }))}
+          />
+          <Select
+            label="TTL"
+            containerClassName="provider-field"
+            value={String(input.proxied ? 1 : input.ttl)}
+            disabled={input.proxied || busy}
+            onValueChange={(value) => field("ttl", Number(value))}
+            options={[
+              ...new Set([1, 60, 120, 300, 600, 1800, 3600, 86400, input.ttl]),
+            ].map((n) => ({
+              value: String(n),
+              label: n === 1 ? "Auto" : `${n} seconds`,
+            }))}
+          />
         </div>
         <label className="provider-field">
           Full record name
@@ -1091,18 +1073,17 @@ function RecordEditor({
                   onChange={(e) => data("flags", Number(e.target.value))}
                 />
               </label>
-              <label className="provider-field">
-                Tag
-                <select
-                  value={input.data?.tag ?? "issue"}
-                  disabled={busy}
-                  onChange={(e) => data("tag", e.target.value)}
-                >
-                  <option>issue</option>
-                  <option>issuewild</option>
-                  <option>iodef</option>
-                </select>
-              </label>
+              <Select
+                label="Tag"
+                containerClassName="provider-field"
+                value={input.data?.tag ?? "issue"}
+                disabled={busy}
+                onValueChange={(value) => data("tag", value)}
+                options={["issue", "issuewild", "iodef"].map((value) => ({
+                  value,
+                  label: value,
+                }))}
+              />
             </div>
             <label className="provider-field">
               Value

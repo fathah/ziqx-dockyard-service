@@ -627,6 +627,7 @@ fn validate_pending(op: &Operation) -> Result<(), String> {
         "create" => json!({"action":"create","data":body}),
         "migrate" => json!({"action":"migrate","project":op.project,"source_sha256":body.get("source_sha256")}),
         "blue-green" => json!({"action":"blue_green","project":op.project,"data":body}),
+        "service-update" => json!({"action":"service_update","project":op.project,"data":body}),
         "deploy" | "routes" => json!({"action":op.action,"project":op.project,"data":body}),
         "stop" => {
             json!({"action":"stop","project":op.project,"confirmation":body.get("confirmation")})
@@ -794,12 +795,21 @@ async fn execute_pending(s: &mut Session) -> Result<Value, String> {
 }
 #[tauri::command]
 async fn preview_blue_green(c: State<'_, Control>, project: String, data: protocol::BlueGreen) -> Result<Value,String> {
- if !protocol::id(&project) || !data.valid() {return Err("Invalid blue–green configuration".into());}
+ if !protocol::id(&project) || !data.valid() {return Err("Invalid seamless updates configuration".into());}
  let op=Operation {method:"POST".into(),target:format!("/v1/projects/{project}/blue-green-preview"),scopes:"deploy.environment".into(),project,action:"blue-green-preview".into(),body:serde_json::to_string(&data).map_err(|_|"Invalid request")?,idempotency:format!("preview-{}",uuid::Uuid::new_v4()),request_id:format!("req-{}",uuid::Uuid::new_v4())};
  let mut inner=c.inner.lock().await;let s=session(&mut inner)?;
  let result=send(s,&op).await?;
  if s.generation!=c.generation.load(Ordering::SeqCst){return Err("SESSION_LOCKED".into());}
  Ok(result)
+}
+#[tauri::command]
+async fn preview_service_update(c: State<'_, Control>, project: String, data: protocol::ServiceUpdate) -> Result<Value,String> {
+    if !protocol::id(&project) || !data.valid() { return Err("Invalid service update".into()); }
+    let op=Operation {method:"POST".into(),target:format!("/v1/projects/{project}/service-update-preview"),scopes:data.scopes().into(),project,action:"service-update-preview".into(),body:serde_json::to_string(&data).map_err(|_|"Invalid request")?,idempotency:format!("preview-{}",uuid::Uuid::new_v4()),request_id:format!("req-{}",uuid::Uuid::new_v4())};
+    let mut inner=c.inner.lock().await;let s=session(&mut inner)?;
+    let result=send(s,&op).await?;
+    if s.generation!=c.generation.load(Ordering::SeqCst){return Err("SESSION_LOCKED".into());}
+    Ok(result)
 }
 #[tauri::command]
 async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, String> {
@@ -824,7 +834,7 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
     };
     let mut review = format!(
         "Server: {name}\nProject: {}\nAction: {}\n",
-        op.project, op.action
+        op.project, if op.action == "blue-green" { "Seamless updates" } else if op.action == "service-update" { "Service update" } else { &op.action }
     );
     let body: Value = serde_json::from_str(&op.body).map_err(|_| "Invalid request")?;
     if let Some(env) = body.get("environment").and_then(Value::as_str) {
@@ -845,7 +855,10 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         "\nPayload SHA-256:\n{}\n\nThis changes services on your VPS.",
         hex::encode(sha2::Sha256::digest(op.body.as_bytes()))
     ));
-    if op.action == "blue-green" {review.push_str("\nStart an isolated green slot, verify health, switch the reviewed domains, then drain and stop the old instance. Original files and the previous project snapshot are retained for recovery.");}
+    if op.action == "blue-green" {review.push_str("\nStart the new version separately, verify health, switch the reviewed domains, then drain and stop the old instance. Original files and the previous project snapshot are retained for recovery.");}
+    if op.action == "service-update" {
+        review.push_str(&format!("\nService: {}\nUpdate: {}\nOther services and their data volumes remain running.", body.get("service").and_then(Value::as_str).unwrap_or(""), if body.get("mode").and_then(Value::as_str)==Some("seamless") { "Seamless traffic switch after health checks" } else { "Controlled restart of this service" }));
+    }
     if op.action == "migrate" { review.push_str("\nAdopt the reviewed existing Compose stack into Dockyard. Containers, ports and Caddy routes stay in place. Future deployments use a single instance."); }
     let sensitive = op.action != "create";
     let approved = native_task(&c, move || {
@@ -889,42 +902,59 @@ async fn retry_pending(c: State<'_, Control>) -> Result<Value, String> {
 }
 #[tauri::command]
 async fn import_compose(c: State<'_, Control>) -> Result<Option<String>, String> {
+    import_project_file(c, false).await
+}
+#[tauri::command]
+async fn import_env(c: State<'_, Control>) -> Result<Option<String>, String> {
+    import_project_file(c, true).await
+}
+async fn import_project_file(
+    c: State<'_, Control>,
+    dotenv: bool,
+) -> Result<Option<String>, String> {
     {
         let mut inner = c.inner.lock().await;
         session(&mut inner)?;
     }
-    native_task(&c, || {
+    native_task(&c, move || {
         use std::{io::Read, os::unix::fs::OpenOptionsExt};
         let Some(path) = native::with_prompt(|| {
-            rfd::FileDialog::new()
-                .set_title("Import Docker Compose")
-                .add_filter("Compose YAML", &["yaml", "yml"])
-                .pick_file()
+            let dialog = rfd::FileDialog::new();
+            if dotenv {
+                dialog
+                    .set_title("Import .env (Command–Shift–. shows hidden files)")
+                    .pick_file()
+            } else {
+                dialog
+                    .set_title("Import Docker Compose")
+                    .add_filter("Compose YAML", &["yaml", "yml"])
+                    .pick_file()
+            }
         }) else {
             return Ok(None);
         };
         let file = std::fs::OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_NOFOLLOW)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
             .open(path)
-            .map_err(|_| "Cannot open Compose file")?;
+            .map_err(|_| "Cannot open project file")?;
         if !file
             .metadata()
-            .map_err(|_| "Cannot inspect Compose file")?
+            .map_err(|_| "Cannot inspect project file")?
             .is_file()
         {
-            return Err("Choose a regular YAML file".into());
+            return Err("Choose a regular text file".into());
         }
         let mut bytes = Zeroizing::new(Vec::new());
         file.take(65537)
             .read_to_end(&mut bytes)
-            .map_err(|_| "Cannot read Compose file")?;
+            .map_err(|_| "Cannot read project file")?;
         if bytes.len() > 65536 {
-            return Err("Compose must be at most 64 KiB".into());
+            return Err("Project files must be at most 64 KiB each".into());
         }
         String::from_utf8(bytes.to_vec())
             .map(Some)
-            .map_err(|_| "Compose must be UTF-8".into())
+            .map_err(|_| "Project files must be UTF-8".into())
     })
     .await
 }
@@ -1141,10 +1171,12 @@ fn main() {
             forget_device,
             read_api,
             preview_blue_green,
+            preview_service_update,
             mutate,
             retry_pending,
             pending_info,
             import_compose,
+            import_env,
             setup_inspect,
             setup_install,
             setup_resume,

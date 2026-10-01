@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import Help from "./Help";
+import Select from "./Select";
 
 type Container = { id: string; name: string; image: string; status: string };
 type Connection = {
@@ -300,10 +301,10 @@ export default function TerminalPage({
               />
               Save password for future app launches
               <Help label="remembering the SSH password">
-                By default, root access is remembered only until Dockyard closes.
-                Enable this to also save the password in this Mac’s Keychain.
-                Touch ID still protects root access. Use Forget password to
-                remove an existing saved password.
+                By default, root access is remembered only until Dockyard
+                closes. Enable this to also save the password in this Mac’s
+                Keychain. Touch ID still protects root access. Use Forget
+                password to remove an existing saved password.
               </Help>
             </label>
             {connection ? (
@@ -359,32 +360,27 @@ export default function TerminalPage({
         </div>
         {connection && mode === "container" && !active && (
           <div className="terminal-container-picker">
-            <label>
-              Running container
-              <select
-                value={container}
-                onChange={(e) => setContainer(e.target.value)}
-                disabled={busy}
-              >
-                <option value="">Choose a container…</option>
-                {connection.containers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name} · {c.image}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Shell
-              <select
-                value={shell}
-                onChange={(e) => setShell(e.target.value)}
-                disabled={busy}
-              >
-                <option value="/bin/sh">sh</option>
-                <option value="/bin/bash">bash (if installed)</option>
-              </select>
-            </label>
+            <Select
+              label="Running container"
+              value={container}
+              onValueChange={setContainer}
+              disabled={busy}
+              placeholder="Choose a container…"
+              options={connection.containers.map((c) => ({
+                value: c.id,
+                label: `${c.name} · ${c.image}`,
+              }))}
+            />
+            <Select
+              label="Shell"
+              value={shell}
+              onValueChange={setShell}
+              disabled={busy}
+              options={[
+                { value: "/bin/sh", label: "sh" },
+                { value: "/bin/bash", label: "bash (if installed)" },
+              ]}
+            />
             <button
               className="button"
               disabled={!container || busy}

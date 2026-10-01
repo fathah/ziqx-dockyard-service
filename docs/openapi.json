@@ -2,9 +2,9 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Ziqx Dockyard Service API",
-    "version": "0.6.0",
+    "version": "0.7.0",
     "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
-    "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, service, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved."
+    "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Native service update eligibility additionally verifies the current immutable Compose manifest. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved.\n\nIndividual service updates preserve the complete Compose project and its dependencies. Seamless service updates are production-only and switch only the routed stateless app; stateful services use restart."
   },
   "servers": [
     {
@@ -2197,6 +2197,152 @@
           }
         ]
       }
+    },
+    "/v1/projects/{id}/service-update-preview": {
+      "post": {
+        "operationId": "previewServiceUpdate",
+        "summary": "Review individual service update",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires server-wide compose.admin. Restart updates only the selected service. Seamless requires production, a routed app, a healthcheck and safe concurrent versions; it preserves databases and dependencies, switches the reviewed Caddy route, drains requests and stops only the previous app. Use the current full Compose release ID. Preview makes no live changes. Execute requires the preview review hash and returns a durable service_update job. Unchanged image IDs skip deployment. Unknown outcomes require local recovery.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bound review with no secrets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceUpdateReview"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Compatibility or stale-state blocker"
+          },
+          "403": {
+            "description": "Scope or Compose administrator permission missing"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.execute"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceUpdate"
+              }
+            }
+          }
+        },
+        "x-conditional-scopes": [
+          {
+            "when": "mode is seamless",
+            "scopes": [
+              "projects.write",
+              "sites.write"
+            ]
+          }
+        ]
+      }
+    },
+    "/v1/projects/{id}/service-update": {
+      "post": {
+        "operationId": "updateService",
+        "summary": "Pull and update selected service",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires server-wide compose.admin. Restart updates only the selected service. Seamless requires production, a routed app, a healthcheck and safe concurrent versions; it preserves databases and dependencies, switches the reviewed Caddy route, drains requests and stops only the previous app. Use the current full Compose release ID. Preview makes no live changes. Execute requires the preview review hash and returns a durable service_update job. Unchanged image IDs skip deployment. Unknown outcomes require local recovery.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "409": {
+            "description": "Compatibility or stale-state blocker"
+          },
+          "403": {
+            "description": "Scope or Compose administrator permission missing"
+          },
+          "202": {
+            "description": "Durable selected-service job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          }
+        },
+        "x-required-scopes": [
+          "deploy.execute"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceUpdate"
+              }
+            }
+          }
+        },
+        "x-conditional-scopes": [
+          {
+            "when": "mode is seamless",
+            "scopes": [
+              "projects.write",
+              "sites.write"
+            ]
+          }
+        ]
+      }
     }
   },
   "components": {
@@ -2450,7 +2596,8 @@
           "restart",
           "start",
           "stop",
-          "project_adopt"
+          "project_adopt",
+          "service_update"
         ]
       },
       "AcceptedJob": {
@@ -2661,6 +2808,45 @@
             "type": "array",
             "items": {
               "type": "string"
+            }
+          },
+          "service_updates": {
+            "type": "boolean"
+          },
+          "service_ports": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "service_instances": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "release": {
+                  "$ref": "#/components/schemas/Release"
+                },
+                "port": {
+                  "type": "integer"
+                },
+                "network_aliases": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "container_id": {
+                  "type": "string",
+                  "description": "Reviewed container identity when applicable"
+                }
+              }
             }
           }
         },
@@ -3393,6 +3579,21 @@
           "environment_revision": {
             "type": "string",
             "pattern": "^env-[0-9a-f]{32}$"
+          },
+          "updatable": {
+            "type": "boolean"
+          },
+          "seamless": {
+            "type": "boolean"
+          },
+          "update_reason": {
+            "type": "string"
+          },
+          "container_ports": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
           }
         },
         "description": "Recorded slot service inventory from SQLite. Does not assert the container is currently running/healthy. Legacy image values resolve from the recorded slot release."
@@ -3716,6 +3917,81 @@
           },
           "env_file": {
             "type": "string"
+          }
+        }
+      },
+      "ServiceUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_release_id",
+          "service",
+          "mode"
+        ],
+        "properties": {
+          "expected_release_id": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "restart",
+              "seamless"
+            ]
+          },
+          "container_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "readiness_path": {
+            "type": "string",
+            "maxLength": 2048
+          },
+          "review_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      },
+      "ServiceUpdateReview": {
+        "type": "object",
+        "properties": {
+          "review_sha256": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "restart",
+              "seamless"
+            ]
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "container_port": {
+            "type": "integer"
+          },
+          "host_port": {
+            "type": "integer"
+          },
+          "imports_routes": {
+            "type": "boolean"
+          },
+          "dependencies_unchanged": {
+            "type": "boolean"
           }
         }
       }

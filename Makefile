@@ -16,7 +16,7 @@ build:
 	CGO_ENABLED=1 go build -trimpath -ldflags='$(VERSION_FLAGS)' -o bin/dockyardctl ./cmd/dockyardctl
 
 compose-check:
-	DOCKYARD_COMPOSE_TEST=1 go test ./internal/runtime -run 'Test(ComposeLiteralEnvironmentRoundTrip|SubmittedMultiServiceComposeRoundTrip)' -v
+	DOCKYARD_COMPOSE_TEST=1 go test ./internal/runtime -run 'Test(ComposeLiteralEnvironmentRoundTrip|SubmittedMultiServiceComposeRoundTrip|Native.*RoundTrip)' -v
 
 linux-build:
 	docker build --pull --build-arg DOCKYARD_VERSION=$(DOCKYARD_VERSION) --build-arg DOCKYARD_COMMIT=local --file Dockerfile.build --output bin/linux .

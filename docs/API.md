@@ -24,6 +24,8 @@ The agent defaults to `https://127.0.0.1:9123`; it can bind an explicitly config
 | PUT | `/v1/projects/{id}/routes` | `sites.write` | Replace assigned domain list; update ports while stopped |
 | POST | `/v1/projects/{id}/dns` | `dns.write` | Create a Cloudflare record for an already assigned subdomain |
 | POST | `/v1/projects/{id}/deploy` | `deploy.execute`; also `deploy.environment` when new environments supplied | Validate Compose YAML, pull/start all services, health-gate stack, switch route, drain previous slot |
+| POST | `/v1/projects/{id}/service-update-preview` | `deploy.execute`; Seamless also needs `projects.write sites.write` | Review a selected service, immutable configuration, routes and network identities; no live mutation |
+| POST | `/v1/projects/{id}/service-update` | Same as preview; server-wide `compose.admin` required | Pull and update only the reviewed service; skip unchanged image; preserve dependencies |
 | POST | `/v1/projects/{id}/rollback` | `deploy.rollback` | Activate a retained Compose/environment configuration |
 | POST | `/v1/projects/{id}/restart` | `deploy.execute` | Rolling in blue-green mode; downtime in single-slot mode |
 | POST | `/v1/projects/{id}/stop` | `deploy.stop` | Confirmed maintenance route, drain, then stop identified services |
@@ -84,3 +86,7 @@ Log reads have a separate concurrency cap of two. Redaction refuses more than 50
 One outstanding job per project returns `409 PROJECT_BUSY` until completion; unrelated projects enter a global FIFO with one worker. Queue/project/history quotas reject further work when exhausted. Uncertain side effects use `recovery_required` and globally block mutations. See the local recovery procedure in [INSTALL.md](INSTALL.md).
 
 Errors follow `{"error":{"code":"PORT_IN_USE","message":"The operation could not be completed.","request_id":"..."}}`. Auth failures are 401; scope/project failures 403; invalid inputs 400/422; missing resources 404; conflicts 409; quotas 429; unavailable dependencies/recovery 503. A job accepted with 202 reports any later failure on its job resource.
+
+## Individual service update request
+
+Preview and execute use `expected_release_id` (the current full Compose slot release), `service` and `mode` (`restart` or `seamless`). Seamless requires `container_port` and accepts `readiness_path`; restart omits both. Execute additionally sends the exact preview's `review_sha256`. No source files or environment values are transmitted. The review is bound to the project snapshot, previous image, actual Docker networks, routes and available ports. Changed reviews return `409 SERVICE_REVIEW_CHANGED`. Accepted jobs use action `service_update` and retain the full recovery plan privately; retries return the same job. GET services adds `updatable`, `seamless`, `container_ports` and `update_reason`, and shows the active service image/manifest from the recorded override.

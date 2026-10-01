@@ -163,6 +163,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.blueGreen(w, r, p, body, parts[1], parts[2] == "blue-green-preview")
 		return
 	}
+	if r.Method == "POST" && len(parts) == 3 && parts[0] == "projects" && (parts[2] == "service-update" || parts[2] == "service-update-preview") {
+		a.serviceUpdate(w, r, p, body, parts[1], parts[2] == "service-update-preview")
+		return
+	}
 	a.mutate(w, r, p, body)
 }
 func require(w http.ResponseWriter, p auth.Principal, scope, id string) bool {
@@ -480,6 +484,28 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		if err != nil {
 			fail(w, err, p.RequestID)
 			return
+		}
+		if project.NativeCompose() {
+			options, err := runtime.ServiceUpdateOptions(e.Config, project)
+			if err != nil {
+				fail(w, err, p.RequestID)
+				return
+			}
+			for i := range services {
+				item := &services[i]
+				option := options[item.Name]
+				if item.Slot == project.Active {
+					item.Updatable = option.Updatable
+					item.Seamless = option.Seamless
+					item.UpdateReason = option.Reason
+					item.ContainerPorts = option.Ports
+					if instance, ok := project.ServiceInstances[item.Name]; ok {
+						item.Image = instance.Release.Image
+						item.Compose = instance.Release.Compose
+						item.Environment = instance.Release.Environment
+					}
+				}
+			}
 		}
 		write(w, 200, map[string]any{"services": services})
 	case "domains":
@@ -996,6 +1022,17 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					}
 				}
 			}
+			if action == "rollback" && p.NativeCompose() && p.ServiceMode {
+				release, err = runtime.RebindNativeRoute(e.Config, p, release)
+				if err != nil {
+					fail(w, err, request)
+					return
+				}
+				if err = runtime.IndexCompose(e.Config, e.Store, p, release); err != nil {
+					fail(w, err, request)
+					return
+				}
+			}
 			release.ID = state.NewID("rel-")
 			release.Created = time.Now().UTC()
 			j.Input.Release = &release
@@ -1022,6 +1059,10 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 				return
 			}
 			if p.NativeCompose() {
+				if instance := p.ServiceInstances[p.RouteService]; instance.Port > 0 && input.Port != 0 && input.Port != p.BluePort {
+					problem(w, 409, "SERVICE_PORT_MANAGED", request)
+					return
+				}
 				if p.RouteService == "" && (len(input.Domains) > 0 || input.Port != 0 || input.Secondary != 0) {
 					problem(w, 400, "COMPOSE_ROUTE_NOT_CONFIGURED", request)
 					return

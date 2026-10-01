@@ -42,12 +42,15 @@ import toast from "react-hot-toast";
 import * as api from "./api";
 import SetupWizard from "./SetupWizard";
 import CodeEditor from "./CodeEditor";
-import { lintCompose } from "./composeLint";
+import { composeForEditor, lintCompose } from "./composeLint";
 import ProjectConfiguration from "./ProjectConfiguration";
+import ProjectHeader from "./ProjectHeader";
+import ServiceUpdate from "./ServiceUpdate";
 import TerminalPage from "./TerminalPage";
 import { DomainProviderSettings, ProviderDomains } from "./DomainProviders";
 import Help from "./Help";
-import { projectIdentity } from "./projectNaming";
+import Select from "./Select";
+import { flavorIdentity, projectIdentity } from "./projectNaming";
 import { demoInventory, demoJobs, demoProjects } from "./demo";
 import dockyardIcon from "../src-tauri/icons/icon.png";
 import type {
@@ -73,7 +76,7 @@ type Page =
   | "terminal"
   | "settings";
 type Modal =
-  | { kind: "create" }
+  | { kind: "create"; appID?: string }
   | { kind: "deploy" | "routes" | "stop" | "rollback"; project: Project }
   | null;
 type Audit = { event_id: number; event: Record<string, unknown> };
@@ -92,6 +95,19 @@ const labels: Record<Environment, string> = {
   staging: "Staging",
   development: "Development",
 };
+const instanceLabel = (slot: string) =>
+  ({
+    blue: "Instance 1",
+    green: "Instance 2",
+    active: "Live instance",
+    inactive: "Standby instance",
+  })[slot] ?? slot;
+const operationLabel = (action: string) =>
+  action === "blue-green" || action === "blue_green"
+    ? "Seamless updates"
+    : action === "service-update" || action === "service_update"
+      ? "Service update"
+      : action;
 const ago = (s?: string) =>
   s
     ? new Date(s).toLocaleString(undefined, {
@@ -695,7 +711,8 @@ function App() {
             <History size={17} />
             <span>
               <strong>
-                Saved operation: {pending.action} · {pending.project}
+                Saved operation: {operationLabel(pending.action)} ·{" "}
+                {pending.project}
               </strong>
               <br />
               {pending.job_id
@@ -770,6 +787,10 @@ function App() {
               action={simple}
               execute={perform}
               report={report}
+              openServerDetails={() => {
+                setSelected(null);
+                setPage("security");
+              }}
             />
           ) : observedProject ? (
             <ObservedProjectDetail
@@ -1232,11 +1253,9 @@ function Projects({
                   <span className="deployment-label">
                     {p.zerodowntime ? <Layers3 size={14} /> : <Box size={14} />}
                     <span>
-                      {p.zerodowntime ? "Blue–green" : "Single instance"}
+                      {p.zerodowntime ? "Seamless updates" : "Single instance"}
                       <small>
-                        {p.active_slot
-                          ? `${p.active_slot} slot`
-                          : "No active slot"}
+                        {p.active_slot ? "Live instance" : "Not deployed"}
                       </small>
                     </span>
                   </span>
@@ -1327,13 +1346,14 @@ function Stat({
     </div>
   );
 }
-function ProjectDetail({
+export function ProjectDetail({
   project: p,
   preview,
   open,
   action,
   execute,
   report,
+  openServerDetails,
 }: {
   project: Project;
   preview: boolean;
@@ -1341,11 +1361,15 @@ function ProjectDetail({
   action: (a: "start" | "restart", p: Project) => void;
   execute: (m: unknown) => Promise<void>;
   report: (e: unknown) => void;
+  openServerDetails: () => void;
 }) {
   const [tab, setTab] = useState("overview");
   const [configDirty, setConfigDirty] = useState(false);
   const [services, setServices] = useState<Service[]>([]);
+  const [updatingService, setUpdatingService] = useState<Service>();
   const [servicesLoading, setServicesLoading] = useState(!preview);
+  const [servicesError, setServicesError] = useState(false);
+  const [servicesRefresh, setServicesRefresh] = useState(0);
   const [dnsLoading, setDnsLoading] = useState(!preview);
   const [logsLoading, setLogsLoading] = useState(false);
   const [status, setStatus] = useState<{
@@ -1365,6 +1389,19 @@ function ProjectDetail({
   const [dns, setDNS] = useState<
     { hostname: string; assigned: boolean; dns_record_id?: string }[]
   >([]);
+  const serviceRevision = JSON.stringify(p.service_instances ?? {});
+  const needsServerUpdate = p.mode === "compose" && services.some(
+    (s) => s.slot === p.active_slot && s.updatable === undefined &&
+      s.seamless === undefined && !s.update_reason && !s.container_ports,
+  );
+  function updateBlockedReason(s: Service) {
+    if (servicesLoading) return "Checking service availability…";
+    if (servicesError) return "Could not check services. Refresh to try again.";
+    if (p.state !== "running") return "Start this project before updating services.";
+    if (status?.busy) return "Another operation is running. Refresh when it finishes.";
+    if (!s.updatable) return s.update_reason || "Update Dockyard on the server to enable this action.";
+    return "";
+  }
   useEffect(() => {
     let cancelled = false;
     if (preview) {
@@ -1373,6 +1410,10 @@ function ProjectDetail({
       setServices([
         {
           name: "app",
+          updatable: true,
+          seamless: p.environment === "production" && !p.zerodowntime,
+          container_ports: [3000],
+          update_reason: "This flavor uses a controlled restart.",
           slot: p.active_slot ?? "blue",
           image: p.releases[0].image,
           template_id: p.template_id,
@@ -1380,6 +1421,9 @@ function ProjectDetail({
         },
         {
           name: "worker",
+          updatable: true,
+          seamless: false,
+          update_reason: "Background workers use a controlled restart.",
           slot: p.active_slot ?? "blue",
           image: p.releases[0].image,
           template_id: "worker-node",
@@ -1390,17 +1434,22 @@ function ProjectDetail({
       return;
     }
     setServicesLoading(true);
+    setServicesError(false);
+    setStatus(undefined);
     setDnsLoading(true);
     setServices([]);
     setDNS([]);
-    void api
-      .read<{ services: Service[] }>({
+    void Promise.all([
+      api.read<{ services: Service[] }>({
         kind: "project",
         project: p.id,
         view: "services",
-      })
-      .then((d) => {
+      }),
+      api.read<NonNullable<typeof status>>({kind: "project", project: p.id, view: "status"}),
+    ])
+      .then(([d, projectStatus]) => {
         if (!cancelled) {
+          setStatus(projectStatus);
           const items = d.services ?? [];
           setServices(items);
           setService((current) =>
@@ -1411,7 +1460,10 @@ function ProjectDetail({
         }
       })
       .catch((e) => {
-        if (!cancelled) report(e);
+        if (!cancelled) {
+          setServicesError(true);
+          report(e);
+        }
       })
       .finally(() => {
         if (!cancelled) setServicesLoading(false);
@@ -1439,7 +1491,8 @@ function ProjectDetail({
     return () => {
       cancelled = true;
     };
-  }, [p.id, p.releases.at(-1)?.id, p.domains.join(), preview, report]);
+  }, [p.id, p.releases.at(-1)?.id, p.domains.join(), p.state, p.active_slot,
+    p.service_updates, serviceRevision, servicesRefresh, preview, report]);
   async function check() {
     setBusy(true);
     try {
@@ -1490,58 +1543,24 @@ function ProjectDetail({
   }
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <div className="eyebrow">{p.id}</div>
-          <h1>
-            {p.app_id}{" "}
-            <Tag tone={p.environment === "production" ? "green" : "neutral"}>
-              {labels[p.environment]}
-            </Tag>
-          </h1>
-          <p>
-            {[...p.domains, ...(p.external_domains ?? [])].join(" · ")}{" "}
-            <span className="mono">/{p.id}</span>
-          </p>
-        </div>
-        <button
-          className="button primary"
-          onClick={() =>
-            p.mode === "compose"
-              ? setTab("configuration")
-              : open({ kind: "deploy", project: p })
-          }
-        >
-          <ArrowUpRight size={17} />
-          {p.mode === "compose" ? "Edit & deploy" : "Deploy Compose"}
-        </button>
-      </div>
-      <div className="detail-meta">
-        <Tag tone={p.state === "running" ? "green" : "neutral"}>{p.state}</Tag>
-        <span>
-          <Layers3 size={15} />
-          {p.zerodowntime ? "Production blue–green" : "Single Compose instance"}
-          {!p.zerodowntime &&
-            p.mode === "compose" &&
-            p.environment === "production" && (
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => setTab("configuration")}
-              >
-                Change strategy <Settings2 size={15} />
-              </button>
-            )}
-        </span>
-        <span>
-          <FileCode2 size={15} />
-          {p.mode === "compose" ? "Docker Compose" : p.template_id}
-        </span>
-        <span>
-          <Globe2 size={15} />
-          {p.domains.length + (p.external_domains?.length ?? 0)} domains
-        </span>
-      </div>
+      <ProjectHeader
+        project={p}
+        onAddFlavor={() => open({ kind: "create", appID: p.app_id })}
+        onDeploy={() =>
+          p.mode === "compose"
+            ? setTab("configuration")
+            : open({ kind: "deploy", project: p })
+        }
+        onConfigure={() => setTab("services")}
+        onDomains={() => {
+          if (
+            configDirty &&
+            !window.confirm("Discard your unsaved configuration edits?")
+          )
+            return;
+          setTab("domains");
+        }}
+      />
       <nav className="tabs project-tabs" aria-label="Project sections">
         {[
           { id: "overview", label: "Overview", icon: LayoutDashboard },
@@ -1583,15 +1602,16 @@ function ProjectDetail({
       )}
       {p.adoption && (
         <p className="alert pending">
-          Managed in place · Caddy routes remain in the existing Caddyfile.
-          Redeploys use one instance.
+          {p.service_updates
+            ? "Managed in place · individual app updates use Dockyard's website routes. Database services remain in this project."
+            : "Managed in place · Caddy routes remain in the existing Caddyfile. Update individual services from Services."}
         </p>
       )}
       {tab === "overview" && (
         <div className="detail-grid">
           <section className="panel">
             <div className="section-heading">
-              <h2>Deployment slots</h2>
+              <h2>App instances</h2>
               <Tag>
                 {p.zerodowntime
                   ? "Traffic switch after readiness"
@@ -1605,14 +1625,29 @@ function ProjectDetail({
                   className={`slot-card ${s} ${p.active_slot === s ? "serving" : ""}`}
                 >
                   <div>
-                    <span className="eyebrow">{s.toUpperCase()} SLOT</span>
+                    <span className="eyebrow">{instanceLabel(s)}</span>
                     <Tag tone={p.active_slot === s ? "green" : "neutral"}>
-                      {p.active_slot === s ? "Active" : "Alternate"}
+                      {p.active_slot === s ? "Live" : "Standby"}
                     </Tag>
                   </div>
                   <Server size={28} />
-                  <h3>127.0.0.1:{s === "blue" ? p.blue_port : p.green_port}</h3>
-                  <p>{p.slots[s]?.id ?? "No release recorded"}</p>
+                  <h3>
+                    127.0.0.1:
+                    {s === p.active_slot &&
+                    p.route_service &&
+                    p.service_instances?.[p.route_service]?.port
+                      ? p.service_instances[p.route_service].port
+                      : s === "blue"
+                        ? p.blue_port
+                        : p.green_port}
+                  </h3>
+                  <p>
+                    {s === p.active_slot &&
+                    p.route_service &&
+                    p.service_instances?.[p.route_service]
+                      ? p.service_instances[p.route_service].release.id
+                      : (p.slots[s]?.id ?? "No release recorded")}
+                  </p>
                   <small className="mono">
                     {p.slots[s]?.image.split("@")[1]?.slice(0, 22) ??
                       "Awaiting Compose deployment"}
@@ -1622,7 +1657,7 @@ function ProjectDetail({
               ))}
             </div>
             <p className="muted">
-              Slots show recorded metadata. Check live status to verify
+              Instances show recorded metadata. Check live status to verify
               container health and the Caddy route.
             </p>
           </section>
@@ -1678,9 +1713,34 @@ function ProjectDetail({
       {tab === "services" && (
         <section className="panel">
           <div className="section-heading">
-            <h2>Multi-service stack</h2>
-            {!servicesLoading && <Tag>{services.length} recorded services</Tag>}
+            <h2>Services</h2>
+            <div className="service-heading-actions">
+              {!servicesLoading && !servicesError && <Tag>{services.length} recorded services</Tag>}
+              <button className="button small" disabled={servicesLoading}
+                onClick={() => setServicesRefresh((n) => n + 1)}>
+                <RefreshCw size={14} /> {servicesLoading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
           </div>
+          <p className="muted">
+            Update one service at a time. Its dependencies keep running.
+          </p>
+          {!servicesLoading && needsServerUpdate && (
+            <div className="service-update-notice" role="status">
+              <div>
+                <strong>Server update required</strong>
+                <p>This server hasn’t reported support for individual updates. In Server details → Server software, check and update Dockyard to version 0.7.0 or later. Then refresh Services.</p>
+              </div>
+              <button className="button small" onClick={openServerDetails}>
+                <Server size={14} /> Server details
+              </button>
+            </div>
+          )}
+          {servicesError && (
+            <div className="service-update-notice" role="alert">
+              Could not load service availability. Refresh to try again.
+            </div>
+          )}
           {servicesLoading && (
             <SkeletonRows count={3} label="Loading services" />
           )}
@@ -1690,15 +1750,52 @@ function ProjectDetail({
               <div>
                 <strong>{s.name}</strong>
                 <p className="mono">{s.image}</p>
+                {s.updatable && (
+                  <small className="service-update-hint">
+                    {s.seamless
+                      ? "Seamless updates available"
+                      : "Controlled restart"}
+                  </small>
+                )}
+                {p.mode === "compose" && s.slot === p.active_slot &&
+                  updateBlockedReason(s) && !(needsServerUpdate && !s.update_reason && !s.updatable) && (
+                    <small className="service-update-hint">{updateBlockedReason(s)}</small>
+                  )}
               </div>
-              <Tag>{s.slot}</Tag>
+              <Tag>{instanceLabel(s.slot)}</Tag>
               {s.template_id && <Tag>{s.template_id}</Tag>}
+              {p.mode === "compose" && s.slot === p.active_slot && (
+                <button
+                  className="button small"
+                  disabled={Boolean(updateBlockedReason(s))}
+                  title={updateBlockedReason(s) || `Update only ${s.name}`}
+                  onClick={() => setUpdatingService(s)}
+                >
+                  <RefreshCw size={14} /> Pull & update
+                </button>
+              )}
             </div>
           ))}
-          {!services.length && !servicesLoading && (
+          {!services.length && !servicesLoading && !servicesError && (
             <Empty title="No services recorded">
               Deploy your first validated Compose stack.
             </Empty>
+          )}
+          {updatingService && (
+            <ServiceUpdate
+              key={p.id + updatingService.name}
+              project={p}
+              service={
+                services.find(
+                  (s) =>
+                    s.name === updatingService.name &&
+                    s.slot === updatingService.slot,
+                ) ?? updatingService
+              }
+              preview={preview}
+              execute={execute}
+              onClose={() => setUpdatingService(undefined)}
+            />
           )}
         </section>
       )}
@@ -1748,40 +1845,32 @@ function ProjectDetail({
             <Tag>Bounded · 200 lines</Tag>
           </div>
           <div className="log-filters">
-            <label>
-              Service
-              <select
-                value={service}
-                onChange={(e) => setService(e.target.value)}
-              >
-                {Array.from(
-                  new Set(["app", ...services.map((s) => s.name)]),
-                ).map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Slot
-              <select value={slot} onChange={(e) => setSlot(e.target.value)}>
-                {[
-                  "active",
-                  ...(p.zerodowntime
-                    ? ["inactive", "blue", "green"]
-                    : ["blue"]),
-                ].map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Since
-              <select value={since} onChange={(e) => setSince(e.target.value)}>
-                {["5m", "30m", "1h", "24h"].map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
-            </label>
+            <Select
+              label="Service"
+              value={service}
+              onValueChange={setService}
+              options={Array.from(
+                new Set(["app", ...services.map((s) => s.name)]),
+              ).map((s) => ({ value: s, label: s }))}
+            />
+            <Select
+              label="Instance"
+              value={slot}
+              onValueChange={setSlot}
+              options={[
+                "active",
+                ...(p.zerodowntime ? ["inactive", "blue", "green"] : ["blue"]),
+              ].map((s) => ({ value: s, label: instanceLabel(s) }))}
+            />
+            <Select
+              label="Since"
+              value={since}
+              onValueChange={setSince}
+              options={["5m", "30m", "1h", "24h"].map((s) => ({
+                value: s,
+                label: s,
+              }))}
+            />
             <button
               className="button"
               disabled={busy}
@@ -1970,7 +2059,8 @@ function Jobs({
             </span>
             <div>
               <strong>
-                {j.action[0].toUpperCase() + j.action.slice(1)}{" "}
+                {operationLabel(j.action)[0].toUpperCase() +
+                  operationLabel(j.action).slice(1)}{" "}
                 <span className="muted">/ {j.project_id}</span>
               </strong>
               <p className="mono">{j.job_id}</p>
@@ -3197,7 +3287,7 @@ function composeError(error: unknown): string {
     COMPOSE_BLUE_GREEN_INCOMPATIBLE:
       "This stack cannot run two independent copies. Use a single instance for shared storage, host ports or fixed container names.",
     COMPOSE_BLUE_GREEN_HEALTHCHECK_REQUIRED:
-      "Add a healthcheck to every service for blue–green deployment, or use a single instance.",
+      "Add a healthcheck to every service for seamless updates deployment, or use a single instance.",
     COMPOSE_NO_ACTIVE_SERVICES:
       "No active services were found. Check your Compose profiles and .env settings.",
   };
@@ -3229,22 +3319,32 @@ function OperationModal({
     m.kind === "create" || m.kind === "deploy" ? 0 : 1,
   );
   const [env, setEnv] = useState<Environment | "">("");
+  const [existingApp, setExistingApp] = useState(
+    m.kind === "create" ? (m.appID ?? "") : "",
+  );
   const [projectName, setProjectName] = useState("");
   const [nameConflicts, setNameConflicts] = useState<
     Pick<Project, "id" | "app_id" | "environment">[]
   >([]);
-  const identity = projectIdentity(
-    projectName,
-    env,
-    [...projects, ...nameConflicts],
-    observedIDs,
-  );
+  const identity = existingApp
+    ? flavorIdentity(
+        existingApp,
+        env,
+        [...projects, ...nameConflicts],
+        observedIDs,
+      )
+    : projectIdentity(
+        projectName,
+        env,
+        [...projects, ...nameConflicts],
+        observedIDs,
+      );
   const [routeService, setRouteService] = useState("web");
   const [routePort, setRoutePort] = useState("80");
   const [domains, setDomains] = useState(p?.domains.join("\n") ?? "");
   const [blue, setBlue] = useState("");
   const [green, setGreen] = useState("");
-  const [zero, setZero] = useState(false);
+  const zero = false;
   const [compose, setCompose] = useState("");
   const [variables, setVariables] = useState("");
   const [confirmation, setConfirmation] = useState("");
@@ -3255,7 +3355,9 @@ function OperationModal({
   const [suggestion, setSuggestion] = useState<number>();
   const name =
     m.kind === "create"
-      ? "New project"
+      ? existingApp
+        ? "Add project flavor"
+        : "New project"
       : m.kind === "deploy"
         ? "Deploy Compose"
         : m.kind === "routes"
@@ -3392,7 +3494,9 @@ function OperationModal({
           { ...identity, environment: env },
         ]);
         setError(
-          "That name was just taken on the server. A new available name is ready below; review and submit again.",
+          existingApp
+            ? "This flavor or folder was just created on the server. Refresh projects before trying again."
+            : "That name was just taken on the server. A new available name is ready below; review and submit again.",
         );
       } else setError(composeError(e));
     } finally {
@@ -3401,7 +3505,7 @@ function OperationModal({
   }
   useEffect(() => {
     function key(e: KeyboardEvent) {
-      if (e.key === "Escape" && !busy) close();
+      if (e.key === "Escape" && !e.defaultPrevented && !busy) close();
     }
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
@@ -3445,11 +3549,30 @@ function OperationModal({
         )}
         {step === 0 ? (
           <div className="wizard-body">
+            {m.kind === "create" && (
+              <Select
+                label="Project"
+                value={existingApp}
+                onValueChange={(value) => {
+                  setExistingApp(value);
+                  setEnv("");
+                }}
+                options={[
+                  { value: "", label: "Create a new project" },
+                  ...[...new Set(projects.map((p) => p.app_id))]
+                    .sort()
+                    .map((app) => ({
+                      value: app,
+                      label: `${app} · add a flavor`,
+                    })),
+                ]}
+              />
+            )}
             <h3>
-              Environment{" "}
+              Flavor / environment{" "}
               <Help label="environments">
                 Each app has separate development, staging and production
-                environments. Blue–green deployment is available only for
+                environments. Seamless updates deployment is available only for
                 stateless production stacks. Development and staging use one
                 instance.
               </Help>
@@ -3459,6 +3582,13 @@ function OperationModal({
                 <button
                   key={e}
                   className={env === e ? "chosen" : ""}
+                  disabled={
+                    m.kind === "create" &&
+                    !!existingApp &&
+                    projects.some(
+                      (p) => p.app_id === existingApp && p.environment === e,
+                    )
+                  }
                   onClick={() => choose(e)}
                 >
                   <span className={`env-option-icon ${e}`}>
@@ -3467,9 +3597,15 @@ function OperationModal({
                   <span>
                     <strong>{labels[e]}</strong>
                     <small>
-                      {e === "production"
-                        ? "Blue–green available"
-                        : "Single instance"}
+                      {m.kind === "create" &&
+                      existingApp &&
+                      projects.some(
+                        (p) => p.app_id === existingApp && p.environment === e,
+                      )
+                        ? "Already created"
+                        : e === "production"
+                          ? "Seamless updates available"
+                          : "Single instance"}
                     </small>
                     {m.kind === "deploy" && (
                       <small>
@@ -3483,6 +3619,13 @@ function OperationModal({
                 </button>
               ))}
             </div>
+            {m.kind === "create" && (
+              <p className="muted">
+                Each flavor has its own services, .env, Compose file, ports and
+                Caddy domains. Supply the files for this flavor after creating
+                it.
+              </p>
+            )}
             <div className="modal-footer">
               <span />
               <button
@@ -3533,7 +3676,7 @@ function OperationModal({
                   </Help>
                 </div>
               )}
-              {m.kind === "create" && (
+              {m.kind === "create" && !existingApp && (
                 <>
                   <label htmlFor="project-name">
                     Project name
@@ -3563,6 +3706,17 @@ function OperationModal({
                     )}
                   </label>
                 </>
+              )}
+              {m.kind === "create" && existingApp && (
+                <p>
+                  Project <strong>{existingApp}</strong> · {env && labels[env]}
+                </p>
+              )}
+              {m.kind === "create" && identity && (
+                <p className="muted">
+                  Files: <code>/docker/{identity.id}/compose.yml</code> and{" "}
+                  <code>.env</code>
+                </p>
               )}
               {(m.kind === "create" || m.kind === "routes") && (
                 <>
@@ -3608,26 +3762,6 @@ function OperationModal({
                       </label>
                     </div>
                   )}
-                  {domains.trim() &&
-                    env === "production" &&
-                    m.kind === "create" && (
-                      <label className="checkbox-label">
-                        <input
-                          type="checkbox"
-                          checked={zero}
-                          onChange={(e) => setZero(e.target.checked)}
-                        />
-                        <span>
-                          <strong>Blue–green deployment</strong>
-                          <Help label="blue–green deployment">
-                            Production deploys into the alternate slot, then
-                            switches traffic after health checks pass. This
-                            requires stateless stacks; persistent volumes use a
-                            single instance.
-                          </Help>
-                        </span>
-                      </label>
-                    )}
                   {domains.trim() && (
                     <>
                       {" "}
@@ -3636,6 +3770,11 @@ function OperationModal({
                           Primary port <small>(optional)</small>
                           <input
                             type="number"
+                            disabled={
+                              m.kind === "routes" &&
+                              !!p?.route_service &&
+                              !!p.service_instances?.[p.route_service]?.port
+                            }
                             min={1024}
                             max={65535}
                             placeholder={
@@ -3717,7 +3856,7 @@ function OperationModal({
                       <label htmlFor="compose">Docker Compose YAML</label>
                       <Help label="Compose requirements">
                         {target?.mode === "compose"
-                          ? "Docker Compose validates your stack. Referenced build contexts and files must already exist on the VPS. Blue–green requires isolated services with health checks."
+                          ? "Docker Compose validates your stack. Referenced build contexts and files must already exist on the VPS. Seamless updates requires isolated services with health checks."
                           : "This older project uses its existing server template policy."}
                       </Help>
                     </span>
@@ -3728,7 +3867,7 @@ function OperationModal({
                       onClick={async () => {
                         try {
                           const yaml = await api.importCompose();
-                          if (yaml) setCompose(yaml);
+                          if (yaml) setCompose(composeForEditor(yaml));
                         } catch (e) {
                           setError(String(e));
                         }
@@ -3785,6 +3924,24 @@ function OperationModal({
                       />
                     )}
                   </label>
+                  {target?.mode === "compose" && (
+                    <button
+                      type="button"
+                      className="button small"
+                      disabled={preview || busy}
+                      onClick={async () => {
+                        try {
+                          const value = await api.importEnv();
+                          if (value !== null)
+                            setVariables(value || "# empty\n");
+                        } catch (e) {
+                          setError(String(e));
+                        }
+                      }}
+                    >
+                      <Upload size={14} /> Import .env
+                    </button>
+                  )}
                 </>
               )}
               {m.kind === "stop" && (
@@ -3816,19 +3973,17 @@ function OperationModal({
                     <strong>{p?.id}</strong>. Persistent data is retained;
                     database changes are not reversed.
                   </p>
-                  <label>
-                    Release
-                    <select
-                      value={release}
-                      onChange={(e) => setRelease(e.target.value)}
-                    >
-                      {p?.releases.map((r) => (
-                        <option value={r.id} key={r.id}>
-                          {r.id} · {ago(r.created_at)}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <Select
+                    label="Release"
+                    value={release}
+                    onValueChange={setRelease}
+                    options={
+                      p?.releases.map((r) => ({
+                        value: r.id,
+                        label: `${r.id} · ${ago(r.created_at)}`,
+                      })) ?? []
+                    }
+                  />
                 </>
               )}
             </div>
@@ -3851,9 +4006,11 @@ function OperationModal({
                 disabled={
                   busy ||
                   preview ||
+                  (m.kind === "create" && !identity) ||
                   (m.kind === "stop" && confirmation !== p?.id) ||
                   (m.kind === "deploy" &&
-                    new TextEncoder().encode(compose).length > 65536)
+                    (new TextEncoder().encode(compose).length > 65536 ||
+                      new TextEncoder().encode(variables).length > 65536))
                 }
                 type="submit"
               >

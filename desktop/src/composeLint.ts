@@ -5,6 +5,7 @@ import {
   isScalar,
   isNode,
   visit,
+  stringify,
   type CollectionTag,
   type ScalarTag,
 } from "yaml";
@@ -119,6 +120,20 @@ export function lintCompose(source: string): Problem[] {
     }
   }
   return problems;
+}
+
+// Older adopted releases contain Docker's resolved JSON model. Present those
+// as normal YAML without rewriting YAML source, comments or merge directives.
+export function composeForEditor(source: string): string {
+  if (!source.trimStart().startsWith("{")) return source;
+  try {
+    const model = JSON.parse(source);
+    if (!model || typeof model !== "object" || Array.isArray(model))
+      return source;
+    return stringify(model, { indent: 2, lineWidth: 0 });
+  } catch {
+    return source; // Preserve malformed input for the editor's diagnostics.
+  }
 }
 
 // Formatting preserves comments, aliases, scalar types, and literal ${...} text.

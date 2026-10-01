@@ -61,7 +61,9 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	if err != nil || closeErr != nil {
 		return r, model.Fail("PROJECT_FILES_FAILED")
 	}
-	args := d.args(p, "blue", "config", "--format", "json", "--no-env-resolution")
+	// A Dockyard flavor deploys the whole supplied stack, including services
+	// behind Compose profiles. Keep this explicit in both resolution passes.
+	args := d.args(p, "blue", "--profile", "*", "config", "--format", "json", "--no-env-resolution")
 	args[6], args[8] = f.Name(), envPath(d.Config, p.ID, env)
 	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, dir, args)
 	if err != nil || result.Truncated {
@@ -172,7 +174,7 @@ func compileNative(c config.Config, p model.Project, doc map[string]any) error {
 		labels["io.ziqx.dockyard.server"] = c.ServerID
 		labels["io.ziqx.dockyard.project"] = p.ID
 		svc["labels"] = labels
-		delete(svc, "profiles") // Docker config has already selected active profiles.
+		delete(svc, "profiles") // Every supplied service is part of this flavor.
 		ports, _ := svc["ports"].([]any)
 		retained := []any{}
 		for _, port := range ports {
@@ -333,4 +335,42 @@ func EditableConfiguration(c config.Config, p model.Project, r model.Release) (s
 		return "", "", model.Fail("ENVIRONMENT_IDENTITY_UNKNOWN")
 	}
 	return string(source), string(env), nil
+}
+
+// Older adopted releases predate Dockyard's managed website port. Rebind only
+// that port when explicitly rolling back the full stack; never reevaluate env.
+func RebindNativeRoute(c config.Config, p model.Project, r model.Release) (model.Release, error) {
+	_, b, err := nativeRelease(c, p, r)
+	if err != nil {
+		return r, err
+	}
+	source, err := ComposeMirror(c, p, r)
+	if err != nil {
+		return r, err
+	}
+	var doc map[string]any
+	if json.Unmarshal(b, &doc) != nil {
+		return r, model.Fail("COMPOSE_CONFIG_DIVERGED")
+	}
+	if err = compileNative(c, p, doc); err != nil {
+		return r, err
+	}
+	if p.RouteService != "" {
+		svc := object(object(doc["services"])[p.RouteService])
+		svc["ports"] = append(array(svc["ports"]), map[string]any{"target": p.RoutePort, "published": "${DOCKYARD_PORT}", "host_ip": "127.0.0.1", "protocol": "tcp"})
+	}
+	b, err = json.MarshalIndent(doc, "", "  ")
+	if err != nil || len(b) > 2<<20 {
+		return r, model.Fail("COMPOSE_LIMIT")
+	}
+	h := sha256.Sum256(b)
+	revision := "cmp-" + hex.EncodeToString(h[:])
+	if err = secure.Atomic(composeRevisionPath(c, p.ID, revision), b, 0600); err != nil {
+		return r, err
+	}
+	if err = secure.Atomic(filepath.Join(projectDir(c, p.ID), "source", revision+".yml"), source, 0600); err != nil {
+		return r, err
+	}
+	r.Compose = revision
+	return r, nil
 }

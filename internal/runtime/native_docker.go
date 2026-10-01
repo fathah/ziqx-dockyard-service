@@ -64,6 +64,11 @@ func (d Docker) nativeHealthy(ctx context.Context, p model.Project, slot string,
 	counts := map[string]int{}
 	for _, c := range containers {
 		name := c.Config.Labels["com.docker.compose.service"]
+		if slot == p.Active {
+			if _, ok := p.ServiceInstances[name]; ok {
+				continue
+			}
+		}
 		if services[name] == nil {
 			return model.Uncertain("CONTAINER_OWNERSHIP_UNKNOWN")
 		}
@@ -93,6 +98,11 @@ func (d Docker) nativeHealthy(ctx context.Context, p model.Project, slot string,
 		counts[name]++
 	}
 	for name, raw := range services {
+		if slot == p.Active {
+			if _, ok := p.ServiceInstances[name]; ok {
+				continue
+			}
+		}
 		svc := object(raw)
 		want := 1
 		if scale, ok := svc["scale"].(float64); ok {
@@ -103,6 +113,17 @@ func (d Docker) nativeHealthy(ctx context.Context, p model.Project, slot string,
 		}
 		if counts[name] < want {
 			return model.Fail("CONTAINER_UNAVAILABLE")
+		}
+	}
+	if slot == p.Active {
+		for name, instance := range p.ServiceInstances {
+			mode := "restart"
+			if instance.Name != name && instance.Port > 0 {
+				mode = "seamless"
+			}
+			if err := d.HealthyServiceUpdate(ctx, p, model.ServiceUpdate{Service: name, Mode: mode, Instance: instance}); err != nil {
+				return err
+			}
 		}
 	}
 	if p.RouteService != "" && p.ReadinessPath != "" {

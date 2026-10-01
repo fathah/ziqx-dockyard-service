@@ -82,6 +82,11 @@ func (e *Engine) Initialize() error {
 		if err := p.ValidateTarget(); err != nil {
 			return err
 		}
+		for _, instance := range p.ServiceInstances {
+			if err := runtime.ValidateServiceInstance(e.Config, p, instance); err != nil {
+				return err
+			}
+		}
 		if !p.NativeCompose() && TemplateHash(e.Config.Templates[p.Template]) != p.TemplateRevision {
 			return errors.New("existing project template changed; restore the pinned template")
 		}
@@ -166,6 +171,8 @@ func (e *Engine) execute(ctx context.Context, j model.Job) {
 	}
 	if err == nil {
 		switch j.Action {
+		case "service_update":
+			err = e.updateService(ctx, &j, &p)
 		case "blue_green":
 			err = e.blueGreen(ctx, &j, &p)
 		case "project_adopt":
@@ -405,6 +412,11 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 			return model.Uncertain("CANDIDATE_SLOT_NOT_REUSABLE")
 		}
 	}
+	// A full-stack deployment is an explicit maintenance operation. All active
+	// service versions were stopped above; the new full manifest becomes primary.
+	if j.Action == "deploy" || j.Action == "rollback" {
+		p.ServiceInstances = nil
+	}
 	var err error
 	if p.Port(slot) > 0 {
 		free, checkErr := e.Docker.PortFree(ctx, p.Port(slot))
@@ -515,7 +527,12 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if j.Action == "blue_green" {
+	if j.Action == "service_update" {
+		p, err = e.reconcileService(ctx, &j)
+		if err != nil {
+			return err
+		}
+	} else if j.Action == "blue_green" {
 		p, err = e.reconcileBlueGreen(ctx, &j)
 		if err != nil {
 			return err
@@ -586,7 +603,7 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 	j.Error = "JOB_INTERRUPTED_RECONCILED"
 	j.Phase = "reconciled"
 	j.Warning = "CONTAINERS_PRESERVED"
-	p.RecoveryDrain = true
+	p.RecoveryDrain = j.Action != "service_update"
 	now := time.Now().UTC()
 	j.Finished = &now
 	return e.Store.Update(j, &p)

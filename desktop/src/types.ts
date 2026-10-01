@@ -13,6 +13,11 @@ export type Project = {
   route_service?: string;
   route_port?: number;
   readiness_path?: string;
+  service_updates?: boolean;
+  service_instances?: Record<
+    string,
+    { name: string; port?: number; release: Release }
+  >;
   id: string;
   app_id: string;
   environment: Environment;
@@ -27,6 +32,10 @@ export type Project = {
   releases: Release[];
 };
 export type Service = {
+  updatable?: boolean;
+  seamless?: boolean;
+  container_ports?: number[];
+  update_reason?: string;
   name: string;
   slot: string;
   image: string;

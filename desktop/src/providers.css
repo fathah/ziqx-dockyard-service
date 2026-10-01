@@ -106,7 +106,6 @@
   min-width: 0;
 }
 .provider-field input,
-.provider-field select,
 .provider-field textarea,
 .dns-search {
   padding: 11px 13px;
@@ -302,7 +301,6 @@
   white-space: nowrap;
 }
 .provider-field input:not([type="checkbox"]),
-.provider-field textarea,
-.provider-field select {
+.provider-field textarea {
   margin: 0;
 }

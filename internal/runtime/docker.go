@@ -27,6 +27,7 @@ type Docker struct {
 }
 type Container struct {
 	ID     string `json:"Id"`
+	Name   string `json:"Name"`
 	Image  string `json:"Image"`
 	Config struct {
 		Image       string            `json:"Image"`
@@ -44,6 +45,10 @@ type Container struct {
 		} `json:"Health"`
 	} `json:"State"`
 	NetworkSettings struct {
+		Networks map[string]struct {
+			NetworkID string
+			Aliases   []string
+		} `json:"Networks"`
 		Ports map[string][]struct{ HostIP, HostPort string } `json:"Ports"`
 	} `json:"NetworkSettings"`
 	Mounts []struct {
@@ -125,6 +130,33 @@ func (d Docker) Pull(ctx context.Context, p model.Project, r model.Release) erro
 }
 func (d Docker) Start(ctx context.Context, p model.Project, slot string) error {
 	if p.NativeCompose() {
+		if slot == p.Active && len(p.ServiceInstances) > 0 {
+			_, b, err := nativeRelease(d.Config, p, p.Slots[slot])
+			if err != nil {
+				return err
+			}
+			var doc map[string]any
+			if json.Unmarshal(b, &doc) != nil {
+				return model.Fail("COMPOSE_CONFIG_DIVERGED")
+			}
+			args := []string{"up", "--detach", "--force-recreate", "--no-deps"}
+			for name := range object(doc["services"]) {
+				if _, overridden := p.ServiceInstances[name]; !overridden {
+					args = append(args, name)
+				}
+			}
+			if len(args) > 4 {
+				if _, err = d.command(ctx, p, slot, args...); err != nil {
+					return model.Fail("CONTAINER_START_FAILED")
+				}
+			}
+			for name, instance := range p.ServiceInstances {
+				if err = d.StartServiceUpdate(ctx, p, model.ServiceUpdate{Service: name, Mode: "restart", Instance: instance}); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		_, err := d.command(ctx, p, slot, "up", "--detach", "--force-recreate", "--wait", "--wait-timeout", strconv.Itoa(d.Config.HealthSeconds))
 		if err != nil {
 			return model.Fail("CONTAINER_START_FAILED")
@@ -300,6 +332,13 @@ func (d Docker) Stop(ctx context.Context, p model.Project, slot string) error {
 				return model.Uncertain("CONTAINER_STOP_FAILED")
 			}
 		}
+		if slot == p.Active {
+			for _, instance := range p.ServiceInstances {
+				if err := d.StopServiceInstance(ctx, p, instance); err != nil {
+					return err
+				}
+			}
+		}
 		return nil
 	}
 	services, err := d.services(p, p.Slots[slot])
@@ -338,7 +377,16 @@ func (d Docker) Logs(ctx context.Context, p model.Project, slot, service string,
 	} else if _, e := d.inspectService(ctx, p, slot, service); e != nil {
 		return nil, false, e
 	}
-	res, e := d.command(ctx, p, slot, "logs", "--no-color", "--timestamps", "--tail", strconv.Itoa(tail), "--since", since, service)
+	var res process.Result
+	var e error
+	if instance, ok := p.ServiceInstances[service]; ok && slot == p.Active {
+		if _, err := d.inspectServiceInstance(ctx, p, instance); err != nil {
+			return nil, false, err
+		}
+		res, e = d.serviceCommand(ctx, p, instance, "logs", "--no-color", "--timestamps", "--tail", strconv.Itoa(tail), "--since", since, instance.Name)
+	} else {
+		res, e = d.command(ctx, p, slot, "logs", "--no-color", "--timestamps", "--tail", strconv.Itoa(tail), "--since", since, service)
+	}
 	if e != nil {
 		return nil, false, model.Fail("LOGS_UNAVAILABLE")
 	}
