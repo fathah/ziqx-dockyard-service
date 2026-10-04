@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reconcile-job"
+description = "Enables the reconcile_job command without any pre-configured scope."
+commands.allow = ["reconcile_job"]
+
+[[permission]]
+identifier = "deny-reconcile-job"
+description = "Denies the reconcile_job command without any pre-configured scope."
+commands.deny = ["reconcile_job"]
