@@ -227,3 +227,61 @@ func TestOfflineRecoveryRecordsLiveCandidateAndPreservesContainers(t *testing.T)
 		t.Fatal("recovery guessed or stopped containers", p, recovered, d.stopped)
 	}
 }
+
+type observedCompose struct {
+	*fakeDocker
+	release *model.Release
+	err     error
+}
+
+func (d *observedCompose) ObserveCompose(context.Context, model.Project) (*model.Release, error) {
+	return d.release, d.err
+}
+
+func TestOfflineComposeRecoveryDoesNotRequireCaddyRoute(t *testing.T) {
+	for _, scenario := range []string{"original-running", "candidate-running", "stopped", "drift"} {
+		t.Run(scenario, func(t *testing.T) {
+			e, j, d, _, events := engineFixture(t, "blue")
+			p, _ := e.Store.Project(j.ProjectID)
+			p.Mode, p.State, p.ZeroDowntime, p.Domains = "compose", "stopped", false, nil
+			old := p.Releases[0]
+			p.Slots["blue"] = *j.Input.Release
+			j.Status, j.Phase, j.Error = "recovery_required", "draining", "CONTAINER_STOP_FAILED"
+			if err := e.Store.Update(j, &p); err != nil {
+				t.Fatal(err)
+			}
+			observer := &observedCompose{fakeDocker: d}
+			switch scenario {
+			case "original-running":
+				observer.release = &old
+			case "candidate-running":
+				observer.release = j.Input.Release
+			case "drift":
+				observer.err = model.Uncertain("CONTAINER_OWNERSHIP_UNKNOWN")
+			}
+			e.Docker = observer
+			err := e.Reconcile(context.Background(), j.ID)
+			got, _ := e.Store.Job(j.ID)
+			p, _ = e.Store.Project(j.ProjectID)
+			if scenario == "drift" {
+				if err == nil || got.Status != "recovery_required" || e.Ready() || got.Finished != nil {
+					t.Fatal("cleared unverified recovery", p, got, err)
+				}
+			} else {
+				if err != nil || got.Status != "failed" || got.Finished == nil || !e.Ready() || got.Warning != "CONTAINERS_PRESERVED" {
+					t.Fatal(p, got, err)
+				}
+				if observer.release == nil {
+					if p.State != "stopped" || len(p.Releases) != 1 {
+						t.Fatal("invented deployment", p)
+					}
+				} else if p.State != "running" || p.Slots["blue"].ID != observer.release.ID {
+					t.Fatal("recorded wrong release", p)
+				}
+			}
+			if len(d.stopped) != 0 || len(*events) != 0 {
+				t.Fatal("recovery changed containers or routes", *events)
+			}
+		})
+	}
+}

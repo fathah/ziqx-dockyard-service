@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-preview-route-setup"
+description = "Enables the preview_route_setup command without any pre-configured scope."
+commands.allow = ["preview_route_setup"]
+
+[[permission]]
+identifier = "deny-preview-route-setup"
+description = "Denies the preview_route_setup command without any pre-configured scope."
+commands.deny = ["preview_route_setup"]

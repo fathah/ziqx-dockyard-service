@@ -12,6 +12,7 @@ import (
 	"github.com/ziqx/ziqx-dockyard-service/internal/config"
 	"github.com/ziqx/ziqx-dockyard-service/internal/engine"
 	"github.com/ziqx/ziqx-dockyard-service/internal/inventory"
+	"github.com/ziqx/ziqx-dockyard-service/internal/model"
 	"github.com/ziqx/ziqx-dockyard-service/internal/process"
 	adapter "github.com/ziqx/ziqx-dockyard-service/internal/runtime"
 	"github.com/ziqx/ziqx-dockyard-service/internal/secure"
@@ -129,7 +130,32 @@ func run() error {
 		return err
 	}
 	if *reconcile != "" {
-		return e.Reconcile(ctx, *reconcile)
+		if err := e.Reconcile(ctx, *reconcile); err != nil {
+			var fault *model.Fault
+			if errors.As(err, &fault) {
+				hints := map[string]string{
+					"CONTAINER_OWNERSHIP_UNKNOWN":       "Live container IDs or ownership labels differ from Dockyard's recorded identities. Inspect the containers before changing ownership; repeating recovery will not resolve this mismatch.",
+					"COMPOSE_LIVE_RELEASE_UNKNOWN":      "Live Compose service configuration does not match a saved release. Manual VPS changes are not imported by recovery.",
+					"COMPOSE_LIVE_RELEASE_AMBIGUOUS":    "Multiple saved releases match the live service hashes. Recovery cannot determine which configuration was deployed.",
+					"COMPOSE_RECOVERY_STATE_CHANGED":    "Containers changed during inspection. Finish external Docker operations before retrying recovery.",
+					"COMPOSE_RECOVERY_HASH_UNAVAILABLE": "Docker Compose could not report service configuration hashes. Check the installed Compose plugin.",
+				}
+				if hint := hints[fault.Code]; hint != "" {
+					slog.Warn("recovery remains blocked; containers preserved", "job", *reconcile, "reason", hint)
+				}
+			}
+			return err
+		}
+		job, err := s.Job(*reconcile)
+		if err != nil {
+			return err
+		}
+		project, err := s.Project(job.ProjectID)
+		if err != nil {
+			return err
+		}
+		slog.Info("recovery reconciled; containers preserved", "job", job.ID, "operation_status", job.Status, "project_state", project.State)
+		return nil
 	}
 	if result, err := scanner.Sync(ctx); err != nil {
 		slog.Warn("initial inventory sync failed")

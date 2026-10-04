@@ -9,6 +9,7 @@ fn main() {
             "read_api",
             "preview_blue_green",
             "preview_service_update",
+            "preview_route_setup",
             "mutate",
             "retry_pending",
             "pending_info",

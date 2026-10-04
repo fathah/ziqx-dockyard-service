@@ -412,7 +412,13 @@ async fn send(s: &Session, op: &Operation) -> Result<Value, String> {
             .header("Content-Type", "application/json")
             .body(op.body.clone());
     }
-    let mut response = request.send().await.map_err(|_| "NETWORK_UNCERTAIN: check the tunnel, certificate and server; retry the saved operation for writes")?;
+    let mut response = request.send().await.map_err(|error| {
+        if error.is_connect() {
+            "CONNECTION_UNAVAILABLE: could not connect to Dockyard on the VPS. Check that Dockyard is running and the tunnel and certificate are valid.".to_string()
+        } else {
+            "NETWORK_UNCERTAIN: the connection was interrupted. Reconnect, then retry the saved operation to check its outcome.".to_string()
+        }
+    })?;
     let status = response.status();
     // The project index includes bounded release history for every project; allow 100+ services without lifting log/audit limits.
     let response_limit = if op.target == "/v1/projects" {
@@ -742,6 +748,7 @@ fn definitive_initial_rejection(was_attempted: bool, error: &str) -> bool {
             "HTTP_415:",
             "HTTP_422:",
             "HTTP_429:",
+            "CONNECTION_UNAVAILABLE:",
         ]
         .iter()
         .any(|status| error.starts_with(status))
@@ -783,7 +790,8 @@ async fn execute_pending(s: &mut Session) -> Result<Value, String> {
             Ok(data)
         }
         Err(e) => {
-            // A rejection on a retry says nothing about an earlier possibly accepted attempt.
+            // A failed connection means this attempt sent no HTTP request. Only
+            // the first attempt can be cleared; a retry may follow an accepted write.
             if definitive_initial_rejection(was_attempted, &e) {
                 let previous = s.saved.pending.take();
                 if persist(&s.saved).is_err() {
@@ -1338,6 +1346,15 @@ mod transport_tests {
             let s = test_session(e.clone());
             let projects = read_op(&Read::Projects {}).unwrap();
             assert!(send(&s, &projects).await.unwrap()["projects"].is_array());
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let closed_port = listener.local_addr().unwrap().port();
+            drop(listener);
+            let mut offline = e.clone();
+            offline.origin = format!("https://127.0.0.1:{closed_port}");
+            let offline_error = send(&test_session(offline), &projects).await.unwrap_err();
+            assert!(offline_error.starts_with("CONNECTION_UNAVAILABLE:"));
+            assert!(definitive_initial_rejection(false, &offline_error));
+            assert!(!definitive_initial_rejection(true, &offline_error));
             let mut scale = read_op(&Read::Projects {}).unwrap();
             scale.idempotency = "read-scale".into();
             let index = send(&s, &scale).await.unwrap();
@@ -1364,13 +1381,13 @@ mod transport_tests {
             assert!(send(&test_session(bad_pin), &projects)
                 .await
                 .unwrap_err()
-                .starts_with("NETWORK_UNCERTAIN:"));
+                .starts_with("CONNECTION_UNAVAILABLE:"));
             let mut bad_ca = e.clone();
             bad_ca.server_ca_pem = value["wrong_ca"].as_str().unwrap().into();
             assert!(send(&test_session(bad_ca), &projects)
                 .await
                 .unwrap_err()
-                .starts_with("NETWORK_UNCERTAIN:"));
+                .starts_with("CONNECTION_UNAVAILABLE:"));
             for variant in ["wrong_name", "expired", "tls12"] {
                 let mut changed = e.clone();
                 changed.origin = value["extra"][format!("{variant}_origin")]
@@ -1385,7 +1402,7 @@ mod transport_tests {
                     send(&test_session(changed), &projects)
                         .await
                         .unwrap_err()
-                        .starts_with("NETWORK_UNCERTAIN:"),
+                        .starts_with("CONNECTION_UNAVAILABLE:"),
                     "{variant} bypassed standard TLS verification"
                 );
             }
@@ -1418,6 +1435,7 @@ mod transport_tests {
             "HTTP_403:",
             "HTTP_409:",
             "HTTP_429:",
+            "CONNECTION_UNAVAILABLE:",
         ] {
             assert!(definitive_initial_rejection(false, status));
             assert!(!definitive_initial_rejection(true, status));

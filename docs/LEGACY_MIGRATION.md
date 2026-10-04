@@ -29,9 +29,16 @@ reviewed managed app port.
 
 Route setup requires a verified running release and no active or recovery job.
 It does not clear an interrupted operation or import manual VPS configuration
-changes. An imported project whose recovery reports
-`COMPOSE_RECOVERY_REQUIRES_INSPECTION` still needs inspection of its live Compose
-identity and original Caddy route before any route changes.
+changes. Version 0.7.5 supports offline lifecycle recovery for single-instance
+Compose projects without a managed domain route. It verifies all containers in
+the Compose namespace, including orphans. Original adopted IDs identify the
+adoption snapshot; managed containers must uniquely match a pinned release's
+service configuration hashes and pass health/count checks. A stopped or absent
+verified stack is recorded as stopped. Recovery does not change containers,
+operator Compose files or external Caddy routes. Recreated unlabelled containers,
+unknown configurations, ambiguous releases and changing state retain the lock.
+Older servers return `COMPOSE_RECOVERY_REQUIRES_INSPECTION`; update the server
+before running reconciliation again. Manual VPS Compose changes are not imported.
 
 Service 0.4.0 supports in-place adoption of existing Compose projects. It does not need a replacement stack or a traffic switch. Production projects with databases, named volumes, bind mounts and existing published ports can keep those resources.
 

@@ -377,6 +377,11 @@ function App() {
       setLoading(true);
       setError("");
       try {
+        // Saved writes are local state; keep them current even while the VPS
+        // service is stopped and the project read cannot connect.
+        const pending = await api.pendingInfo();
+        if (epoch.current !== version) return;
+        setPending(pending);
         const data = await api.read<{ projects: Project[] }>({
           kind: "projects",
         });
@@ -391,9 +396,6 @@ function App() {
         if (epoch.current !== version) return;
         setInventory(inv);
         setUpdated(new Date().toISOString());
-        const pending = await api.pendingInfo();
-        if (epoch.current !== version) return;
-        setPending(pending);
         const info = await api.sessionInfo();
         if (epoch.current !== version) return;
         if (!info.unlocked) {
@@ -503,7 +505,13 @@ function App() {
     if (preview)
       throw new Error("Preview is read-only. Enroll this Mac to manage a VPS.");
     const version = epoch.current;
-    const result = await api.mutate(mutation);
+    let result: { job_id: string };
+    try {
+      result = await api.mutate(mutation);
+    } finally {
+      const saved = await api.pendingInfo().catch(() => undefined);
+      if (version === epoch.current && saved !== undefined) setPending(saved);
+    }
     if (version !== epoch.current) return;
     toast.success(`Operation accepted · ${result.job_id}`);
     setModal(null);
@@ -519,11 +527,15 @@ function App() {
     }
   }
   async function doRetry() {
+    const version = epoch.current;
     try {
       await api.retry();
       await refresh();
     } catch (e) {
       report(e);
+    } finally {
+      const saved = await api.pendingInfo().catch(() => undefined);
+      if (version === epoch.current && saved !== undefined) setPending(saved);
     }
   }
   async function retrySessionInfo() {
@@ -2397,6 +2409,12 @@ function JobRecoveryHelp({ job }: { job: Job }) {
       <p>
         This operation has stopped. Waiting or refreshing will not clear the
         recovery lock. Run recovery in the VPS terminal.
+      </p>
+      <p>
+        For a Compose project without a managed domain route, update the VPS
+        service to 0.7.5 or later first. Older versions return
+        COMPOSE_RECOVERY_REQUIRES_INSPECTION. Server details → Updates can update
+        the service while retaining this recovery lock.
       </p>
       {validID && (
         <pre>

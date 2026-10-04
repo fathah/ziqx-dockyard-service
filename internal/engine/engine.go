@@ -554,6 +554,35 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 		if !found {
 			p.DNS = append(p.DNS, id)
 		}
+	} else if p.NativeCompose() && len(p.Domains) == 0 && (j.Action == "deploy" || j.Action == "rollback" || j.Action == "start" || j.Action == "restart" || j.Action == "stop") {
+		// No managed route exists to observe. Recover from positively identified
+		// Compose containers and their pinned release instead of asking Caddy.
+		observer, ok := e.Docker.(interface {
+			ObserveCompose(context.Context, model.Project) (*model.Release, error)
+		})
+		if !ok {
+			return model.Uncertain("RECOVERY_UNAVAILABLE")
+		}
+		if err := e.Routes.Ensure(ctx, p); err != nil {
+			return err
+		}
+		release, err := observer.ObserveCompose(ctx, p)
+		if err != nil {
+			return err
+		}
+		if release == nil {
+			p.State = "stopped"
+		} else {
+			p.Active, p.State = "blue", "running"
+			p.Slots = map[string]model.Release{"blue": *release}
+			found := false
+			for _, r := range p.Releases {
+				found = found || r.ID == release.ID
+			}
+			if !found {
+				p.Releases = append(p.Releases, *release)
+			}
+		}
 	} else {
 		observer, ok := e.Routes.(interface {
 			Observe(context.Context, model.Project) (string, error)
