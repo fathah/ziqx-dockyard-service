@@ -14,6 +14,14 @@ export const reconcileJob = (job: string) =>
     "reconcile_job",
     { job },
   );
+export const resolvePending = () =>
+  invoke<{
+    outcome: "none" | "not_sent" | "not_applied" | "applied";
+    job_id?: string;
+    status?: string;
+  }>("resolve_pending");
+export const readEnv = (project: string) =>
+  invoke<{ release_id: string; env_file: string }>("read_env", { project });
 export const retry = () => invoke<{ job_id: string }>("retry_pending");
 export const pendingInfo = () => invoke<Pending>("pending_info");
 export const importCompose = () => invoke<string | null>("import_compose");

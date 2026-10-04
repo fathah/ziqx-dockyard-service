@@ -272,6 +272,28 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		write(w, 200, map[string]any{"port": port, "reserved": false})
 		return
 	}
+	if len(parts) == 2 && parts[0] == "requests" {
+		// Resolve an uncertain write: was this idempotency key ever admitted?
+		// Signed requests expire after 60s, so "not found" later is definitive.
+		if _, err := query(r); err != nil || parts[1] == "" || len(parts[1]) > 128 || strings.ContainsAny(parts[1], "\\.") {
+			problem(w, 400, "REQUEST_INVALID", p.RequestID)
+			return
+		}
+		if !require(w, p, "deploy.read", "") {
+			return
+		}
+		j, found, err := e.Store.RequestJob(parts[1])
+		if err != nil {
+			fail(w, err, p.RequestID)
+			return
+		}
+		if !found || !p.Allows(j.ProjectID) {
+			problem(w, 404, "REQUEST_NOT_FOUND", p.RequestID)
+			return
+		}
+		write(w, 200, map[string]string{"job_id": j.ID, "project_id": j.ProjectID, "action": j.Action, "status": j.Status})
+		return
+	}
 	if len(parts) == 2 && parts[0] == "jobs" {
 		if _, err := query(r); err != nil {
 			fail(w, err, p.RequestID)

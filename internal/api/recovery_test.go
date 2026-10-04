@@ -49,3 +49,21 @@ func TestReconcileJobFromDesktop(t *testing.T) {
 		t.Fatal("reconciled twice", w.Code, w.Body.String())
 	}
 }
+
+func TestRequestLookupResolvesUncertainWrite(t *testing.T) {
+	a, _, _, send := apiFixture(t)
+	p := model.Project{ID: "demo", AppID: "demo", Template: "node", Environment: model.Production, State: "running", Active: "blue", Slots: map[string]model.Release{}, Releases: []model.Release{}}
+	job := model.Job{ID: "job-restart", ProjectID: p.ID, Action: "restart", Status: "queued", Created: time.Now()}
+	if err := a.Engine.Store.Accept(job, &p, "op-restart", "fp", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	if w := send("GET", "/v1/requests/op-restart", "", "deploy.read", "q1"); w.Code != 200 || !strings.Contains(w.Body.String(), "job-restart") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := send("GET", "/v1/requests/op-never-sent", "", "deploy.read", "q2"); w.Code != 404 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := send("GET", "/v1/requests/op-restart", "", "deploy.logs", "q3"); w.Code != 403 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

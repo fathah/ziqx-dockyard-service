@@ -25,7 +25,7 @@ use std::{
 };
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +44,9 @@ struct Pending {
     attempted: bool,
     operation: Operation,
     job_id: Option<String>,
+    // Unix seconds of the latest send. Missing on older saves (sent long ago).
+    #[serde(default)]
+    sent_at: Option<u64>,
 }
 fn default_attempted() -> bool {
     true
@@ -701,19 +704,19 @@ async fn pending_info(c: State<'_, Control>) -> Result<Value, String> {
 #[tauri::command]
 async fn read_api(c: State<'_, Control>, read: Read) -> Result<Value, String> {
     let op = read_op(&read)?;
-    if matches!(&read, Read::Configuration { .. }) {
-        let generation = {
-            let mut inner = c.inner.lock().await;
-            session(&mut inner)?.generation
-        };
-        native_task(&c, || native::authenticate_reason("Edit this project's Compose configuration and environment secrets")).await?;
-        if generation != c.generation.load(Ordering::SeqCst) {
-            return Err("SESSION_LOCKED".into());
-        }
-    }
     let mut inner = c.inner.lock().await;
     let s = session(&mut inner)?;
-    let data = send(s, &op).await?;
+    let mut data = send(s, &op).await?;
+    if matches!(&read, Read::Configuration { .. }) {
+        // Compose opens freely; environment secrets need read_env (Touch ID).
+        if let Some(Value::String(env)) = data.get_mut("env_file") {
+            env.zeroize();
+        }
+        if let Some(obj) = data.as_object_mut() {
+            obj.remove("env_file");
+            obj.insert("env_locked".into(), Value::Bool(true));
+        }
+    }
     if s.generation != c.generation.load(Ordering::SeqCst) {
         return Err("SESSION_LOCKED".into());
     }
@@ -765,13 +768,18 @@ async fn execute_pending(s: &mut Session) -> Result<Value, String> {
         return Ok(json!({"job_id":job,"project_id":op.project,"action":op.action}));
     }
     let was_attempted = s.saved.pending.as_ref().unwrap().attempted;
-    if !was_attempted {
-        s.saved.pending.as_mut().unwrap().attempted = true;
-        // Record that a request may reach the VPS before sending a single byte.
-        if let Err(error) = persist(&s.saved) {
-            s.saved.pending.as_mut().unwrap().attempted = false;
-            return Err(error);
-        }
+    let previous_sent = s.saved.pending.as_ref().unwrap().sent_at;
+    {
+        let pending = s.saved.pending.as_mut().unwrap();
+        pending.attempted = true;
+        pending.sent_at = Some(unix_now());
+    }
+    // Record that a request may reach the VPS before sending a single byte.
+    if let Err(error) = persist(&s.saved) {
+        let pending = s.saved.pending.as_mut().unwrap();
+        pending.attempted = was_attempted;
+        pending.sent_at = previous_sent;
+        return Err(error);
     }
     match send(s, &op).await {
         Ok(data) => {
@@ -830,6 +838,31 @@ async fn preview_route_setup(c: State<'_, Control>, project: String, data: proto
     Ok(result)
 }
 #[tauri::command]
+async fn read_env(c: State<'_, Control>, project: String) -> Result<Value, String> {
+    // Touch ID reuses a success from the last two minutes (auth_window).
+    let read = Read::Configuration { project };
+    let op = read_op(&read)?;
+    let generation = {
+        let mut inner = c.inner.lock().await;
+        session(&mut inner)?.generation
+    };
+    native_task(&c, || native::authenticate_reason("View this project's environment secrets")).await?;
+    let mut inner = c.inner.lock().await;
+    let s = session(&mut inner)?;
+    if generation != c.generation.load(Ordering::SeqCst) {
+        return Err("SESSION_LOCKED".into());
+    }
+    let mut data = send(s, &op).await?;
+    let result = json!({
+        "release_id": data.get("release_id").cloned().unwrap_or(Value::Null),
+        "env_file": data.get("env_file").cloned().unwrap_or(Value::String(String::new())),
+    });
+    if let Some(Value::String(compose)) = data.get_mut("compose_yaml") {
+        compose.zeroize();
+    }
+    Ok(result)
+}
+#[tauri::command]
 async fn reconcile_job(c: State<'_, Control>, job: String) -> Result<Value, String> {
     // Same verified recovery as `dockyard -reconcile-job`, run by the daemon.
     // It never starts, stops or relabels containers and is safe to repeat, so
@@ -875,7 +908,7 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         let mut inner = c.inner.lock().await;
         let s = session(&mut inner)?;
         if s.saved.pending.is_some() {
-            return Err("Finish or retry the saved operation before another write".into());
+            return Err("Resolve the unconfirmed operation at the top first".into());
         }
         let mut target = format!(
             "{} ({})\nOrigin: {}",
@@ -946,12 +979,70 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         attempted: false,
         operation: op,
         job_id: None,
+        sent_at: None,
     });
     if let Err(e) = persist(&s.saved) {
         s.saved.pending = None;
         return Err(e);
     }
     execute_pending(s).await
+}
+fn unix_now() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+// Ask the VPS whether the saved write was ever admitted, without resending it.
+// Signed requests expire after 60s, so "never admitted" after that is final.
+#[tauri::command]
+async fn resolve_pending(c: State<'_, Control>) -> Result<Value, String> {
+    let mut inner = c.inner.lock().await;
+    let s = session(&mut inner)?;
+    let Some(pending) = s.saved.pending.as_ref() else { return Ok(json!({"outcome":"none"})) };
+    let (attempted, sent_at, job_id, key) = (pending.attempted, pending.sent_at, pending.job_id.clone(), pending.operation.idempotency.clone());
+    let clear = |s: &mut Session| -> Result<(), String> {
+        let previous = s.saved.pending.take();
+        persist(&s.saved).map_err(|e| { s.saved.pending = previous; e })
+    };
+    if job_id.is_none() && !attempted {
+        clear(s)?;
+        return Ok(json!({"outcome":"not_sent"}));
+    }
+    let job = match job_id {
+        Some(job) => job,
+        None => {
+            let op = Operation { method: "GET".into(), target: format!("/v1/requests/{key}"), scopes: "deploy.read".into(), project: String::new(), action: "read".into(), body: String::new(), idempotency: format!("read-{}", uuid::Uuid::new_v4()), request_id: format!("req-{}", uuid::Uuid::new_v4()) };
+            match send(s, &op).await {
+                Ok(data) => data.get("job_id").and_then(Value::as_str).filter(|j| protocol::token(j)).ok_or("Unexpected server response")?.to_string(),
+                // Only this code is definitive; an older server's generic 404
+                // means the lookup is unsupported, not that nothing happened.
+                Err(e) if e.starts_with("HTTP_404:") && !e.contains("REQUEST_NOT_FOUND") => {
+                    return Err("Update the VPS service to 0.7.7 to check this operation.".into());
+                }
+                Err(e) if e.starts_with("HTTP_404:") => {
+                    if sent_at.is_some_and(|t| unix_now().saturating_sub(t) < 90) {
+                        return Err("Still settling. Check again in a minute.".into());
+                    }
+                    clear(s)?;
+                    return Ok(json!({"outcome":"not_applied"}));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    };
+    let op = Operation { method: "GET".into(), target: format!("/v1/jobs/{job}"), scopes: "deploy.read".into(), project: String::new(), action: "read".into(), body: String::new(), idempotency: format!("read-{}", uuid::Uuid::new_v4()), request_id: format!("req-{}", uuid::Uuid::new_v4()) };
+    let data = send(s, &op).await?;
+    let status = data.get("status").and_then(Value::as_str).unwrap_or("").to_string();
+    if !s.saved.jobs.contains(&job) {
+        s.saved.jobs.insert(0, job.clone());
+        s.saved.jobs.truncate(100);
+    }
+    if matches!(status.as_str(), "succeeded" | "failed" | "recovery_required") {
+        clear(s)?;
+    } else if let Some(p) = s.saved.pending.as_mut() {
+        p.job_id = Some(job.clone());
+        persist(&s.saved)?;
+    }
+    if s.generation != c.generation.load(Ordering::SeqCst) { return Err("SESSION_LOCKED".into()); }
+    Ok(json!({"outcome":"applied","job_id":job,"status":status}))
 }
 #[tauri::command]
 async fn retry_pending(c: State<'_, Control>) -> Result<Value, String> {
@@ -1241,6 +1332,8 @@ fn main() {
             preview_route_setup,
             mutate,
             reconcile_job,
+            resolve_pending,
+            read_env,
             retry_pending,
             pending_info,
             import_compose,

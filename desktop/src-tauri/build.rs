@@ -12,6 +12,8 @@ fn main() {
             "preview_route_setup",
             "mutate",
             "reconcile_job",
+            "resolve_pending",
+            "read_env",
             "retry_pending",
             "pending_info",
             "import_compose",

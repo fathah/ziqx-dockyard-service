@@ -158,6 +158,18 @@ func (s *Store) Replay(key, request, fingerprint string) (model.Job, bool, error
 	}
 	return model.Job{}, false, nil
 }
+func (s *Store) RequestJob(key string) (model.Job, bool, error) {
+	var id string
+	e := s.DB.QueryRow("SELECT job_id FROM requests WHERE key=?", key).Scan(&id)
+	if e == sql.ErrNoRows {
+		return model.Job{}, false, nil
+	}
+	if e != nil {
+		return model.Job{}, false, e
+	}
+	j, e := s.Job(id)
+	return j, e == nil, e
+}
 func (s *Store) Blocked() (bool, error) {
 	var n int
 	e := s.DB.QueryRow("SELECT count(*) FROM jobs WHERE status='recovery_required'").Scan(&n)

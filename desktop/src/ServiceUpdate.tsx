@@ -66,12 +66,14 @@ export default function ServiceUpdate({
   preview,
   execute,
   onClose,
+  onAddHealthcheck,
 }: {
   project: Project;
   service: Service;
   preview: boolean;
   execute: (mutation: unknown) => Promise<void>;
   onClose: () => void;
+  onAddHealthcheck?: (port: number | undefined, path: string) => void;
 }) {
   const title = useId();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -237,7 +239,21 @@ export default function ServiceUpdate({
           </fieldset>
         )}
         {!review && !service.seamless && service.update_reason && (
-          <p className="configuration-note">{service.update_reason}</p>
+          <div className="configuration-note">
+            <p>{service.update_reason}</p>
+            {onAddHealthcheck && /healthcheck/i.test(service.update_reason) && (
+              <Button
+                type="button"
+                className="button small"
+                disabled={busy}
+                onClick={() =>
+                  onAddHealthcheck(Number(port) || undefined, path || "/")
+                }
+              >
+                <HeartPulse size={15} /> Add healthcheck
+              </Button>
+            )}
+          </div>
         )}
         {!review && mode === "seamless" && (
           <>

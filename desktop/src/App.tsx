@@ -47,7 +47,9 @@ import * as api from "./api";
 import SetupWizard from "./SetupWizard";
 import CodeEditor from "./CodeEditor";
 import { composeForEditor, lintCompose } from "./composeLint";
-import ProjectConfiguration from "./ProjectConfiguration";
+import ProjectConfiguration, {
+  type HealthcheckRequest,
+} from "./ProjectConfiguration";
 import ProjectHeader, { ProjectSummary } from "./ProjectHeader";
 import ServiceUpdate from "./ServiceUpdate";
 import RouteSetup from "./RouteSetup";
@@ -526,6 +528,22 @@ function App() {
       report(e);
     }
   }
+  async function doResolve() {
+    const version = epoch.current;
+    try {
+      const result = await api.resolvePending();
+      if (result.outcome === "not_applied" || result.outcome === "not_sent")
+        toast.success("It was never applied. Nothing changed.");
+      else if (result.outcome === "applied")
+        toast.success(`Found it · ${result.status?.replaceAll("_", " ")}`);
+      await refresh();
+    } catch (e) {
+      report(e);
+    } finally {
+      const saved = await api.pendingInfo().catch(() => undefined);
+      if (version === epoch.current && saved !== undefined) setPending(saved);
+    }
+  }
   async function doRetry() {
     const version = epoch.current;
     try {
@@ -709,22 +727,30 @@ function App() {
             <History size={17} />
             <span>
               <strong>
-                Saved operation: {operationLabel(pending.action)} ·{" "}
-                {pending.project}
-              </strong>
-              <br />
-              {pending.job_id
-                ? `Tracking ${pending.job_id}. Further writes wait for its result.`
-                : "The outcome is uncertain. Retry uses the same request IDs and exact payload."}
+                {operationLabel(pending.action)} · {pending.project}
+              </strong>{" "}
+              {pending.job_id ? "is in progress." : "wasn't confirmed."}
             </span>
             <Button
               type="button"
               className="button small"
               disabled={busy}
-              onClick={() => void doRetry()}
+              onClick={() => void doResolve()}
             >
-              {pending.job_id ? "Check result" : "Retry safely"}
+              Check status
             </Button>
+            {!pending.job_id && (
+              <Button
+                type="button"
+                className="button small"
+                variant="outline"
+                disabled={busy}
+                title="Send the same request again"
+                onClick={() => void doRetry()}
+              >
+                Send again
+              </Button>
+            )}
           </div>
         )}
         <div
@@ -1392,6 +1418,8 @@ export function ProjectDetail({
 }) {
   const [tab, setTab] = useState(initialTab);
   const [configDirty, setConfigDirty] = useState(false);
+  const [healthcheckRequest, setHealthcheckRequest] =
+    useState<HealthcheckRequest>();
   const [services, setServices] = useState<Service[]>([]);
   const [updatingService, setUpdatingService] = useState<Service>();
   const [servicesLoading, setServicesLoading] = useState(!preview);
@@ -1679,6 +1707,8 @@ export function ProjectDetail({
           preview={preview}
           execute={execute}
           onDirtyChange={setConfigDirty}
+          healthcheck={healthcheckRequest}
+          onHealthcheckHandled={() => setHealthcheckRequest(undefined)}
         />
       )}
       {tab === "overview" && (
@@ -2034,6 +2064,16 @@ export function ProjectDetail({
               preview={preview}
               execute={execute}
               onClose={() => setUpdatingService(undefined)}
+              onAddHealthcheck={(port, path) => {
+                setHealthcheckRequest({
+                  service: updatingService.name,
+                  image: updatingService.image ?? "",
+                  port,
+                  path,
+                });
+                setUpdatingService(undefined);
+                setTab("configuration");
+              }}
             />
           )}
         </section>
@@ -2415,30 +2455,24 @@ function JobRecoveryHelp({
   refresh: () => Promise<void>;
   report: (e: unknown) => void;
 }) {
-  // Show an executable command only for an actual server-generated job ID.
   const validID = /^job-[a-f0-9]{32}$/.test(job.job_id);
   const [busy, setBusy] = useState(false);
+  const [manual, setManual] = useState(false);
+  if (!validID) return null;
   return (
-    <Accordion
-      title="Resolve interrupted operation"
-      icon={Terminal}
-      className="job-recovery-help"
-    >
-      <p>
-        This operation has stopped. Waiting or refreshing will not clear the
-        recovery lock. Recover it here: Dockyard inspects the live containers,
-        records what is actually running and releases the lock. Containers are
-        not started, stopped or changed.
-      </p>
-      {validID && (
+    <div className="job-recovery">
+      <p>Interrupted. New deployments are paused until it's recovered.</p>
+      <div className="job-recovery-actions">
         <Button
           type="button"
-          className="button primary"
+          className="button small primary"
           disabled={busy || preview}
+          title="Checks the live containers and records what's running. Nothing is restarted."
           onClick={async () => {
             setBusy(true);
             try {
               await api.reconcileJob(job.job_id);
+              toast.success("Recovered");
               await refresh();
             } catch (e) {
               report(e);
@@ -2447,28 +2481,23 @@ function JobRecoveryHelp({
             }
           }}
         >
-          <RefreshCw size={15} />
-          {busy ? "Recovering…" : "Recover now"}
+          <RefreshCw size={14} />
+          {busy ? "Recovering…" : "Recover"}
         </Button>
+        <button
+          type="button"
+          className="text-button"
+          onClick={() => setManual(!manual)}
+        >
+          {manual ? "Hide terminal steps" : "Server older than 0.7.6?"}
+        </button>
+      </div>
+      {manual && (
+        <pre>
+          <code>{`systemctl stop dockyard\n/usr/local/bin/dockyard -config /etc/dockyard/config.json -reconcile-job ${job.job_id}\nsystemctl start dockyard`}</code>
+        </pre>
       )}
-      {validID && (
-        <details>
-          <summary>Older VPS service? Recover from the VPS terminal</summary>
-          <p>
-            VPS service before 0.7.6 does not offer one-click recovery. Update
-            the service in Server details → Updates, or run:
-          </p>
-          <pre>
-            <code>{`systemctl stop dockyard\n/usr/local/bin/dockyard -config /etc/dockyard/config.json -reconcile-job ${job.job_id}\nsystemctl start dockyard`}</code>
-          </pre>
-        </details>
-      )}
-      <p>
-        Dockyard verifies the live deployment before clearing the lock. If
-        recovery fails, the error explains what differs. After it succeeds,
-        review a new update.
-      </p>
-    </Accordion>
+    </div>
   );
 }
 function Domains({

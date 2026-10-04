@@ -44,6 +44,8 @@
     "allow-preview-blue-green",
     "allow-preview-service-update",
     "allow-preview-route-setup",
-    "allow-reconcile-job"
+    "allow-reconcile-job",
+    "allow-resolve-pending",
+    "allow-read-env"
   ]
 }

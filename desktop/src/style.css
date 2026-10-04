@@ -1561,14 +1561,14 @@ pre {
 .job-row > div:last-child {
   text-align: right;
 }
-.job-row .job-recovery-help {
+.job-row .job-recovery {
   margin-top: 12px;
   max-width: 760px;
 }
-.job-row:has(.job-recovery-help) {
+.job-row:has(.job-recovery) {
   align-items: start;
 }
-.job-recovery-help pre {
+.job-recovery pre {
   margin-top: 12px;
   padding: 12px;
   overflow-x: auto;
@@ -3299,6 +3299,16 @@ body:has(.modal) {
   font-size: 14px;
   margin-top: 12px;
 }
+div.configuration-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+div.configuration-note p {
+  margin: 0;
+}
 .configuration-loading {
   width: 100%;
   min-height: 320px;
@@ -3560,4 +3570,37 @@ body:has(.modal) {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.job-recovery {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+.job-recovery p {
+  margin: 0;
+}
+.job-recovery-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.job-recovery pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.env-locked:not([hidden]) {
+  height: 280px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: #667961;
+  background: #fafcf8;
+  border: 1px solid #d9e3d2;
+  border-radius: 8px;
 }

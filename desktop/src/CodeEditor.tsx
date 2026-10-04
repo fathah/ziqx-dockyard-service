@@ -51,7 +51,7 @@ const theme = EditorView.theme({
     borderRadius: "8px",
     overflow: "hidden",
   },
-  "&.cm-focused": { outline: "2px solid #89ab79", outlineOffset: "1px" },
+  "&.cm-focused": { outline: "none", borderColor: "#89ab79", boxShadow: "0 0 0 2px rgba(137, 171, 121, 0.35)" },
   ".cm-scroller": {
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
     lineHeight: "1.7",
@@ -64,10 +64,17 @@ const theme = EditorView.theme({
     color: "#667961",
     borderRight: "1px solid #dce4d5",
   },
-  ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "#eaf1e4" },
-  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": {
-    backgroundColor: "#d5e5c9",
+  // The selection layer sits behind the text, so the active line must stay
+  // translucent or it hides a selection on that line.
+  ".cm-activeLine": { backgroundColor: "rgba(137, 171, 121, 0.10)" },
+  ".cm-activeLineGutter": { backgroundColor: "#e4ecdd" },
+  ".cm-selectionLayer .cm-selectionBackground": {
+    backgroundColor: "rgba(66, 133, 244, 0.18)",
   },
+  "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
+    backgroundColor: "rgba(66, 133, 244, 0.30)",
+  },
+  ".cm-selectionMatch": { backgroundColor: "rgba(66, 133, 244, 0.12)" },
   ".cm-tooltip": {
     backgroundColor: "#fff",
     color: "#263d33",

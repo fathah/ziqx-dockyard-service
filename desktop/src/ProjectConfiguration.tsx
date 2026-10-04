@@ -13,12 +13,24 @@ import * as api from "./api";
 import Help from "./Help";
 import CodeEditor, { type CodeEditorHandle } from "./CodeEditor";
 import { composeForEditor, lintCompose } from "./composeLint";
+import { addHealthcheck, suggestHealthcheck } from "./composeHealthcheck";
 import type { Project } from "./types";
+
+export type HealthcheckRequest = {
+  service: string;
+  image: string;
+  port?: number;
+  path: string;
+};
 
 type Configuration = {
   release_id: string;
   compose_yaml: string;
   env_file: string;
+};
+// Compose loads without Touch ID; the server's .env is fetched separately.
+type ComposeConfiguration = Omit<Configuration, "env_file"> & {
+  env_file?: string;
 };
 function message(error: unknown): string {
   const text = String(error);
@@ -50,11 +62,15 @@ export default function ProjectConfiguration({
   preview,
   execute,
   onDirtyChange,
+  healthcheck,
+  onHealthcheckHandled,
 }: {
   project: Project;
   preview: boolean;
   onDirtyChange: (dirty: boolean) => void;
   execute: (mutation: unknown) => Promise<void>;
+  healthcheck?: HealthcheckRequest;
+  onHealthcheckHandled?: () => void;
 }) {
   const initial: Configuration | undefined = preview
     ? {
@@ -72,6 +88,9 @@ export default function ProjectConfiguration({
   const [file, setFile] = useState<"compose" | "env">("compose");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  // A saved release's .env stays hidden until Touch ID (2-minute reuse).
+  const [envLoaded, setEnvLoaded] = useState(!!initial);
   const composeEditor = useRef<CodeEditorHandle>(null);
   const isJson = compose.trimStart().startsWith("{");
   const alive = useRef(true);
@@ -82,12 +101,67 @@ export default function ProjectConfiguration({
     };
   }, []);
   const dirty =
-    !!saved && (compose !== saved.compose_yaml || dotenv !== saved.env_file);
+    !!saved &&
+    (compose !== saved.compose_yaml ||
+      (envLoaded && dotenv !== saved.env_file));
   useEffect(() => {
     onDirtyChange(dirty);
     return () => onDirtyChange(false);
   }, [dirty, onDirtyChange]);
+  // "Add healthcheck" from a service: load the saved files if needed, insert
+  // the probe into the editor and leave it unsaved for review and deploy.
+  useEffect(() => {
+    if (!healthcheck) return;
+    onHealthcheckHandled?.();
+    const probe = suggestHealthcheck(
+      healthcheck.image,
+      healthcheck.port,
+      healthcheck.path,
+    );
+    if (!probe) {
+      setError(
+        `Set ${healthcheck.service}'s container port first, or add a healthcheck by hand.`,
+      );
+      return;
+    }
+    const apply = (source: string) => {
+      try {
+        setCompose(addHealthcheck(source, healthcheck.service, probe));
+        setFile("compose");
+        setError("");
+        setNotice(
+          `Healthcheck added to ${healthcheck.service} — review it, then Deploy.`,
+        );
+      } catch (e) {
+        setError(message(e));
+      }
+    };
+    if (saved) {
+      apply(compose);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    fetchCompose()
+      .then((source) => source !== undefined && apply(source))
+      .catch((e) => alive.current && setError(message(e)))
+      .finally(() => alive.current && setBusy(false));
+    // Runs once per request; saved/compose are read at that moment.
+  }, [healthcheck]);
   const bytes = (value: string) => new TextEncoder().encode(value).length;
+  async function fetchCompose(): Promise<string | undefined> {
+    const data = await api.read<ComposeConfiguration>({
+      kind: "configuration",
+      project: project.id,
+    });
+    if (!alive.current) return undefined;
+    const source = composeForEditor(data.compose_yaml);
+    setSaved({ ...data, compose_yaml: source, env_file: "" });
+    setCompose(source);
+    setDotenv("");
+    setEnvLoaded(!data.release_id);
+    return source;
+  }
   async function load() {
     if (
       dirty &&
@@ -99,15 +173,35 @@ export default function ProjectConfiguration({
     setBusy(true);
     setError("");
     try {
-      const data = await api.read<Configuration>({
-        kind: "configuration",
-        project: project.id,
-      });
-      if (!alive.current) return;
-      const source = composeForEditor(data.compose_yaml);
-      setSaved({ ...data, compose_yaml: source });
-      setCompose(source);
+      await fetchCompose();
+    } catch (e) {
+      if (alive.current) setError(message(e));
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }
+  // Open the Compose file as soon as the tab is shown.
+  useEffect(() => {
+    if (!saved && !healthcheck && !preview) void load();
+    // Mount only.
+  }, []);
+  async function fetchEnv(): Promise<string> {
+    if (envLoaded || !saved?.release_id) return dotenv;
+    const data = await api.readEnv(project.id);
+    if (data.release_id !== saved.release_id)
+      throw new Error("Files changed on the server. Reload and try again.");
+    if (alive.current) {
+      setSaved({ ...saved, env_file: data.env_file });
       setDotenv(data.env_file);
+      setEnvLoaded(true);
+    }
+    return data.env_file;
+  }
+  async function unlockEnv() {
+    setBusy(true);
+    setError("");
+    try {
+      await fetchEnv();
     } catch (e) {
       if (alive.current) setError(message(e));
     } finally {
@@ -125,13 +219,15 @@ export default function ProjectConfiguration({
     setBusy(true);
     setError("");
     try {
+      // Deploy needs the .env; its Touch ID also covers the deploy prompt.
+      const env = await fetchEnv();
       await execute({
         action: "deploy",
         project: project.id,
         data: {
           environment: project.environment,
           compose_yaml: compose,
-          env_file: dotenv,
+          env_file: env,
           expected_release_id: saved.release_id,
         },
       });
@@ -139,6 +235,7 @@ export default function ProjectConfiguration({
         setSaved(undefined);
         setCompose("");
         setDotenv("");
+        setEnvLoaded(false);
       }
     } catch (e) {
       if (alive.current) setError(message(e));
@@ -152,38 +249,26 @@ export default function ProjectConfiguration({
         <h2>
           Project files{" "}
           <Help label="Project files">
-            Edit the saved release configuration. Files stay in this unlocked
-            session until you deploy or leave this tab. Deployment validates
-            both files and saves a new release. Referenced build contexts and
-            additional files must exist on the VPS. The server copies
-            compose.yml and .env into the managed project folder after
-            successful activation.
+            This is Dockyard's saved release; edits made directly on the VPS
+            aren't imported. Deploy validates both files and saves a new
+            release.
+            {project.adoption &&
+              project.adoption.source_name !== project.id &&
+              ` Original files in /docker/${project.adoption.source_name} are kept; build contexts and relative paths still use that folder.`}
           </Help>
         </h2>
       </div>
       <p className="configuration-subtitle">
-        {project.environment} · Managed files: /docker/{project.id}/compose.yml
-        and .env
-        {project.releases.length === 0 &&
-          " · Import or paste both files to deploy your services."}
+        {project.environment} · /docker/{project.id}/compose.yml and .env
       </p>
-      {project.releases.length > 0 && (
-        <p className="muted">
-          This editor shows Dockyard’s saved release. Changes made directly on
-          the VPS are not imported automatically.
-        </p>
-      )}
-      {project.adoption && project.adoption.source_name !== project.id && (
-        <p className="muted">
-          Original files in /docker/{project.adoption.source_name} are
-          preserved. Dockyard deploys saved release files from /docker/
-          {project.id}; build contexts and relative paths still use the original
-          working folder.
-        </p>
-      )}
       {error && (
         <p className="alert error" role="alert">
           {error}
+        </p>
+      )}
+      {notice && dirty && (
+        <p className="alert pending" role="status">
+          {notice}
         </p>
       )}
       {!saved ? (
@@ -207,14 +292,13 @@ export default function ProjectConfiguration({
           ) : (
             <>
               <FileCode2 size={32} />
-              <p>Edit Docker Compose and .env, then deploy your changes.</p>
               <Button
                 type="button"
                 className="button primary"
                 disabled={preview}
                 onClick={load}
               >
-                <Fingerprint size={18} /> Edit files
+                <RefreshCw size={18} /> Open files
               </Button>
             </>
           )}
@@ -262,7 +346,10 @@ export default function ProjectConfiguration({
                     if (value !== null && alive.current) {
                       if (file === "compose")
                         setCompose(composeForEditor(value));
-                      else setDotenv(value);
+                      else {
+                        setDotenv(value);
+                        setEnvLoaded(true);
+                      }
                     }
                   } catch (e) {
                     setError(message(e));
@@ -316,7 +403,18 @@ export default function ProjectConfiguration({
               active={file === "compose"}
             />
           </div>
-          <div hidden={file !== "env"}>
+          <div hidden={file !== "env" || envLoaded} className="env-locked">
+            <Fingerprint size={28} aria-hidden="true" />
+            <Button
+              type="button"
+              className="button primary"
+              disabled={busy || preview}
+              onClick={unlockEnv}
+            >
+              Show .env
+            </Button>
+          </div>
+          <div hidden={file !== "env" || !envLoaded}>
             <CodeEditor
               showToolbar={false}
               kind="env"
@@ -342,17 +440,16 @@ export default function ProjectConfiguration({
                     : "New deployment"}
             </span>
           </div>
-          {file === "env" && (
+          {file === "env" && envLoaded && (
             <p className="configuration-note">
-              An empty .env clears saved values. Inline Compose environment
-              values take precedence.
+              An empty .env clears saved values.
             </p>
           )}
           <div className="configuration-footer">
             <span>
               {project.zerodowntime
                 ? "Health checks before traffic switches."
-                : "Deploys all services with a maintenance interruption. Use Pull & update in Services for individual updates."}
+                : "Restarts all services. To update one, use Services → Pull & update."}
             </span>
             <Button
               type="submit"
@@ -366,11 +463,7 @@ export default function ProjectConfiguration({
               }
             >
               <ArrowUpRight size={18} />{" "}
-              {busy
-                ? "Preparing deployment…"
-                : saved.release_id
-                  ? "Deploy all services"
-                  : "Deploy all services"}
+              {busy ? "Preparing deployment…" : "Deploy all services"}
             </Button>
           </div>
         </form>
