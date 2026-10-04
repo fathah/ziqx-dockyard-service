@@ -44,10 +44,10 @@ const envLanguage = StreamLanguage.define({
 });
 const theme = EditorView.theme({
   "&": {
-    backgroundColor: "#fafcf8",
-    color: "#263d33",
-    fontSize: "15px",
-    border: "1px solid #d9e3d2",
+    backgroundColor: "#ffffff",
+    color: "#1d1d1f",
+    fontSize: "13px",
+    border: "1px solid rgba(0, 0, 0, 0.12)",
     borderRadius: "8px",
     overflow: "hidden",
   },
@@ -60,14 +60,14 @@ const theme = EditorView.theme({
   ".cm-content": { padding: "12px 0", caretColor: "#214b39" },
   ".cm-line": { padding: "0 14px" },
   ".cm-gutters": {
-    backgroundColor: "#f0f4ec",
-    color: "#667961",
-    borderRight: "1px solid #dce4d5",
+    backgroundColor: "#f7f7f7",
+    color: "#8e8e93",
+    borderRight: "1px solid rgba(0, 0, 0, 0.08)",
   },
   // The selection layer sits behind the text, so the active line must stay
   // translucent or it hides a selection on that line.
-  ".cm-activeLine": { backgroundColor: "rgba(137, 171, 121, 0.10)" },
-  ".cm-activeLineGutter": { backgroundColor: "#e4ecdd" },
+  ".cm-activeLine": { backgroundColor: "rgba(0, 0, 0, 0.035)" },
+  ".cm-activeLineGutter": { backgroundColor: "#ececec" },
   ".cm-selectionLayer .cm-selectionBackground": {
     backgroundColor: "rgba(66, 133, 244, 0.18)",
   },

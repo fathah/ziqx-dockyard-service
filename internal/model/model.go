@@ -181,14 +181,21 @@ type Job struct {
 	RequestID string     `json:"request_id"`
 	Created   time.Time  `json:"created_at"`
 	Finished  *time.Time `json:"finished_at,omitempty"`
-	Input     Input      `json:"-"`
+	// Diagnostic is redacted Docker output from a failed command.
+	Diagnostic string `json:"diagnostic,omitempty"`
+	Input      Input  `json:"-"`
 }
 
 type Fault struct {
 	Code     string
 	Recovery bool
+	// Detail is redacted command output explaining the failure, if any.
+	Detail string
 }
 
 func (e *Fault) Error() string    { return e.Code }
 func Fail(code string) error      { return &Fault{Code: code} }
 func Uncertain(code string) error { return &Fault{Code: code, Recovery: true} }
+func FailDetail(code, detail string) error {
+	return &Fault{Code: code, Detail: detail}
+}

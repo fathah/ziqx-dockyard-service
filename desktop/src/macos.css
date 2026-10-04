@@ -1,0 +1,1204 @@
+/*
+ * macOS look: system font and type scale, Finder-style sidebar, grouped
+ * content, native segmented control and search field. Loaded after
+ * style.css. Primary/secondary action buttons keep their ziqx styling.
+ */
+:root {
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    "SF Pro Text",
+    "Helvetica Neue",
+    sans-serif;
+  font-size: 13px;
+  color: #1d1d1f;
+  background: #f5f5f7;
+  -webkit-font-smoothing: antialiased;
+  --label: #1d1d1f;
+  --secondary: #6e6e73;
+  --tertiary: #8e8e93;
+  --separator: rgba(0, 0, 0, 0.08);
+  --fill: rgba(0, 0, 0, 0.05);
+  --accent-mac: #1f6b4f;
+  --accent-tint: rgba(31, 107, 79, 0.12);
+}
+.mono,
+code,
+pre {
+  font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+
+/* SF Symbols are lighter than Lucide's default stroke. */
+.lucide {
+  stroke-width: 1.75;
+}
+
+/* Type scale (macOS: large title 26, title 17, body 13, caption 11). */
+h1 {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  line-height: 1.2;
+  color: var(--label);
+}
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+  color: var(--label);
+}
+h3 {
+  font-size: 13px;
+  font-weight: 600;
+}
+p,
+.muted {
+  color: var(--secondary);
+  line-height: 1.5;
+}
+.eyebrow {
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--tertiary);
+}
+
+/* Sidebar: light, translucent, compact rows. */
+.sidebar {
+  width: 220px;
+  padding: 18px 10px 0;
+  color: var(--label);
+  background: rgba(236, 236, 240, 0.92);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-right: 1px solid var(--separator);
+}
+.main {
+  margin-left: 220px;
+  width: calc(100% - 220px);
+}
+.brand {
+  gap: 8px;
+  padding: 0 8px 18px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--label);
+}
+.brand-mark {
+  width: 22px;
+  height: 22px;
+}
+.brand-dot {
+  color: var(--accent-mac);
+}
+.nav-label {
+  margin: 0 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--tertiary);
+}
+.sidebar .nav-item {
+  gap: 8px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 10px;
+  margin: 1px 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--label);
+  background: transparent;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.sidebar .nav-item svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent-mac);
+}
+.sidebar .nav-item:hover {
+  background: var(--fill);
+}
+.sidebar .nav-item.active {
+  font-weight: 500;
+  color: var(--label);
+  background: rgba(0, 0, 0, 0.09);
+}
+.sidebar .nav-item.active svg {
+  color: var(--accent-mac);
+}
+.sidebar .nav-item small {
+  padding: 0;
+  font-size: 12px;
+  color: var(--tertiary);
+  background: none;
+}
+.sidebar-bottom {
+  padding: 12px 0 12px;
+  border-top: 1px solid var(--separator);
+}
+.server-footer {
+  padding: 2px;
+  background: transparent;
+  border: 0;
+}
+.server-footer.active {
+  background: rgba(0, 0, 0, 0.09);
+  border-radius: 8px;
+}
+.sidebar .server-summary {
+  gap: 8px;
+  color: var(--label);
+}
+.sidebar .server-summary:hover,
+.sidebar .sidebar-lock:hover {
+  background: var(--fill);
+}
+.server-symbol {
+  width: 20px;
+  height: 20px;
+  color: var(--accent-mac);
+}
+.server-symbol svg {
+  width: 16px;
+  height: 16px;
+}
+.server-summary strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.server-status {
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--secondary);
+}
+.sidebar .sidebar-lock {
+  color: var(--secondary);
+}
+.sidebar .sidebar-lock svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Content area */
+.content {
+  padding: 24px 28px 24px;
+}
+.preview-banner {
+  padding: 6px 28px;
+  font-size: 11px;
+  color: var(--secondary);
+  background: rgba(255, 255, 255, 0.7);
+  border-bottom: 1px solid var(--separator);
+}
+.preview-banner strong {
+  color: var(--label);
+}
+.preview-banner button {
+  font-size: 11px;
+  color: var(--accent-mac);
+}
+.page-heading {
+  margin-bottom: 18px;
+}
+.panel {
+  padding: 16px 18px;
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+.section-heading {
+  margin-bottom: 10px;
+}
+.section-heading h2 > span,
+h1 > span:not(.tag) {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--tertiary);
+  background: none;
+  padding: 0;
+}
+.count {
+  font-size: 12px;
+  color: var(--tertiary);
+}
+
+/* Summary cards */
+.stats-grid {
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.stat {
+  padding: 12px 14px;
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+.stat > div {
+  margin-bottom: 4px;
+  color: var(--tertiary);
+}
+.stat > div span {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--secondary);
+}
+.stat > div svg {
+  width: 15px;
+  height: 15px;
+  color: var(--accent-mac);
+}
+.stat > strong {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: var(--label);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Segmented control and search field */
+.filters {
+  margin-bottom: 10px;
+}
+.segments {
+  gap: 0;
+  padding: 2px;
+  background: rgba(118, 118, 128, 0.12);
+  border: 0;
+  border-radius: 7px;
+}
+.segments button {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--label);
+  border-radius: 5px;
+  box-shadow: none;
+}
+.segments button.selected {
+  color: var(--label);
+  background: #fff;
+  font-weight: 500;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.12),
+    0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
+.search {
+  height: 28px;
+  padding: 0 8px;
+  gap: 5px;
+  max-width: 220px;
+  color: var(--tertiary);
+  background: rgba(118, 118, 128, 0.12);
+  border: 0;
+  border-radius: 7px;
+}
+.search input {
+  font-size: 13px;
+  color: var(--label);
+}
+.search input::placeholder {
+  color: var(--tertiary);
+}
+.search kbd {
+  display: none;
+}
+
+/* Project table: list rows like Finder/Mail */
+.project-table {
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+.table-head {
+  height: 28px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--secondary);
+  background: #fafafa;
+  border-bottom: 1px solid var(--separator);
+}
+.project-row {
+  height: 48px;
+  font-size: 12px;
+  color: var(--secondary);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+.project-row:hover {
+  background: rgba(0, 0, 0, 0.025);
+}
+.project-row > svg {
+  width: 14px;
+  height: 14px;
+  color: #c7c7cc;
+}
+.project-name {
+  gap: 10px;
+}
+.project-name strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+}
+.app-icon {
+  width: 28px;
+  height: 28px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 7px;
+}
+.env-label {
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--secondary);
+}
+
+/* Capsule status tags */
+.tag {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 0;
+  border-radius: 999px;
+  color: var(--secondary);
+  background: rgba(118, 118, 128, 0.12);
+}
+.tag.green {
+  color: #1d7a3e;
+  background: rgba(52, 199, 89, 0.14);
+}
+.tag.amber {
+  color: #9a6200;
+  background: rgba(255, 159, 10, 0.16);
+}
+.tag.red {
+  color: #c4291c;
+  background: rgba(255, 59, 48, 0.12);
+}
+
+/* Deployments table follows the same scale */
+.jobs-table {
+  font-size: 13px;
+}
+.jobs-table thead th {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--secondary);
+}
+.jobs-table tbody td {
+  padding: 7px 12px;
+  border-bottom-color: rgba(0, 0, 0, 0.05);
+}
+.jobs-filters button {
+  font-size: 12px;
+}
+.jobs-status.green i {
+  background: #34c759;
+}
+.jobs-status.red i {
+  background: #ff3b30;
+}
+.jobs-status i {
+  background: #ff9f0a;
+}
+
+/* Segmented controls built from ziqx buttons (filters, Domains views) */
+.page-heading .segments,
+.jobs-filters.segments {
+  flex-wrap: nowrap;
+}
+.jobs-filters.segments button {
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+}
+.jobs-filters.segments button:hover {
+  background: transparent;
+}
+.jobs-filters.segments button.selected {
+  background: #fff;
+  border: 0;
+  font-weight: 500;
+}
+.jobs-filters.segments button span {
+  font-size: 11px;
+  color: var(--tertiary);
+}
+.jobs-search select {
+  height: 28px;
+  border: 0;
+  border-radius: 7px;
+  background: rgba(118, 118, 128, 0.12);
+  color: var(--label);
+}
+.jobs-search label.search {
+  height: 28px;
+  border: 0;
+}
+.jobs-toolbar {
+  margin-top: 0;
+}
+
+/* Project detail */
+.project-header {
+  margin-bottom: 16px;
+}
+.project-header-identity h1 {
+  margin-bottom: 4px;
+}
+.project-header-badges {
+  gap: 10px;
+}
+.project-status {
+  font-size: 12px;
+  color: var(--secondary);
+}
+.project-status i {
+  background: #aeaeb2;
+}
+.project-status.running i {
+  background: #34c759;
+}
+
+/* Section tabs as a toolbar segmented control */
+.tabs {
+  gap: 0;
+  padding: 2px;
+  margin-bottom: 16px;
+  background: rgba(118, 118, 128, 0.12);
+  border: 0;
+  border-radius: 8px;
+}
+.tabs button {
+  gap: 6px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--label);
+  border: 0;
+  border-radius: 6px;
+}
+.tabs button svg {
+  width: 15px;
+  height: 15px;
+  color: var(--secondary);
+}
+.tabs button:hover {
+  color: var(--label);
+  background: transparent;
+}
+.tabs button.selected {
+  font-weight: 600;
+  color: var(--label);
+  background: #fff;
+  border: 0;
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.12),
+    0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
+.tabs button.selected svg {
+  color: var(--accent-mac);
+}
+.configuration-toolbar .tabs button {
+  height: 24px;
+  min-height: 24px;
+  padding: 0 12px;
+  font-size: 12px;
+}
+
+/* Summary strip */
+.project-summary {
+  margin-bottom: 16px;
+  border: 1px solid var(--separator);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+.project-summary-item {
+  padding: 12px 16px;
+}
+.project-summary-item + .project-summary-item {
+  border-left-color: var(--separator);
+}
+.project-summary-item h2 {
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--secondary);
+}
+.project-strategy-value {
+  font-size: 13px;
+  color: var(--label);
+}
+.project-strategy-value svg,
+.project-domain-link svg {
+  width: 15px;
+  height: 15px;
+  color: var(--accent-mac);
+}
+.project-domain-link {
+  font-size: 13px;
+  color: var(--label);
+}
+.project-folder {
+  font-size: 12px;
+  color: var(--label);
+}
+.project-summary-action,
+.project-technical-details .accordion-trigger {
+  font-size: 12px;
+  color: var(--accent-mac);
+}
+
+/* Inline notices */
+.alert {
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.45;
+  border-radius: 8px;
+}
+.content > .alert {
+  margin: 0 0 12px;
+}
+.alert.pending {
+  color: #7a5200;
+  background: rgba(255, 204, 0, 0.12);
+  border: 1px solid rgba(255, 179, 0, 0.25);
+}
+.alert.error {
+  color: #b3261e;
+  background: rgba(255, 59, 48, 0.08);
+  border: 1px solid rgba(255, 59, 48, 0.2);
+}
+
+/* Overview cards */
+.detail-grid {
+  gap: 16px;
+}
+.slot-grid {
+  gap: 12px;
+  margin: 12px 0;
+}
+.slot-card {
+  padding: 12px 14px;
+  background: #fafafa;
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+}
+.slot-card.serving {
+  background: rgba(52, 199, 89, 0.06);
+  border-color: rgba(52, 199, 89, 0.3);
+}
+.slot-card > div {
+  margin-bottom: 10px;
+}
+.slot-card .eyebrow {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--secondary);
+}
+.slot-card > svg {
+  width: 20px;
+  height: 20px;
+}
+.slot-card h3 {
+  margin: 8px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.slot-card p,
+.slot-card small {
+  font-size: 11px;
+  color: var(--secondary);
+}
+.slot-card small {
+  margin-top: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.panel h2 + p,
+.panel > p {
+  font-size: 12px;
+}
+.jobs-search select {
+  width: auto;
+  max-width: 180px;
+  padding: 0 8px;
+}
+.jobs-search label.search {
+  flex: none;
+  width: 220px;
+  max-width: none;
+}
+.jobs-search label.search input {
+  width: 100%;
+}
+
+/* Shared list rows: routes, releases, services, inventory */
+.domain-row,
+.release-row,
+.service-row,
+.inventory-row {
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+.domain-row > svg,
+.service-row > svg,
+.release-row > svg,
+.inventory-row > svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent-mac);
+}
+.domain-row strong,
+.release-row strong,
+.service-row strong,
+.inventory-row strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+}
+.domain-row p,
+.release-row p,
+.inventory-row p {
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.domain-row .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: auto;
+  min-height: 0;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+  background: none;
+  border: 0;
+  box-shadow: none;
+}
+.domain-row .text-button svg {
+  width: 12px;
+  height: 12px;
+  color: var(--tertiary);
+}
+.domain-row .text-button:hover {
+  color: var(--accent-mac);
+}
+.panel > h2 {
+  margin-bottom: 6px;
+}
+
+/* Only the current page is highlighted; keyboard focus gets a ring. */
+.sidebar .nav-item:focus:not(.active):not(:hover) {
+  background: transparent;
+}
+.sidebar .nav-item:focus-visible {
+  outline: 2px solid rgba(31, 107, 79, 0.5);
+  outline-offset: -2px;
+}
+
+/* Column headers and small captions: sentence case, no tracking */
+.services-table thead th,
+.dns-table th,
+.job-details h3,
+.rollout-card .eyebrow,
+.rollout-diagram span,
+.connect .eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--secondary);
+}
+.services-table thead th {
+  padding: 6px 16px;
+  border-top: 0;
+  border-bottom-color: var(--separator);
+}
+.services-table tbody th,
+.services-table tbody td {
+  padding: 8px 16px;
+  border-bottom-color: rgba(0, 0, 0, 0.05);
+}
+.services-identity {
+  gap: 10px;
+}
+.services-identity strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+}
+.services-identity code {
+  font-size: 11px;
+  color: var(--secondary);
+}
+.services-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+.services-icon svg {
+  width: 15px;
+  height: 15px;
+}
+.services-status,
+.services-status-note {
+  font-size: 12px;
+}
+
+/* Empty states */
+.empty {
+  padding: 36px 20px;
+  gap: 8px;
+  color: var(--tertiary);
+}
+.empty svg {
+  width: 28px;
+  height: 28px;
+  color: #c7c7cc;
+}
+.empty h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--secondary);
+}
+.empty p {
+  font-size: 12px;
+  color: var(--tertiary);
+}
+
+/* Project → Domains: inline route setup */
+.route-setup {
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.route-blocked {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--secondary);
+  background: #fafafa;
+  border: 1px solid var(--separator);
+  border-radius: 8px;
+}
+.route-blocked > span {
+  flex: 1;
+}
+.route-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) 90px auto;
+  gap: 10px;
+  align-items: end;
+}
+.route-fields label > span,
+.route-service .dockyard-select-field label {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--secondary);
+}
+.route-fields input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--label);
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 7px;
+}
+.route-fields input[readonly] {
+  background: #fafafa;
+  color: var(--secondary);
+}
+.route-fields input:focus {
+  outline: none;
+  border-color: var(--accent-mac);
+  box-shadow: 0 0 0 3px rgba(31, 107, 79, 0.18);
+}
+.route-service .dockyard-select-field {
+  margin: 0;
+}
+.route-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #c4291c;
+}
+.route-blocked .route-error {
+  flex-basis: 100%;
+  margin: 0;
+}
+.route-review {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--label);
+}
+.route-review svg {
+  color: #34c759;
+}
+.route-review span {
+  color: var(--secondary);
+}
+@media (max-width: 760px) {
+  .route-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.route-setup label,
+.route-setup .dockyard-select-field {
+  margin-bottom: 0;
+}
+
+/* Form fields (global) */
+label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--secondary);
+}
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  margin-top: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--label);
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 7px;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #aeaeb2;
+}
+input:not([type="checkbox"]):focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--accent-mac);
+  box-shadow: 0 0 0 3px rgba(31, 107, 79, 0.18);
+}
+label small,
+.field-hint {
+  font-size: 11px;
+  color: var(--tertiary);
+}
+/* Re-assert controls that sit inside their own field chrome. */
+.search input:not([type="checkbox"]):not([type="radio"]),
+.jobs-search label.search input:not([type="checkbox"]):not([type="radio"]) {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.jobs-search select,
+.job-logs-heading select {
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  background: rgba(118, 118, 128, 0.12);
+}
+.route-fields input:not([type="checkbox"]):not([type="radio"]) {
+  margin: 0;
+  height: 32px;
+}
+
+/* Sheets (modals) */
+.modal-backdrop {
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: none;
+}
+.modal {
+  border: 0.5px solid rgba(0, 0, 0, 0.12);
+  border-radius: 12px;
+  box-shadow:
+    0 24px 60px rgba(0, 0, 0, 0.22),
+    0 0 0 0.5px rgba(0, 0, 0, 0.08);
+}
+.modal-heading {
+  padding: 16px 20px 12px;
+}
+.modal-heading .eyebrow {
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--tertiary);
+}
+.modal-heading h2 {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--label);
+}
+.wizard-steps {
+  gap: 20px;
+  padding: 8px 20px;
+  font-size: 12px;
+  color: var(--tertiary);
+  background: #fafafa;
+  border-color: var(--separator);
+}
+.wizard-steps i {
+  width: 18px;
+  height: 18px;
+  font-size: 11px;
+  color: var(--tertiary);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+.wizard-steps .current {
+  color: var(--label);
+  font-weight: 500;
+}
+.wizard-steps .current i,
+.wizard-steps .done i {
+  color: #fff;
+  background: var(--accent-mac);
+  border-color: var(--accent-mac);
+}
+.wizard-body {
+  padding: 16px 20px;
+}
+.wizard-body > h3 {
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+}
+.wizard-body > p,
+.wizard-body .note p,
+.modal-footer .muted,
+.modal .text-button {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.wizard-body > label {
+  margin-bottom: 14px;
+}
+.modal-footer {
+  padding: 12px 20px;
+  background: #fafafa;
+  border-top-color: var(--separator);
+}
+.wizard-body .modal-footer {
+  padding: 14px 0 0;
+  margin-top: 14px;
+}
+
+/* Choice cards (flavor picker) */
+.environment-options {
+  gap: 8px;
+  margin-top: 12px;
+}
+.environment-options > button {
+  gap: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+}
+.environment-options > button:hover {
+  background: #fafafa;
+}
+.environment-options > button.chosen {
+  background: var(--accent-tint);
+  border-color: var(--accent-mac);
+}
+.environment-options strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+}
+.environment-options small {
+  margin-top: 1px;
+  font-size: 12px;
+  color: var(--secondary);
+}
+.env-option-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+}
+.env-option-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.operation-modal .modal-heading h2,
+.service-update-modal .modal-heading h2 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--label);
+}
+.operation-modal .modal-heading .eyebrow {
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.services-identity > div {
+  min-width: 0;
+}
+.services-identity code {
+  display: block;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Releases */
+.release-row code {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+.release-row > div {
+  min-width: 0;
+}
+
+/* Terminal-dark log panes */
+.job-logs pre {
+  color: #e5e5e7;
+  background: #1e1e1e;
+}
+.env-locked:not([hidden]) {
+  color: var(--secondary);
+  background: #fafafa;
+  border-color: rgba(0, 0, 0, 0.12);
+}
+.panel .terminal {
+  color: #e5e5e7;
+  background: #1e1e1e;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+/* Activity bar: like a toolbar status, not an alert */
+.activity-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  margin: 14px 28px 0;
+  padding: 0 6px 0 12px;
+  font-size: 12px;
+  color: var(--label);
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--separator);
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+}
+.activity-bar > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activity-bar.running > svg {
+  color: var(--secondary);
+}
+.activity-bar.unconfirmed > svg {
+  color: #ff9f0a;
+}
+.activity-link {
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent-mac);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.activity-link:hover {
+  background: var(--fill);
+}
+.activity-bar .button.small {
+  height: 24px;
+  min-height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.job-diagnostic {
+  border-top: 1px solid var(--separator);
+}
+.job-diagnostic pre {
+  max-height: 260px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #f2f2f7;
+  background: #1e1e1e;
+  border-left: 3px solid #ff3b30;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.job-deploy-log {
+  border-top: 1px solid var(--separator);
+}
+.job-deploy-log pre {
+  max-height: 340px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #d1d1d6;
+  background: #1e1e1e;
+  border-radius: 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.job-deploy-log .cmd {
+  color: #64d2ff;
+}
+.job-deploy-log .stage {
+  display: inline-block;
+  margin-top: 6px;
+  color: #fff;
+  font-weight: 600;
+}
+.job-deploy-log .bad {
+  color: #ff6961;
+  font-weight: 600;
+}
+.job-deploy-log .good {
+  color: #30d158;
+}

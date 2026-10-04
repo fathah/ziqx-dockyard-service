@@ -215,7 +215,7 @@ export default function JobsTable({
   return (
     <>
       <div className="jobs-toolbar">
-        <div className="jobs-filters" role="tablist" aria-label="Filter by status">
+        <div className="segments jobs-filters" role="tablist" aria-label="Filter by status">
           {statusTabs
             .filter((t) => t.id === "all" || counts[t.id] > 0)
             .map((t) => (
@@ -247,7 +247,7 @@ export default function JobsTable({
               ))}
             </select>
           )}
-          <label>
+          <label className="search">
             <Search size={14} aria-hidden="true" />
             <input
               aria-label="Search operations or look up a job ID"

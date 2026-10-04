@@ -7,16 +7,20 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/ziqx/ziqx-dockyard-service/internal/config"
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
+	"github.com/ziqx/ziqx-dockyard-service/internal/process"
 	"github.com/ziqx/ziqx-dockyard-service/internal/runtime"
 	"github.com/ziqx/ziqx-dockyard-service/internal/secure"
 	"github.com/ziqx/ziqx-dockyard-service/internal/state"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -46,6 +50,7 @@ type Engine struct {
 	Admission sync.Mutex
 	wake      chan struct{}
 	failed    atomic.Bool
+	log       io.Writer // current job's deployment log; one worker runs jobs
 }
 
 func New(c config.Config, s *state.Store, d Docker, r Routes, dns DNS) *Engine {
@@ -156,7 +161,44 @@ func (e *Engine) Run(ctx context.Context) error {
 		e.execute(ctx, j)
 	}
 }
+
+var phaseLabels = map[string]string{
+	"validating":         "Validating",
+	"pulling":            "Pulling images",
+	"candidate_intent":   "Starting new version",
+	"readiness":          "Health check",
+	"route_intent":       "Switching traffic",
+	"maintenance_intent": "Maintenance",
+	"draining":           "Draining old version",
+	"dns_intent":         "Updating DNS",
+}
+
+// JobLogPath is where a job's deployment log is kept.
+func (e *Engine) JobLogPath(id string) string {
+	return filepath.Join(e.Config.StateDir, "job-logs", id+".log")
+}
+
+func (e *Engine) openJobLog(j model.Job) (io.Writer, func()) {
+	if err := os.MkdirAll(filepath.Dir(e.JobLogPath(j.ID)), 0700); err != nil {
+		return nil, func() {}
+	}
+	f, err := os.OpenFile(e.JobLogPath(j.ID), os.O_CREATE|os.O_APPEND|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, func() {}
+	}
+	w := &process.Capped{W: f, Limit: 2 << 20}
+	fmt.Fprintf(w, "Dockyard · %s %s · %s\n", j.Action, j.ProjectID, time.Now().UTC().Format(time.RFC3339))
+	return w, func() { f.Close() }
+}
+
 func (e *Engine) phase(j *model.Job, phase string) error {
+	if e.log != nil {
+		label := phaseLabels[phase]
+		if label == "" {
+			label = phase
+		}
+		fmt.Fprintf(e.log, "\n== %s\n", label)
+	}
 	j.Phase = phase
 	if err := e.Store.Update(*j, nil); err != nil {
 		e.failed.Store(true)
@@ -165,6 +207,13 @@ func (e *Engine) phase(j *model.Job, phase string) error {
 	return nil
 }
 func (e *Engine) execute(ctx context.Context, j model.Job) {
+	log, closeLog := e.openJobLog(j)
+	defer closeLog()
+	if log != nil {
+		e.log = log
+		defer func() { e.log = nil }()
+		ctx = process.WithJobLog(ctx, log)
+	}
 	p, err := e.Store.Project(j.ProjectID)
 	if err == nil {
 		err = p.ValidateTarget()
@@ -207,6 +256,7 @@ func (e *Engine) execute(ctx context.Context, j model.Job) {
 		var fault *model.Fault
 		if errors.As(err, &fault) {
 			j.Error = fault.Code
+			j.Diagnostic = fault.Detail
 			if fault.Recovery {
 				j.Status = "recovery_required"
 			}
@@ -220,6 +270,13 @@ func (e *Engine) execute(ctx context.Context, j model.Job) {
 	}
 	now := time.Now().UTC()
 	j.Finished = &now
+	if log != nil {
+		result := j.Status
+		if j.Error != "" {
+			result += " · " + j.Error
+		}
+		fmt.Fprintf(log, "\n== Finished: %s\n", result)
+	}
 	if err = e.Store.Update(j, nil); err != nil {
 		e.failed.Store(true)
 		slog.Error("durable job result unavailable", "job_id", j.ID)

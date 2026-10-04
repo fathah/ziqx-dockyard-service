@@ -1,6 +1,12 @@
 package runtime
 
 import (
+	"errors"
+	"github.com/ziqx/ziqx-dockyard-service/internal/config"
+	"github.com/ziqx/ziqx-dockyard-service/internal/model"
+	"github.com/ziqx/ziqx-dockyard-service/internal/process"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,5 +44,25 @@ func TestComposeVersion(t *testing.T) {
 		if ComposeSupported(v) {
 			t.Fatal(v)
 		}
+	}
+}
+
+func TestFailureKeepsRedactedDockerTail(t *testing.T) {
+	c := config.Config{ProjectsRoot: t.TempDir()}
+	d := Docker{Config: c}
+	p := model.Project{ID: "demo"}
+	os.MkdirAll(filepath.Join(projectDir(c, p.ID), "env"), 0700)
+	os.WriteFile(filepath.Join(projectDir(c, p.ID), "env", "env-1.env"), []byte("DB_PASSWORD=hunter2hunter2\n"), 0600)
+	stderr := strings.Repeat("noise\n", 40) + "Error: bind for 0.0.0.0:3000 failed: port is already allocated (password hunter2hunter2)"
+	err := d.failure(p, "CONTAINER_START_FAILED", process.Result{Stderr: []byte(stderr)})
+	var f *model.Fault
+	if !errors.As(err, &f) || f.Code != "CONTAINER_START_FAILED" {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.Detail, "port is already allocated") || strings.Contains(f.Detail, "hunter2") || strings.Count(f.Detail, "\n") > 29 {
+		t.Fatal(f.Detail)
+	}
+	if err := d.failure(p, "CONTAINER_START_FAILED", process.Result{}); !errors.As(err, &f) || f.Detail != "" {
+		t.Fatal("empty output should not add detail")
 	}
 }

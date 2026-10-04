@@ -21,8 +21,8 @@ export default function Select({
   }, []);
   return (
     <ZiqxSelect
-      bgColor="#fafcf7"
-      fgColor="#354d3b"
+      bgColor="#ffffff"
+      fgColor="#1d1d1f"
       {...props}
       ref={captureTrigger}
       portalContainer={props.portalContainer ?? dialogContainer}

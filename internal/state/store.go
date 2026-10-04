@@ -354,6 +354,7 @@ func (s *Store) InterruptRunning() error {
 	}
 	return nil
 }
+
 type JobEvent struct {
 	Status string    `json:"status"`
 	Phase  string    `json:"phase"`

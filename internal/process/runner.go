@@ -68,8 +68,13 @@ func (r Exec) Run(ctx context.Context, binary, dir string, args []string) (Resul
 	diagnostic := &bounded{limit: r.Limit}
 	c.Stdout = out
 	c.Stderr = diagnostic
+	started := time.Now()
 	err := c.Run()
-	return Result{Output: out.b, Stderr: diagnostic.b, Truncated: out.truncated || diagnostic.truncated}, err
+	res := Result{Output: out.b, Stderr: diagnostic.b, Truncated: out.truncated || diagnostic.truncated}
+	if w := JobLog(ctx); w != nil && logged(args) {
+		writeCommand(w, binary, args, res, err, time.Since(started))
+	}
+	return res, err
 }
 
 var _ io.Writer = (*bounded)(nil)

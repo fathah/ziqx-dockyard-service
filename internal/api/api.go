@@ -294,6 +294,33 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		write(w, 200, map[string]string{"job_id": j.ID, "project_id": j.ProjectID, "action": j.Action, "status": j.Status})
 		return
 	}
+	if len(parts) == 3 && parts[0] == "jobs" && parts[2] == "log" {
+		if _, err := query(r); err != nil {
+			fail(w, err, p.RequestID)
+			return
+		}
+		j, err := e.Store.Job(parts[1])
+		if err != nil {
+			problem(w, 404, "JOB_NOT_FOUND", p.RequestID)
+			return
+		}
+		if !require(w, p, "deploy.logs", j.ProjectID) {
+			return
+		}
+		// Return the newest 512 KiB; the file itself is capped at 2 MiB.
+		text, truncated := "", false
+		if f, err := os.Open(e.JobLogPath(j.ID)); err == nil {
+			defer f.Close()
+			if st, err := f.Stat(); err == nil && st.Size() > 512<<10 {
+				f.Seek(-512<<10, io.SeekEnd)
+				truncated = true
+			}
+			b, _ := io.ReadAll(io.LimitReader(f, 512<<10))
+			text = string(b)
+		}
+		write(w, 200, map[string]any{"job_id": j.ID, "log": text, "truncated": truncated})
+		return
+	}
 	if len(parts) == 3 && parts[0] == "jobs" && parts[2] == "events" {
 		if _, err := query(r); err != nil {
 			fail(w, err, p.RequestID)
@@ -304,7 +331,8 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 			problem(w, 404, "JOB_NOT_FOUND", p.RequestID)
 			return
 		}
-		if !require(w, p, "deploy.read", j.ProjectID) {
+		// Docker output may reveal configuration, so it shares the logs scope.
+		if !require(w, p, "deploy.logs", j.ProjectID) {
 			return
 		}
 		events, err := e.Store.JobEvents(j.ID)
@@ -312,7 +340,7 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 			fail(w, err, p.RequestID)
 			return
 		}
-		write(w, 200, map[string]any{"job_id": j.ID, "events": events})
+		write(w, 200, map[string]any{"job_id": j.ID, "events": events, "diagnostic": j.Diagnostic})
 		return
 	}
 	if len(parts) == 2 && parts[0] == "jobs" {
@@ -328,6 +356,7 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		if !require(w, p, "deploy.read", j.ProjectID) {
 			return
 		}
+		j.Diagnostic = "" // Only the logs-scoped events endpoint returns it.
 		write(w, 200, j)
 		return
 	}

@@ -184,7 +184,7 @@ export default function SetupWizard({
       >
         <div className="modal-heading">
           <div>
-            <div className="eyebrow">SERVER SETUP</div>
+            <div className="eyebrow">Server setup</div>
             <h2 id="setup-title">Set up your server</h2>
           </div>
           <Button

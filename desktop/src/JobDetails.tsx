@@ -51,6 +51,8 @@ export default function JobDetails({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [events, setEvents] = useState<Event[]>();
+  const [diagnostic, setDiagnostic] = useState("");
+  const [deployLog, setDeployLog] = useState<string>();
   const [services, setServices] = useState<string[]>([]);
   const [service, setService] = useState("");
   const [logs, setLogs] = useState<string>();
@@ -75,11 +77,19 @@ export default function JobDetails({
       return;
     }
     try {
-      const data = await api.read<{ events: Event[] }>({ kind: "job_events", job: job.job_id });
+      const data = await api.read<{ events: Event[]; diagnostic?: string }>({
+        kind: "job_events",
+        job: job.job_id,
+      });
       setEvents(data.events);
+      setDiagnostic(data.diagnostic ?? "");
+      const log = await api
+        .read<{ log: string }>({ kind: "job_log", job: job.job_id })
+        .catch(() => ({ log: "" }));
+      setDeployLog(log.log);
       setError("");
     } catch (e) {
-      setError(/404|NOT_FOUND/.test(String(e)) ? "Update the VPS service to 0.7.8 to see the timeline." : String(e).replace(/^Error: /, ""));
+      setError(/404|NOT_FOUND/.test(String(e)) ? "Update the VPS service to 0.7.9 to see the timeline." : String(e).replace(/^Error: /, ""));
     }
   }
   useEffect(() => {
@@ -196,10 +206,44 @@ export default function JobDetails({
             })}
           </ol>
         )}
-        {failedAt && job.status !== "succeeded" && (
+        {failedAt && job.status !== "succeeded" && !diagnostic && (
           <p className="job-details-note">Container logs below usually show why it failed.</p>
         )}
       </section>
+
+      {deployLog ? (
+        <section className="job-deploy-log">
+          <h3>Deployment log</h3>
+          <pre>
+            {deployLog.split("\n").map((line, i) => (
+              <span
+                key={i}
+                className={
+                  line.startsWith("$ ")
+                    ? "cmd"
+                    : line.startsWith("== ")
+                      ? "stage"
+                      : line.startsWith("✗")
+                        ? "bad"
+                        : line.startsWith("✓")
+                          ? "good"
+                          : undefined
+                }
+              >
+                {line.startsWith("== ") ? line.slice(3) : line}
+                {"\n"}
+              </span>
+            ))}
+          </pre>
+        </section>
+      ) : (
+        diagnostic && (
+          <section className="job-diagnostic">
+            <h3>Docker output</h3>
+            <pre>{diagnostic}</pre>
+          </section>
+        )
+      )}
 
       <section className="job-logs">
         <div className="job-logs-heading">

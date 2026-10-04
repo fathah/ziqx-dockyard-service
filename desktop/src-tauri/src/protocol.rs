@@ -137,6 +137,9 @@ pub enum Read {
     JobEvents {
         job: String,
     },
+    JobLog {
+        job: String,
+    },
 }
 impl Read {
     pub fn target(&self) -> Result<(String, &'static str), String> {
@@ -156,7 +159,8 @@ impl Read {
                 && matches!(since.as_str(), "5m" | "30m" | "1h" | "24h") =>
                 (format!("/v1/projects/{project}/logs?service={service}&slot={slot}&tail={tail}&since={since}"), "deploy.logs"),
             Self::Job { job } if token(job) => (format!("/v1/jobs/{job}"), "deploy.read"),
-            Self::JobEvents { job } if token(job) => (format!("/v1/jobs/{job}/events"), "deploy.read"),
+            Self::JobEvents { job } if token(job) => (format!("/v1/jobs/{job}/events"), "deploy.logs"),
+            Self::JobLog { job } if token(job) => (format!("/v1/jobs/{job}/log"), "deploy.logs"),
             _ => return Err(bad()),
         })
     }

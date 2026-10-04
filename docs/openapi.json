@@ -2323,6 +2323,55 @@
         ]
       }
     },
+    "/v1/jobs/{job}/log": {
+      "get": {
+        "operationId": "jobLog",
+        "summary": "Deployment log",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires deploy.logs. Every state-changing Docker command the job ran (up, pull, stop, build\u2026) with its full output, plus stage markers and the final result. Returns the newest 512 KiB; `log` is empty for jobs that ran before 0.7.9.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{job_id, log, truncated}"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.logs"
+        ]
+      }
+    },
     "/v1/jobs/{job}/events": {
       "get": {
         "operationId": "jobEvents",
@@ -2330,7 +2379,7 @@
         "tags": [
           "Deployments"
         ],
-        "description": "Requires deploy.read for the job's project. Returns every durable status/phase change of the job, oldest first, with timestamps and fault codes. Docker command output is never included.",
+        "description": "Requires deploy.logs for the job's project. Returns every durable status/phase change of the job, oldest first, with timestamps and fault codes, plus `diagnostic`: the last lines of Docker's error output when a command failed, with known environment values redacted.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -2368,7 +2417,7 @@
           }
         },
         "x-required-scopes": [
-          "deploy.read"
+          "deploy.logs"
         ]
       }
     },
@@ -3097,6 +3146,10 @@
           },
           "warning_code": {
             "type": "string"
+          },
+          "diagnostic": {
+            "type": "string",
+            "description": "Redacted Docker output from a failed command. Returned only by GET /v1/jobs/{job}/events (deploy.logs)."
           },
           "actor_id": {
             "type": "string",

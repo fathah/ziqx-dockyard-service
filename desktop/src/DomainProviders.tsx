@@ -226,9 +226,6 @@ function DomainProvidersPanel({
   const [removeError, setRemoveError] = useState("");
   return (
     <>
-      <div className="page-heading">
-        <h1>Domains</h1>
-      </div>
       <section className="panel provider-settings">
         <div className="provider-section-heading">
           <h2>
@@ -482,31 +479,34 @@ export function ProviderDomains({
   const [provider, setProvider] = useState("");
   return (
     <>
-      <div className="dns-tabs" aria-label="Domain views">
-        <Button
-          type="button"
-          className={tab === "dns" ? "button primary" : "button"}
-          aria-pressed={tab === "dns"}
-          onClick={() => setTab("dns")}
-        >
-          Provider DNS
-        </Button>
-        <Button
-          type="button"
-          className={tab === "routes" ? "button primary" : "button"}
-          aria-pressed={tab === "routes"}
-          onClick={() => setTab("routes")}
-        >
-          Caddy routes
-        </Button>
-        <Button
-          type="button"
-          className={tab === "providers" ? "button primary" : "button"}
-          aria-pressed={tab === "providers"}
-          onClick={() => setTab("providers")}
-        >
-          Providers
-        </Button>
+      <div className="page-heading">
+        <h1>
+          Domains{" "}
+          <Help label="domains">
+            DNS records live at your provider (Cloudflare). Caddy routes send a
+            domain's traffic to a project on this VPS.
+          </Help>
+        </h1>
+        <div className="segments" role="tablist" aria-label="Domain views">
+          {(
+            [
+              ["dns", "DNS"],
+              ["routes", "Caddy routes"],
+              ["providers", "Providers"],
+            ] as const
+          ).map(([id, label]) => (
+            <Button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              className={tab === id ? "selected" : ""}
+              onClick={() => setTab(id)}
+            >
+              {label}
+            </Button>
+          ))}
+        </div>
       </div>
       {tab === "providers" ? (
         <DomainProvidersPanel
@@ -561,19 +561,6 @@ function DNSWorkspace({
   const [search, setSearch] = useState("");
   return (
     <>
-      <div className="page-heading">
-        <h1>
-          Domains{" "}
-          <Help label="provider DNS">
-            Manage DNS zones accessible to your Cloudflare token. Domain
-            registration, billing and nameserver changes remain in Cloudflare.
-            Configure traffic routing separately in Caddy routes.
-          </Help>
-        </h1>
-        <Button type="button" className="button" onClick={manageProviders}>
-          Domain Providers
-        </Button>
-      </div>
       {preview ? (
         <section className="panel">
           <p>Open the desktop app to connect Cloudflare.</p>

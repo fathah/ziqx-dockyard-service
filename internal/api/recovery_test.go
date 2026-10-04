@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -82,14 +84,35 @@ func TestJobEventsTimeline(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	w := send("GET", "/v1/jobs/job-deploy/events", "", "deploy.read", "e1")
+	w := send("GET", "/v1/jobs/job-deploy/events", "", "deploy.logs", "e1")
 	var body struct {
 		Events []struct{ Status, Phase, Error_code string } `json:"events"`
 	}
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &body) != nil || len(body.Events) != 3 || body.Events[2].Phase != "candidate_intent" || body.Events[2].Error_code != "CONTAINER_START_FAILED" {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if w := send("GET", "/v1/jobs/job-deploy/events", "", "deploy.logs", "e2"); w.Code != 403 {
+	if w := send("GET", "/v1/jobs/job-deploy/events", "", "deploy.read", "e2"); w.Code != 403 {
+		t.Fatal(w.Code)
+	}
+}
+
+func TestJobLogEndpoint(t *testing.T) {
+	a, _, _, send := apiFixture(t)
+	p := model.Project{ID: "demo", AppID: "demo", Template: "node", Environment: model.Production, State: "running", Active: "blue", Slots: map[string]model.Release{}, Releases: []model.Release{}}
+	job := model.Job{ID: "job-log", ProjectID: p.ID, Action: "start", Status: "failed", Created: time.Now()}
+	if err := a.Engine.Store.Accept(job, &p, "op-log", "fp", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	if w := send("GET", "/v1/jobs/job-log/log", "", "deploy.logs", "l1"); w.Code != 200 || !strings.Contains(w.Body.String(), `"log":""`) {
+		t.Fatal("missing log should be empty", w.Code, w.Body.String())
+	}
+	a.Engine.Config.StateDir = t.TempDir()
+	os.MkdirAll(filepath.Dir(a.Engine.JobLogPath("job-log")), 0700)
+	os.WriteFile(a.Engine.JobLogPath("job-log"), []byte("$ docker compose up\nError: port is already allocated\n"), 0600)
+	if w := send("GET", "/v1/jobs/job-log/log", "", "deploy.logs", "l2"); w.Code != 200 || !strings.Contains(w.Body.String(), "port is already allocated") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := send("GET", "/v1/jobs/job-log/log", "", "deploy.read", "l3"); w.Code != 403 {
 		t.Fatal(w.Code)
 	}
 }

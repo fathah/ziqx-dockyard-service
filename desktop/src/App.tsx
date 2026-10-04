@@ -18,6 +18,7 @@ import {
   Box,
   Check,
   ChevronLeft,
+  CircleAlert,
   ChevronRight,
   Cloud,
   Code2,
@@ -29,6 +30,7 @@ import {
   History,
   Layers3,
   LayoutDashboard,
+  LoaderCircle,
   LockKeyhole,
   Plus,
   RefreshCw,
@@ -117,6 +119,18 @@ const operationLabel = (action: string) =>
       : action === "route-setup" || action === "route_setup"
         ? "Configure route"
         : action.charAt(0).toUpperCase() + action.slice(1).replaceAll("_", " ");
+const activityVerb = (action: string) =>
+  ({
+    start: "Starting",
+    restart: "Restarting",
+    stop: "Stopping",
+    deploy: "Deploying",
+    rollback: "Rolling back",
+    route_setup: "Connecting domain for",
+    "route-setup": "Connecting domain for",
+    service_update: "Updating",
+    "service-update": "Updating",
+  })[action] ?? `${operationLabel(action)} ·`;
 // Human project name for job lists; falls back to the internal ID.
 const projectName = (projects: Project[], id: string) => {
   const p = projects.find((x) => x.id === id);
@@ -211,10 +225,10 @@ function SkeletonProjectTable() {
   return (
     <div className="project-table" role="status" aria-label="Loading projects">
       <div className="table-head">
-        <span>PROJECT / ENVIRONMENT</span>
-        <span>STATE</span>
-        <span>DEPLOYMENT</span>
-        <span>ROUTE</span>
+        <span>Project</span>
+        <span>State</span>
+        <span>Deployment</span>
+        <span>Route</span>
         <span />
       </div>
       {Array.from({ length: 6 }, (_, index) => (
@@ -537,6 +551,24 @@ function App() {
       report(e);
     }
   }
+  // Follow a running saved operation; reading its job clears it when done.
+  useEffect(() => {
+    const job = pending?.job_id;
+    if (!job || preview || !api.native) return;
+    const timer = setInterval(async () => {
+      try {
+        await api.read<Job>({ kind: "job", job });
+        const saved = await api.pendingInfo();
+        if (!saved) {
+          clearInterval(timer);
+          await refresh();
+        }
+      } catch {
+        // Keep the bar; the next tick or a manual refresh retries.
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [pending?.job_id, preview]);
   async function doResolve() {
     const version = epoch.current;
     try {
@@ -624,7 +656,7 @@ function App() {
         <div className="brand">
           <Brand />
         </div>
-        <div className="nav-label">WORKSPACE</div>
+        <div className="nav-label">Workspace</div>
         <nav>
           {nav.map((n) => (
             <Button
@@ -637,7 +669,7 @@ function App() {
                 setError("");
               }}
             >
-              <n.icon size={18} />
+              <n.icon size={16} />
               <span>{n.label}</span>
               {n.id === "projects" && canUse && !initialWorkspaceLoading && (
                 <small>{projectCount}</small>
@@ -732,38 +764,52 @@ function App() {
           </div>
         )}
         {pending && !preview && canUse && (
-          <div className="alert pending pending-operation">
-            <History size={17} aria-hidden="true" />
+          <div
+            className={`activity-bar ${pending.job_id ? "running" : "unconfirmed"}`}
+            role="status"
+          >
+            {pending.job_id ? (
+              <LoaderCircle size={14} className="spin" aria-hidden="true" />
+            ) : (
+              <CircleAlert size={14} aria-hidden="true" />
+            )}
             <span>
-              <strong>
-                {operationLabel(pending.action)} ·{" "}
-                {projectName(projects, pending.project)}
-              </strong>
-              <small>
-                {pending.job_id ? "In progress" : "Not confirmed by the server"}
-              </small>
+              {pending.job_id
+                ? `${activityVerb(pending.action)} ${projectName(projects, pending.project)}…`
+                : `${operationLabel(pending.action)} · ${projectName(projects, pending.project)} wasn't confirmed`}
             </span>
-            <div className="pending-operation-actions">
-              {!pending.job_id && (
-                <Button
+            {pending.job_id ? (
+              <button
+                type="button"
+                className="activity-link"
+                onClick={() => {
+                  setPage("deployments");
+                  setSelected(null);
+                }}
+              >
+                Show
+              </button>
+            ) : (
+              <>
+                <button
                   type="button"
-                  className="text-button"
+                  className="activity-link"
                   disabled={busy}
                   title="Send the same request again"
                   onClick={() => void doRetry()}
                 >
                   Send again
+                </button>
+                <Button
+                  type="button"
+                  className="button small"
+                  disabled={busy}
+                  onClick={() => void doResolve()}
+                >
+                  Check
                 </Button>
-              )}
-              <Button
-                type="button"
-                className="button small primary"
-                disabled={busy}
-                onClick={() => void doResolve()}
-              >
-                Check status
-              </Button>
-            </div>
+              </>
+            )}
           </div>
         )}
         <div
@@ -1145,19 +1191,19 @@ function Projects({
       </div>
       <div className="stats-grid three">
         <Stat
-          label="PROJECTS"
+          label="Projects"
           value={entries.length}
           icon={Box}
           note="Dockyard deployments and existing Compose stacks"
         />
         <Stat
-          label="MANAGED"
+          label="Managed"
           value={projects.length}
           icon={Layers3}
           note="Projects Dockyard can deploy and control"
         />
         <Stat
-          label="EXISTING COMPOSE"
+          label="Existing Compose"
           value={observed.length}
           icon={FolderGit2}
           note="Read-only stacks found in /docker"
@@ -1212,10 +1258,10 @@ function Projects({
           </div>
           <div className="project-table">
             <div className="table-head">
-              <span>PROJECT / ENVIRONMENT</span>
-              <span>STATE</span>
-              <span>DEPLOYMENT</span>
-              <span>ROUTE</span>
+              <span>Project</span>
+              <span>State</span>
+              <span>Deployment</span>
+              <span>Route</span>
               <span />
             </div>
             {slice.map((entry) => {
@@ -1401,7 +1447,7 @@ function Stat({
         </span>
         <Icon size={17} />
       </div>
-      <strong>{String(value).padStart(2, "0")}</strong>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -2206,33 +2252,21 @@ export function ProjectDetail({
       {tab === "domains" && (
         <section className="panel">
           <div className="section-heading">
-            <h2>Domains & Caddy</h2>
-            <Button
-              type="button"
-              className="button small"
-              onClick={() =>
-                p.adoption && !p.domains.length
-                  ? setConfiguringRoute(true)
-                  : open({ kind: "routes", project: p })
-              }
-            >
-              {p.adoption && !p.domains.length
-                ? "Configure route"
-                : "Edit routes"}{" "}
-              <Settings2 size={14} />
-            </Button>
+            <h2>Domains</h2>
+            {!(p.adoption && !p.domains.length) && (
+              <Button
+                type="button"
+                className="button small"
+                onClick={() => open({ kind: "routes", project: p })}
+              >
+                <Settings2 size={14} /> Edit routes
+              </Button>
+            )}
           </div>
           {dnsLoading && (
             <SkeletonRows count={3} label="Loading project domains" />
           )}
-          {p.adoption && !p.domains.length && !configuringRoute && (
-            <p className="muted">
-              This project has no Dockyard-managed route. Configure a domain
-              using its existing published port, or review its preserved Caddy
-              site.
-            </p>
-          )}
-          {configuringRoute && p.adoption && !p.domains.length && (
+          {p.adoption && !p.domains.length && (
             <RouteSetup
               project={p}
               services={services}
@@ -2251,7 +2285,7 @@ export function ProjectDetail({
               <Globe2 size={20} />
               <div>
                 <strong>{hostname}</strong>
-                <p>Existing Caddyfile route · preserved</p>
+                <p>Current Caddyfile site · kept as is</p>
               </div>
             </div>
           ))}
@@ -2289,10 +2323,6 @@ export function ProjectDetail({
               </Button>
             </div>
           ))}
-          <p className="muted">
-            Managed Caddy snippets are updated by the agent. Manual Caddyfile
-            sites remain in VPS inventory.
-          </p>
         </section>
       )}
     </>
@@ -2315,12 +2345,6 @@ export function Jobs({
 }) {
   const [found, setFound] = useState<Job | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
-  const activeJobs = jobs.filter((job) =>
-    ["queued", "running"].includes(job.status),
-  ).length;
-  const recoveryJobs = jobs.filter(
-    (job) => job.status === "recovery_required",
-  ).length;
   return (
     <>
       <div className="page-heading">
@@ -2345,15 +2369,6 @@ export function Jobs({
         </Button>
       </div>
       <section className="panel">
-        <div className="section-heading">
-          <h2>Recent operations</h2>
-          {!loading && (
-            <span className="count">
-              {activeJobs} active
-              {recoveryJobs ? ` · ${recoveryJobs} need recovery` : ""}
-            </span>
-          )}
-        </div>
         {loading && <SkeletonRows count={3} label="Loading operations" />}
         {lookingUp && <SkeletonRows count={1} label="Looking up operation" />}
         {!loading && (jobs.length > 0 || found) && (
@@ -2407,9 +2422,6 @@ function Domains({
   if (loading) {
     return (
       <>
-        <div className="page-heading">
-          <h1>Domains</h1>
-        </div>
         <section className="panel">
           <h2>Managed routes</h2>
           <SkeletonRows label="Loading managed routes" />
@@ -2423,22 +2435,6 @@ function Domains({
   }
   return (
     <>
-      <div className="page-heading">
-        <div>
-          <h1>
-            Domains{" "}
-            <Help label="domains and routes">
-              View managed domain assignments, upstream ports and existing Caddy
-              sites. A route assignment does not confirm public TLS or DNS
-              readiness.
-            </Help>
-          </h1>
-        </div>
-        <Tag>
-          <Globe2 size={14} />
-          {projects.reduce((n, p) => n + p.domains.length, 0)} managed domains
-        </Tag>
-      </div>
       <section className="panel">
         <h2>Managed routes</h2>
         {projects.flatMap((p) =>
@@ -2923,19 +2919,19 @@ function InventoryView({
       </div>
       <div className="stats-grid three">
         <Stat
-          label="OBSERVED PROJECTS"
+          label="Observed projects"
           value={i?.projects.length ?? 0}
           icon={FolderGit2}
           note={`Last observed ${ago(i?.projects_observed_at)}`}
         />
         <Stat
-          label="CADDY SITES"
+          label="Caddy sites"
           value={i?.sites.length ?? 0}
           icon={Globe2}
           note={`Last observed ${ago(i?.caddy_observed_at)}`}
         />
         <Stat
-          label="RESERVED PORTS"
+          label="Reserved ports"
           value={i?.reserved_ports.length ?? 0}
           icon={Server}
           note={`Docker observed ${ago(i?.docker_observed_at)}`}
@@ -3762,8 +3758,8 @@ function OperationModal({
           <div>
             <div className="eyebrow">
               {m.kind === "create"
-                ? "PROVISION A WORKSPACE"
-                : p?.app_id.toUpperCase()}
+                ? "Dockyard"
+                : p?.app_id}
             </div>
             <h2 id="modal-title">{name}</h2>
           </div>

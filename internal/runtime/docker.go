@@ -146,8 +146,8 @@ func (d Docker) Start(ctx context.Context, p model.Project, slot string) error {
 				}
 			}
 			if len(args) > 4 {
-				if _, err = d.command(ctx, p, slot, args...); err != nil {
-					return model.Fail("CONTAINER_START_FAILED")
+				if res, err := d.command(ctx, p, slot, args...); err != nil {
+					return d.failure(p, "CONTAINER_START_FAILED", res)
 				}
 			}
 			for name, instance := range p.ServiceInstances {
@@ -157,22 +157,22 @@ func (d Docker) Start(ctx context.Context, p model.Project, slot string) error {
 			}
 			return nil
 		}
-		_, err := d.command(ctx, p, slot, "up", "--detach", "--force-recreate", "--wait", "--wait-timeout", strconv.Itoa(d.Config.HealthSeconds))
+		res, err := d.command(ctx, p, slot, "up", "--detach", "--force-recreate", "--wait", "--wait-timeout", strconv.Itoa(d.Config.HealthSeconds))
 		if err != nil {
-			return model.Fail("CONTAINER_START_FAILED")
+			return d.failure(p, "CONTAINER_START_FAILED", res)
 		}
 		return nil
 	}
 	if err := d.checkVolumes(ctx, p, slot, false); err != nil {
 		return err
 	}
-	_, e := d.command(ctx, p, slot, "up", "-d", "--no-build", "--pull", "never", "--force-recreate", "--wait", "--wait-timeout", strconv.Itoa(d.Config.HealthSeconds))
+	res, e := d.command(ctx, p, slot, "up", "-d", "--no-build", "--pull", "never", "--force-recreate", "--wait", "--wait-timeout", strconv.Itoa(d.Config.HealthSeconds))
 	if e != nil {
 		var fault *model.Fault
 		if errors.As(e, &fault) {
 			return e
 		}
-		return model.Fail("CONTAINER_START_FAILED")
+		return d.failure(p, "CONTAINER_START_FAILED", res)
 	}
 	return nil
 }
@@ -396,66 +396,9 @@ func (d Docker) Logs(ctx context.Context, p model.Project, slot, service string,
 		res.Stderr = completeLines(res.Stderr)
 	}
 	data := append(res.Output, res.Stderr...)
-	// Redact all retained revisions, including inactive and rolled-back releases.
-	envRoot := filepath.Join(projectDir(d.Config, p.ID), "env")
-	var files []string
-	err = filepath.WalkDir(envRoot, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil || entry.Type()&os.ModeSymlink != 0 {
-			return model.Fail("LOGS_UNAVAILABLE")
-		}
-		if entry.IsDir() {
-			if path != envRoot && filepath.Dir(path) != envRoot {
-				return model.Fail("LOG_REDACTION_LIMIT")
-			}
-			return nil
-		}
-		if strings.HasSuffix(entry.Name(), ".env") || strings.HasSuffix(entry.Name(), ".secrets.json") {
-			files = append(files, path)
-			if len(files) > 4000 {
-				return model.Fail("LOG_REDACTION_LIMIT")
-			}
-		}
-		return nil
-	})
+	secrets, err := d.secrets(p)
 	if err != nil {
 		return nil, false, err
-	}
-	var secrets []string
-	unique := map[string]bool{}
-	secretBytes := 0
-	for _, file := range files {
-		b, e := os.ReadFile(file)
-		if e != nil {
-			return nil, false, model.Fail("LOGS_UNAVAILABLE")
-		}
-		if strings.HasSuffix(file, ".secrets.json") {
-			var values []string
-			if json.Unmarshal(b, &values) != nil {
-				return nil, false, model.Fail("LOGS_UNAVAILABLE")
-			}
-			for _, v := range values {
-				if v != "" && !unique[v] {
-					unique[v] = true
-					secrets = append(secrets, v)
-					secretBytes += len(v)
-				}
-			}
-			if len(unique) > 5000 || secretBytes > 1<<20 {
-				return nil, false, model.Fail("LOG_REDACTION_LIMIT")
-			}
-			continue
-		}
-		for _, line := range strings.Split(string(b), "\n") {
-			_, v, ok := strings.Cut(line, "=")
-			if ok && v != "" && !unique[v] {
-				unique[v] = true
-				secretBytes += len(v)
-				if len(unique) > 5000 || secretBytes > 1<<20 {
-					return nil, false, model.Fail("LOG_REDACTION_LIMIT")
-				}
-				secrets = append(secrets, v)
-			}
-		}
 	}
 	return Redact(data, secrets, 2<<20, res.Truncated), res.Truncated || len(data) > 2<<20, nil
 }
@@ -495,4 +438,92 @@ func (d Docker) services(p model.Project, r model.Release) (map[string]runtimeSe
 		return d.Store.ComposeServices(p.ID, r.Compose)
 	}
 	return services, err
+}
+
+// secrets lists every retained environment value for redaction, including
+// inactive and rolled-back releases.
+func (d Docker) secrets(p model.Project) ([]string, error) {
+	envRoot := filepath.Join(projectDir(d.Config, p.ID), "env")
+	var files []string
+	err := filepath.WalkDir(envRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil || entry.Type()&os.ModeSymlink != 0 {
+			return model.Fail("LOGS_UNAVAILABLE")
+		}
+		if entry.IsDir() {
+			if path != envRoot && filepath.Dir(path) != envRoot {
+				return model.Fail("LOG_REDACTION_LIMIT")
+			}
+			return nil
+		}
+		if strings.HasSuffix(entry.Name(), ".env") || strings.HasSuffix(entry.Name(), ".secrets.json") {
+			files = append(files, path)
+			if len(files) > 4000 {
+				return model.Fail("LOG_REDACTION_LIMIT")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	var secrets []string
+	unique := map[string]bool{}
+	secretBytes := 0
+	for _, file := range files {
+		b, e := os.ReadFile(file)
+		if e != nil {
+			return nil, model.Fail("LOGS_UNAVAILABLE")
+		}
+		if strings.HasSuffix(file, ".secrets.json") {
+			var values []string
+			if json.Unmarshal(b, &values) != nil {
+				return nil, model.Fail("LOGS_UNAVAILABLE")
+			}
+			for _, v := range values {
+				if v != "" && !unique[v] {
+					unique[v] = true
+					secrets = append(secrets, v)
+					secretBytes += len(v)
+				}
+			}
+			if len(unique) > 5000 || secretBytes > 1<<20 {
+				return nil, model.Fail("LOG_REDACTION_LIMIT")
+			}
+			continue
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			_, v, ok := strings.Cut(line, "=")
+			if ok && v != "" && !unique[v] {
+				unique[v] = true
+				secretBytes += len(v)
+				if len(unique) > 5000 || secretBytes > 1<<20 {
+					return nil, model.Fail("LOG_REDACTION_LIMIT")
+				}
+				secrets = append(secrets, v)
+			}
+		}
+	}
+	return secrets, nil
+}
+
+// failure keeps a redacted tail of Docker's error output so the operator can
+// see why a command failed. Only known secret values are removed.
+func (d Docker) failure(p model.Project, code string, res process.Result) error {
+	text := strings.TrimSpace(string(res.Stderr))
+	if text == "" {
+		text = strings.TrimSpace(string(res.Output))
+	}
+	if text == "" {
+		return model.Fail(code)
+	}
+	lines := strings.Split(text, "\n")
+	if len(lines) > 30 {
+		lines = lines[len(lines)-30:]
+	}
+	secrets, err := d.secrets(p)
+	if err != nil {
+		return model.Fail(code)
+	}
+	detail := string(Redact([]byte(strings.Join(lines, "\n")), secrets, 4096, false))
+	return model.FailDetail(code, detail)
 }

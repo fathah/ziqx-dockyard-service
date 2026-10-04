@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Fingerprint, RefreshCw, ShieldCheck } from "lucide-react";
+import { Fingerprint, ShieldCheck } from "lucide-react";
 import Button from "./Button";
 import Select from "./Select";
 import * as api from "./api";
@@ -72,7 +72,7 @@ export default function RouteSetup({
   const [service, setService] = useState("");
   const [port, setPort] = useState("");
   const [domains, setDomains] = useState(
-    (project.external_domains ?? []).join("\n"),
+    (project.external_domains ?? []).join(", "),
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -168,81 +168,68 @@ export default function RouteSetup({
       if (sequence.current === current) setBusy(false);
     }
   }
-  return (
-    <div className="route-setup">
-      <div className="section-heading">
-        <h3>Configure route</h3>
+  const notRunning = project.state !== "running";
+  const [starting, setStarting] = useState(false);
+  // One clear blocker at a time, each with the action that resolves it.
+  if (blocked)
+    return (
+      <div className="route-setup route-blocked">
+        <span>Another operation is in progress for this project.</span>
+        {openDeployments && (
+          <Button type="button" className="button small" onClick={openDeployments}>
+            View deployments
+          </Button>
+        )}
+      </div>
+    );
+  if (notRunning)
+    return (
+      <div className="route-setup route-blocked">
+        <span>Start {project.app_id} to connect a domain.</span>
         <Button
           type="button"
-          className="button small"
-          disabled={busy}
-          onClick={onClose}
+          className="button small primary"
+          disabled={starting || preview}
+          onClick={async () => {
+            setStarting(true);
+            try {
+              await execute({ action: "start", project: project.id });
+            } catch (e) {
+              setError(explain(e));
+            } finally {
+              setStarting(false);
+            }
+          }}
         >
-          Close setup
+          {starting ? "Starting…" : "Start"}
         </Button>
+        {error && <small className="route-error">{error}</small>}
       </div>
-      <p>
-        Connect a domain to an existing Compose service. Dockyard checks the
-        published port and reviews Caddy before applying the route.
-      </p>
-      <p className="muted">
-        Containers, volumes and Compose files stay in place. DNS records are
-        managed separately in Domains → Provider DNS.
-      </p>
-      {blocked ? (
-        <div className="alert warning" role="status">
-          <strong>Resolve the current operation first</strong>
-          <p>
-            Route setup cannot clear a recovery lock or interrupt an active
-            operation.
-          </p>
-          {openDeployments && (
-            <Button
-              type="button"
-              className="button small"
-              onClick={openDeployments}
-            >
-              View operations
-            </Button>
-          )}
-        </div>
-      ) : (
-        project.state !== "running" && (
-          <p className="alert warning" role="status">
-            Dockyard records this project as{" "}
-            {project.state.replaceAll("_", " ")}. Verify or restore its running
-            release before applying a route. Starting containers manually does
-            not update this record.
-          </p>
-        )
-      )}
+    );
+  return (
+    <div className="route-setup">
       {unavailable && (
         <p className="alert error" role="alert">
-          Services could not be read.{" "}
+          Couldn't read services.{" "}
           <Button type="button" className="text-button" onClick={refresh}>
-            Refresh services
+            Retry
           </Button>
         </p>
       )}
-      <div className="form-grid">
-        <label>
-          Domains
-          <textarea
-            rows={3}
+      <div className="route-fields">
+        <label className="route-domain">
+          <span>Domain</span>
+          <input
             value={domains}
+            placeholder="app.example.com"
             readOnly={!!project.external_domains?.length}
             disabled={busy}
             onChange={(event) => setDomains(event.target.value)}
           />
-          <small>
-            {project.external_domains?.length
-              ? "Detected Caddy domains. The complete site group is included in the review."
-              : "One hostname per line. The domain must be allowed by your server policy."}
-          </small>
         </label>
-        <div>
+        <div className="route-service">
           <Select
-            label="Compose service"
+            label="Service"
             value={service}
             disabled={busy || loading || !candidates.length}
             options={candidates.map((item) => ({
@@ -259,66 +246,51 @@ export default function RouteSetup({
               );
             }}
           />
-          <label>
-            Port inside container
-            <input
-              type="number"
-              min={1}
-              max={65535}
-              value={port}
-              disabled={busy}
-              onChange={(event) => setPort(event.target.value)}
-            />
-            <small>
-              Use the app’s container port. Dockyard finds its existing host
-              port.
-            </small>
-          </label>
         </div>
+        <label className="route-port">
+          <span>Port</span>
+          <input
+            type="number"
+            min={1}
+            max={65535}
+            value={port}
+            disabled={busy}
+            title="The port the app listens on inside its container"
+            onChange={(event) => setPort(event.target.value)}
+          />
+        </label>
+        {review ? (
+          <Button
+            type="button"
+            className="button primary"
+            disabled={busy || preview || disabled}
+            onClick={() => void apply()}
+          >
+            <Fingerprint size={15} />
+            {busy ? "Connecting…" : "Connect"}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            className="button primary"
+            disabled={busy || !valid || disabled}
+            onClick={() => void check()}
+          >
+            {busy ? "Checking…" : "Review"}
+          </Button>
+        )}
       </div>
-      {error && (
-        <p className="alert error" role="alert">
-          {error}
+      {error && <p className="route-error">{error}</p>}
+      {review && (
+        <p className="route-review">
+          <ShieldCheck size={14} />
+          {review.domains.join(", ")} → {review.service}:{review.container_port}
+          <span>
+            {review.imports_routes ? "Moves the existing Caddy site" : "New Caddy route"} ·
+            containers unchanged
+          </span>
         </p>
       )}
-      {review && (
-        <div className="service-update-notice" role="status">
-          <ShieldCheck size={20} />
-          <div>
-            <strong>Route reviewed{preview ? " · sample data" : ""}</strong>
-            <p>
-              {review.domains.join(", ")} → {review.upstream} · {review.service}
-              :{review.container_port}
-            </p>
-            <p>
-              {review.imports_routes
-                ? "Move the reviewed Caddy site into Dockyard’s generated route file."
-                : "Create a Dockyard route for these domains."}{" "}
-              Containers and published ports stay unchanged.
-            </p>
-          </div>
-        </div>
-      )}
-      <div className="controls">
-        <Button
-          type="button"
-          className="button"
-          disabled={busy || !valid || disabled}
-          onClick={() => void check()}
-        >
-          <RefreshCw size={16} />
-          {busy ? "Checking…" : "Review route"}
-        </Button>
-        <Button
-          type="button"
-          className="button primary"
-          disabled={busy || !review || preview || disabled}
-          onClick={() => void apply()}
-        >
-          <Fingerprint size={16} />
-          Apply with Touch ID
-        </Button>
-      </div>
     </div>
   );
 }

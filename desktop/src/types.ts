@@ -142,4 +142,4 @@ export type Read =
       tail: number;
       since: string;
     }
-  | { kind: "job" | "job_events"; job: string };
+  | { kind: "job" | "job_events" | "job_log"; job: string };
