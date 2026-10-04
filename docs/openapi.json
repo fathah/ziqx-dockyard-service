@@ -2323,6 +2323,55 @@
         ]
       }
     },
+    "/v1/jobs/{job}/events": {
+      "get": {
+        "operationId": "jobEvents",
+        "summary": "Job timeline",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires deploy.read for the job's project. Returns every durable status/phase change of the job, oldest first, with timestamps and fault codes. Docker command output is never included.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Timeline events"
+          },
+          "404": {
+            "description": "Job not found"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.read"
+        ]
+      }
+    },
     "/v1/jobs/{job}/reconcile": {
       "post": {
         "operationId": "reconcileJob",

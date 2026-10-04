@@ -52,6 +52,7 @@ import ProjectConfiguration, {
 } from "./ProjectConfiguration";
 import ProjectHeader, { ProjectSummary } from "./ProjectHeader";
 import ServiceUpdate from "./ServiceUpdate";
+import JobsTable from "./JobsTable";
 import RouteSetup from "./RouteSetup";
 import TerminalPage from "./TerminalPage";
 import { ProviderDomains } from "./DomainProviders";
@@ -115,7 +116,15 @@ const operationLabel = (action: string) =>
       ? "Service update"
       : action === "route-setup" || action === "route_setup"
         ? "Configure route"
-        : action;
+        : action.charAt(0).toUpperCase() + action.slice(1).replaceAll("_", " ");
+// Human project name for job lists; falls back to the internal ID.
+const projectName = (projects: Project[], id: string) => {
+  const p = projects.find((x) => x.id === id);
+  if (!p) return id;
+  return p.environment === "production"
+    ? p.app_id
+    : `${p.app_id} · ${p.environment}`;
+};
 const ago = (s?: string) =>
   s
     ? new Date(s).toLocaleString(undefined, {
@@ -723,34 +732,38 @@ function App() {
           </div>
         )}
         {pending && !preview && canUse && (
-          <div className="alert pending">
-            <History size={17} />
+          <div className="alert pending pending-operation">
+            <History size={17} aria-hidden="true" />
             <span>
               <strong>
-                {operationLabel(pending.action)} · {pending.project}
-              </strong>{" "}
-              {pending.job_id ? "is in progress." : "wasn't confirmed."}
+                {operationLabel(pending.action)} ·{" "}
+                {projectName(projects, pending.project)}
+              </strong>
+              <small>
+                {pending.job_id ? "In progress" : "Not confirmed by the server"}
+              </small>
             </span>
-            <Button
-              type="button"
-              className="button small"
-              disabled={busy}
-              onClick={() => void doResolve()}
-            >
-              Check status
-            </Button>
-            {!pending.job_id && (
+            <div className="pending-operation-actions">
+              {!pending.job_id && (
+                <Button
+                  type="button"
+                  className="text-button"
+                  disabled={busy}
+                  title="Send the same request again"
+                  onClick={() => void doRetry()}
+                >
+                  Send again
+                </Button>
+              )}
               <Button
                 type="button"
-                className="button small"
-                variant="outline"
+                className="button small primary"
                 disabled={busy}
-                title="Send the same request again"
-                onClick={() => void doRetry()}
+                onClick={() => void doResolve()}
               >
-                Send again
+                Check status
               </Button>
-            )}
+            </div>
           </div>
         )}
         <div
@@ -861,6 +874,7 @@ function App() {
           ) : page === "deployments" ? (
             <Jobs
               jobs={shownJobs}
+              projects={projects}
               preview={preview}
               loading={!preview && !jobsReady}
               refresh={refresh}
@@ -2286,18 +2300,19 @@ export function ProjectDetail({
 }
 export function Jobs({
   jobs,
+  projects,
   preview,
   loading,
   refresh,
   report,
 }: {
   jobs: Job[];
+  projects: Project[];
   preview: boolean;
   loading: boolean;
   refresh: () => Promise<void>;
   report: (e: unknown) => void;
 }) {
-  const [lookup, setLookup] = useState("");
   const [found, setFound] = useState<Job | null>(null);
   const [lookingUp, setLookingUp] = useState(false);
   const activeJobs = jobs.filter((job) =>
@@ -2313,8 +2328,8 @@ export function Jobs({
           <h1>
             Deployments{" "}
             <Help label="tracked deployments">
-              The latest ten jobs tracked by this Mac. Look up another job using
-              its ID. Pending recovery blocks new writes until resolved.
+              The latest operations tracked by this Mac. Paste a job ID in the
+              search box to look one up.
             </Help>
           </h1>
         </div>
@@ -2329,37 +2344,6 @@ export function Jobs({
           Refresh
         </Button>
       </div>
-      <form
-        className="job-search"
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (preview) return;
-          setFound(null);
-          setLookingUp(true);
-          try {
-            setFound(await api.read<Job>({ kind: "job", job: lookup }));
-          } catch (e) {
-            report(e);
-          } finally {
-            setLookingUp(false);
-          }
-        }}
-      >
-        <Search size={16} />
-        <input
-          aria-label="Job ID"
-          placeholder="Look up job ID…"
-          value={lookup}
-          onChange={(e) => setLookup(e.target.value)}
-        />
-        <Button
-          type="submit"
-          className="button small"
-          disabled={preview || lookingUp}
-        >
-          Look up
-        </Button>
-      </form>
       <section className="panel">
         <div className="section-heading">
           <h2>Recent operations</h2>
@@ -2372,68 +2356,31 @@ export function Jobs({
         </div>
         {loading && <SkeletonRows count={3} label="Loading operations" />}
         {lookingUp && <SkeletonRows count={1} label="Looking up operation" />}
-        {[
-          ...(found ? [found] : []),
-          ...jobs.filter((j) => j.job_id !== found?.job_id),
-        ].map((j) => (
-          <div className="job-row" key={j.job_id}>
-            <span className={`job-icon ${j.status}`}>
-              <Layers3 size={20} />
-            </span>
-            <div>
-              <strong>
-                {operationLabel(j.action)[0].toUpperCase() +
-                  operationLabel(j.action).slice(1)}{" "}
-                <span className="muted">/ {j.project_id}</span>
-              </strong>
-              <p className="mono">{j.job_id}</p>
-              <p>
-                {j.phase}
-                {j.error_code ? ` · ${j.error_code}` : ""}
-                {j.warning_code ? ` · ${j.warning_code}` : ""}
-              </p>
-              {j.warning_code === "COMPOSE_MIRROR_FAILED" && (
-                <p className="warning">
-                  The release activated, but its copy of compose.yml could not
-                  be saved in the managed project folder. Containers use the
-                  saved release file. Review folder permissions and available
-                  disk space.
-                </p>
-              )}
-              {j.warning_code === "ENVIRONMENT_MIRROR_FAILED" && (
-                <p className="warning">
-                  The release activated, but its copy of .env could not be saved
-                  in the managed project folder. Containers use the saved
-                  release environment. Review folder permissions and available
-                  disk space.
-                </p>
-              )}
-              {j.status === "recovery_required" && (
-                <JobRecoveryHelp
-                  job={j}
-                  preview={preview}
-                  refresh={refresh}
-                  report={report}
-                />
-              )}
-            </div>
-            <div>
-              <Tag
-                tone={
-                  j.status === "succeeded"
-                    ? "green"
-                    : j.status === "failed" || j.status === "recovery_required"
-                      ? "red"
-                      : "amber"
-                }
-              >
-                {j.status.replaceAll("_", " ")}
-              </Tag>
-              <p>{ago(j.created_at)}</p>
-              <p className="muted">{j.actor_id}</p>
-            </div>
-          </div>
-        ))}
+        {!loading && (jobs.length > 0 || found) && (
+          <JobsTable
+            jobs={[
+              ...(found ? [found] : []),
+              ...jobs.filter((j) => j.job_id !== found?.job_id),
+            ]}
+            projects={projects}
+            operationLabel={operationLabel}
+            projectName={projectName}
+            preview={preview}
+            refresh={refresh}
+            report={report}
+            lookup={async (id) => {
+              if (preview) return;
+              setLookingUp(true);
+              try {
+                setFound(await api.read<Job>({ kind: "job", job: id }));
+              } catch (e) {
+                report(e);
+              } finally {
+                setLookingUp(false);
+              }
+            }}
+          />
+        )}
         {!jobs.length && !found && !loading && !lookingUp && (
           <Empty icon={Layers3} title="No deployments yet">
             Deploy a Compose stack to get started.
@@ -2444,62 +2391,6 @@ export function Jobs({
   );
 }
 
-function JobRecoveryHelp({
-  job,
-  preview,
-  refresh,
-  report,
-}: {
-  job: Job;
-  preview: boolean;
-  refresh: () => Promise<void>;
-  report: (e: unknown) => void;
-}) {
-  const validID = /^job-[a-f0-9]{32}$/.test(job.job_id);
-  const [busy, setBusy] = useState(false);
-  const [manual, setManual] = useState(false);
-  if (!validID) return null;
-  return (
-    <div className="job-recovery">
-      <p>Interrupted. New deployments are paused until it's recovered.</p>
-      <div className="job-recovery-actions">
-        <Button
-          type="button"
-          className="button small primary"
-          disabled={busy || preview}
-          title="Checks the live containers and records what's running. Nothing is restarted."
-          onClick={async () => {
-            setBusy(true);
-            try {
-              await api.reconcileJob(job.job_id);
-              toast.success("Recovered");
-              await refresh();
-            } catch (e) {
-              report(e);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <RefreshCw size={14} />
-          {busy ? "Recovering…" : "Recover"}
-        </Button>
-        <button
-          type="button"
-          className="text-button"
-          onClick={() => setManual(!manual)}
-        >
-          {manual ? "Hide terminal steps" : "Server older than 0.7.6?"}
-        </button>
-      </div>
-      {manual && (
-        <pre>
-          <code>{`systemctl stop dockyard\n/usr/local/bin/dockyard -config /etc/dockyard/config.json -reconcile-job ${job.job_id}\nsystemctl start dockyard`}</code>
-        </pre>
-      )}
-    </div>
-  );
-}
 function Domains({
   projects,
   inventory,

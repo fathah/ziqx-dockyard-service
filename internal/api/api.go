@@ -294,6 +294,27 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		write(w, 200, map[string]string{"job_id": j.ID, "project_id": j.ProjectID, "action": j.Action, "status": j.Status})
 		return
 	}
+	if len(parts) == 3 && parts[0] == "jobs" && parts[2] == "events" {
+		if _, err := query(r); err != nil {
+			fail(w, err, p.RequestID)
+			return
+		}
+		j, err := e.Store.Job(parts[1])
+		if err != nil {
+			problem(w, 404, "JOB_NOT_FOUND", p.RequestID)
+			return
+		}
+		if !require(w, p, "deploy.read", j.ProjectID) {
+			return
+		}
+		events, err := e.Store.JobEvents(j.ID)
+		if err != nil {
+			fail(w, err, p.RequestID)
+			return
+		}
+		write(w, 200, map[string]any{"job_id": j.ID, "events": events})
+		return
+	}
 	if len(parts) == 2 && parts[0] == "jobs" {
 		if _, err := query(r); err != nil {
 			fail(w, err, p.RequestID)

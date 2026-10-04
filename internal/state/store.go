@@ -354,6 +354,41 @@ func (s *Store) InterruptRunning() error {
 	}
 	return nil
 }
+type JobEvent struct {
+	Status string    `json:"status"`
+	Phase  string    `json:"phase"`
+	Code   string    `json:"error_code,omitempty"`
+	Time   time.Time `json:"time"`
+}
+
+// JobEvents is a job's timeline: every durable state change, oldest first.
+func (s *Store) JobEvents(id string) ([]JobEvent, error) {
+	rows, e := s.DB.Query("SELECT event FROM audit WHERE json_extract(event,'$.JobID')=? ORDER BY id LIMIT 500", id)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	out := []JobEvent{}
+	for rows.Next() {
+		var b []byte
+		if e = rows.Scan(&b); e != nil {
+			return nil, e
+		}
+		var v struct {
+			Status, Phase, Code string
+			Time                time.Time
+		}
+		if e = json.Unmarshal(b, &v); e != nil {
+			return nil, e
+		}
+		// Consecutive writes in the same state add nothing to a timeline.
+		if n := len(out); n > 0 && out[n-1].Status == v.Status && out[n-1].Phase == v.Phase && out[n-1].Code == v.Code {
+			continue
+		}
+		out = append(out, JobEvent{Status: v.Status, Phase: v.Phase, Code: v.Code, Time: v.Time})
+	}
+	return out, rows.Err()
+}
 func (s *Store) Audit(after int64) ([]json.RawMessage, error) {
 	rows, e := s.DB.Query("SELECT id,event FROM audit WHERE id>? ORDER BY id LIMIT 100", after)
 	if e != nil {
