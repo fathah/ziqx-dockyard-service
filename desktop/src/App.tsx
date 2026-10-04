@@ -2368,7 +2368,14 @@ export function Jobs({
                   disk space.
                 </p>
               )}
-              {j.status === "recovery_required" && <JobRecoveryHelp job={j} />}
+              {j.status === "recovery_required" && (
+                <JobRecoveryHelp
+                  job={j}
+                  preview={preview}
+                  refresh={refresh}
+                  report={report}
+                />
+              )}
             </div>
             <div>
               <Tag
@@ -2397,9 +2404,20 @@ export function Jobs({
   );
 }
 
-function JobRecoveryHelp({ job }: { job: Job }) {
+function JobRecoveryHelp({
+  job,
+  preview,
+  refresh,
+  report,
+}: {
+  job: Job;
+  preview: boolean;
+  refresh: () => Promise<void>;
+  report: (e: unknown) => void;
+}) {
   // Show an executable command only for an actual server-generated job ID.
   const validID = /^job-[a-f0-9]{32}$/.test(job.job_id);
+  const [busy, setBusy] = useState(false);
   return (
     <Accordion
       title="Resolve interrupted operation"
@@ -2408,23 +2426,47 @@ function JobRecoveryHelp({ job }: { job: Job }) {
     >
       <p>
         This operation has stopped. Waiting or refreshing will not clear the
-        recovery lock. Run recovery in the VPS terminal.
-      </p>
-      <p>
-        For a Compose project without a managed domain route, update the VPS
-        service to 0.7.5 or later first. Older versions return
-        COMPOSE_RECOVERY_REQUIRES_INSPECTION. Server details → Updates can update
-        the service while retaining this recovery lock.
+        recovery lock. Recover it here: Dockyard inspects the live containers,
+        records what is actually running and releases the lock. Containers are
+        not started, stopped or changed.
       </p>
       {validID && (
-        <pre>
-          <code>{`systemctl stop dockyard\n/usr/local/bin/dockyard -config /etc/dockyard/config.json -reconcile-job ${job.job_id}\nsystemctl start dockyard`}</code>
-        </pre>
+        <Button
+          type="button"
+          className="button primary"
+          disabled={busy || preview}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await api.reconcileJob(job.job_id);
+              await refresh();
+            } catch (e) {
+              report(e);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <RefreshCw size={15} />
+          {busy ? "Recovering…" : "Recover now"}
+        </Button>
+      )}
+      {validID && (
+        <details>
+          <summary>Older VPS service? Recover from the VPS terminal</summary>
+          <p>
+            Servers before this release do not offer one-click recovery. Update
+            the service in Server details → Updates, or run:
+          </p>
+          <pre>
+            <code>{`systemctl stop dockyard\n/usr/local/bin/dockyard -config /etc/dockyard/config.json -reconcile-job ${job.job_id}\nsystemctl start dockyard`}</code>
+          </pre>
+        </details>
       )}
       <p>
-        Dockyard verifies the live deployment before clearing the lock. If the
-        command fails, keep the output for inspection. After it succeeds,
-        refresh Deployments and review a new update.
+        Dockyard verifies the live deployment before clearing the lock. If
+        recovery fails, the error explains what differs. After it succeeds,
+        review a new update.
       </p>
     </Accordion>
   );

@@ -2273,6 +2273,76 @@
         }
       }
     },
+    "/v1/jobs/{job}/reconcile": {
+      "post": {
+        "operationId": "reconcileJob",
+        "summary": "Recover an interrupted operation",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires deploy.execute for the job's project, and server-wide compose.admin for Compose projects. Runs the same verified reconcile as `dockyard -reconcile-job` inside the daemon, so no VPS shell is needed. Containers are never started, stopped or relabeled; only the observed state is recorded and the job is marked failed with JOB_INTERRUPTED_RECONCILED. Adopted Compose stacks are identified by their source project, working directory and config files, so containers recreated in the source folder are recognized. Body must be an empty JSON object.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "name": "job",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^job-[a-f0-9]{32}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recovery recorded; the lock is released when no other job needs recovery"
+          },
+          "403": {
+            "description": "Scope or Compose administrator permission missing"
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "409": {
+            "description": "Job is not recoverable, or live state could not be verified"
+          },
+          "503": {
+            "description": "Docker or Caddy unavailable"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.execute"
+        ]
+      }
+    },
     "/v1/projects/{id}/route-setup": {
       "post": {
         "operationId": "configureRoute",

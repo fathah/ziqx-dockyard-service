@@ -830,6 +830,45 @@ async fn preview_route_setup(c: State<'_, Control>, project: String, data: proto
     Ok(result)
 }
 #[tauri::command]
+async fn reconcile_job(c: State<'_, Control>, job: String) -> Result<Value, String> {
+    // Same verified recovery as `dockyard -reconcile-job`, run by the daemon.
+    // It never starts, stops or relabels containers and is safe to repeat, so
+    // it bypasses the saved-operation slot that would otherwise block it.
+    if job.len() != 36 || !job.starts_with("job-") || !job[4..].bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        return Err("Invalid job".into());
+    }
+    let name = {
+        let mut inner = c.inner.lock().await;
+        let s = session(&mut inner)?;
+        format!("{} ({})", s.saved.enrollment.name, s.saved.enrollment.server_id)
+    };
+    let review = format!("Server: {name}\nJob: {job}\n\nRecover this interrupted operation. Dockyard inspects the live containers and records what is actually running. Containers are not started, stopped or changed.");
+    let approved = native_task(&c, move || {
+        let approved = native::with_prompt(|| {
+            rfd::MessageDialog::new()
+                .set_title("Recover interrupted operation")
+                .set_description(review)
+                .set_level(rfd::MessageLevel::Warning)
+                .set_buttons(rfd::MessageButtons::OkCancel)
+                .show()
+        }) == rfd::MessageDialogResult::Ok;
+        if approved {
+            native::authenticate_reason("Recover an interrupted operation on your VPS")?;
+        }
+        Ok(approved)
+    })
+    .await?;
+    if !approved {
+        return Err("Operation cancelled".into());
+    }
+    let op = Operation { method: "POST".into(), target: format!("/v1/jobs/{job}/reconcile"), scopes: "deploy.execute".into(), project: String::new(), action: "reconcile".into(), body: "{}".into(), idempotency: format!("reconcile-{}", uuid::Uuid::new_v4()), request_id: format!("req-{}", uuid::Uuid::new_v4()) };
+    let mut inner = c.inner.lock().await;
+    let s = session(&mut inner)?;
+    let result = send(s, &op).await?;
+    if s.generation != c.generation.load(Ordering::SeqCst) { return Err("SESSION_LOCKED".into()); }
+    Ok(result)
+}
+#[tauri::command]
 async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, String> {
     let op = mutation.plan()?;
     let name = {
@@ -1201,6 +1240,7 @@ fn main() {
             preview_service_update,
             preview_route_setup,
             mutate,
+            reconcile_job,
             retry_pending,
             pending_info,
             import_compose,

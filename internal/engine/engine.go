@@ -639,3 +639,27 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 	j.Finished = &now
 	return e.Store.Update(j, &p)
 }
+
+// ReconcileOnline runs the same verified recovery from inside the daemon, so
+// the operator never needs a VPS shell. Any recovery_required job blocks the
+// worker (Ready is false), and Admission excludes new jobs while it runs.
+func (e *Engine) ReconcileOnline(ctx context.Context, id string) (model.Job, model.Project, error) {
+	e.Admission.Lock()
+	defer e.Admission.Unlock()
+	if e.failed.Load() {
+		return model.Job{}, model.Project{}, model.Uncertain("STATE_WRITE_FAILED")
+	}
+	if err := e.Reconcile(ctx, id); err != nil {
+		return model.Job{}, model.Project{}, err
+	}
+	j, err := e.Store.Job(id)
+	if err != nil {
+		return j, model.Project{}, err
+	}
+	p, err := e.Store.Project(j.ProjectID)
+	if err != nil {
+		return j, p, err
+	}
+	e.Notify()
+	return j, p, nil
+}

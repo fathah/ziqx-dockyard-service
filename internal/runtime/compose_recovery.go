@@ -27,7 +27,9 @@ func (d Docker) ObserveCompose(ctx context.Context, p model.Project) (*model.Rel
 		return nil, err
 	}
 	running := false
-	legacy := p.Adoption != nil && len(before) == len(p.Adoption.ContainerIDs)
+	// Unlabeled containers are the adopted source stack (ownsNative verified its
+	// project, folder and config files); nativeHealthy verifies service counts.
+	legacy := p.Adoption != nil && len(before) > 0
 	for _, c := range before {
 		running = running || c.State.Running
 		legacy = legacy && c.Config.Labels["io.ziqx.dockyard.server"] == "" && c.Config.Labels["io.ziqx.dockyard.project"] == ""
@@ -35,10 +37,16 @@ func (d Docker) ObserveCompose(ctx context.Context, p model.Project) (*model.Rel
 	var observed *model.Release
 	if running {
 		if legacy && len(p.Releases) > 0 {
-			// ownsNative already checked every exact original ID and source label.
+			// ownsNative already checked the adopted source identity labels.
 			r := p.Releases[0]
-			if _, _, err := nativeRelease(d.Config, p, r); err != nil {
+			_, b, err := nativeRelease(d.Config, p, r)
+			if err != nil {
 				return nil, err
+			}
+			// Without exact IDs, require exactly the baseline's containers per
+			// service so stray or duplicate source containers are never accepted.
+			if !exactServiceCounts(b, before) {
+				return nil, model.Uncertain("CONTAINER_OWNERSHIP_UNKNOWN")
 			}
 			observed = &r
 		} else {
@@ -160,4 +168,31 @@ func (d Docker) recoveryHashes(ctx context.Context, p model.Project, r model.Rel
 		hashes[parts[0]] = parts[1]
 	}
 	return hashes, nil
+}
+
+func exactServiceCounts(release []byte, containers []Container) bool {
+	var doc map[string]any
+	if json.Unmarshal(release, &doc) != nil {
+		return false
+	}
+	want := map[string]int{}
+	for name, raw := range object(doc["services"]) {
+		svc := object(raw)
+		want[name] = 1
+		if scale, ok := svc["scale"].(float64); ok {
+			want[name] = int(scale)
+		}
+		if replicas, ok := object(svc["deploy"])["replicas"].(float64); ok {
+			want[name] = int(replicas)
+		}
+	}
+	for _, c := range containers {
+		want[c.Config.Labels["com.docker.compose.service"]]--
+	}
+	for _, n := range want {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
 }

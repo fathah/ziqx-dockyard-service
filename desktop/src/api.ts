@@ -9,6 +9,11 @@ export const forget = () => invoke<void>("forget_device");
 export const read = <T>(read: Read) => invoke<T>("read_api", { read });
 export const mutate = (mutation: unknown) =>
   invoke<{ job_id: string }>("mutate", { mutation });
+export const reconcileJob = (job: string) =>
+  invoke<{ status: string; error: string; project_state: string }>(
+    "reconcile_job",
+    { job },
+  );
 export const retry = () => invoke<{ job_id: string }>("retry_pending");
 export const pendingInfo = () => invoke<Pending>("pending_info");
 export const importCompose = () => invoke<string | null>("import_compose");

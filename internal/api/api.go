@@ -155,6 +155,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/"), "/")
+	if r.Method == "POST" && len(parts) == 3 && parts[0] == "jobs" && parts[2] == "reconcile" {
+		a.reconcileJob(w, r, p, parts[1])
+		return
+	}
 	if r.Method == "POST" && len(parts) == 3 && parts[0] == "inventory" && parts[2] == "migrate" {
 		a.adopt(w, r, p, body, parts[1])
 		return

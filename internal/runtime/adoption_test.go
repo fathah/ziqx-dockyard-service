@@ -107,9 +107,14 @@ func TestAdoptionPreservesResourcesAndBindsApproval(t *testing.T) {
 		t.Fatal("recorded container not recognized")
 	}
 	c.ID = strings.Repeat("b", 64)
-	if d.ownsNative(p, "blue", c) {
-		t.Fatal("unreviewed legacy container accepted")
+	if !d.ownsNative(p, "blue", c) {
+		t.Fatal("recreated source container not recognized")
 	}
+	c.Config.Labels["com.docker.compose.project.config_files"] = filepath.Join(dir, "other.yml")
+	if d.ownsNative(p, "blue", c) {
+		t.Fatal("container from another config accepted")
+	}
+	c.Config.Labels["com.docker.compose.project.config_files"] = filepath.Join(dir, "compose.yml")
 	c.Config.Labels["io.ziqx.dockyard.server"] = "vps"
 	c.Config.Labels["io.ziqx.dockyard.project"] = p.ID
 	if !d.ownsNative(p, "blue", c) {

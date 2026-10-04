@@ -34,15 +34,13 @@ func (d Docker) ownsNative(p model.Project, slot string, c Container) bool {
 	if p.Adoption == nil || labels["io.ziqx.dockyard.server"] != "" || labels["io.ziqx.dockyard.project"] != "" {
 		return false
 	}
-	if labels["com.docker.compose.project.working_dir"] != d.workingDir(p) || labels["com.docker.compose.project.config_files"] != strings.Join(p.Adoption.ConfigFiles, ",") {
-		return false
-	}
-	for _, id := range p.Adoption.ContainerIDs {
-		if c.ID == id {
-			return true
-		}
-	}
-	return false
+	// The adopted source identity (Compose project, working directory and exact
+	// config files) was verified unique to this folder at adoption. Container IDs
+	// change whenever the source stack is recreated (e.g. `docker compose up` in
+	// that folder), so they are not required to match the adoption snapshot.
+	return labels["com.docker.compose.project.working_dir"] == d.workingDir(p) &&
+		labels["com.docker.compose.project.config_files"] == strings.Join(p.Adoption.ConfigFiles, ",") &&
+		!strings.EqualFold(labels["com.docker.compose.oneoff"], "true")
 }
 
 // Existing administrator-selected files may be owned by a deploy user. Reject

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,13 +114,11 @@ func TestComposeRecoveryManagedHashesSelectActualRelease(t *testing.T) {
 }
 
 func TestComposeRecoveryRefusesUnverifiedLiveState(t *testing.T) {
-	for _, variant := range []string{"recreated", "foreign", "extra", "unhealthy", "changing", "hash-drift", "ambiguous", "missing-service", "overrides"} {
+	for _, variant := range []string{"foreign", "extra", "unhealthy", "changing", "hash-drift", "ambiguous", "missing-service", "overrides"} {
 		t.Run(variant, func(t *testing.T) {
 			d, p, runner := recoveryFixture(t)
 			c := &runner.containers[0]
 			switch variant {
-			case "recreated":
-				c.ID = strings.Repeat("b", 64)
 			case "foreign":
 				c.Config.Labels["io.ziqx.dockyard.server"] = "other-server"
 			case "extra":
@@ -166,4 +165,43 @@ func TestComposeRecoveryObservesStoppedOrAbsentStack(t *testing.T) {
 			t.Fatal("stopped stack reported as running", r, err)
 		}
 	}
+}
+
+// A `docker compose up` in the adopted source folder recreates containers with
+// new IDs. The source identity labels still prove ownership.
+func TestComposeRecoveryRecreatedSourceContainersSelectBaseline(t *testing.T) {
+	d, p, runner := recoveryFixture(t)
+	runner.containers[0].ID = strings.Repeat("e", 64)
+	r, err := d.ObserveCompose(context.Background(), p)
+	if err != nil || r == nil || r.ID != "old" {
+		t.Fatal("recreated source containers not recovered", r, err)
+	}
+}
+
+func TestComposeRecoveryRejectsForeignSourceIdentity(t *testing.T) {
+	for name, mutate := range map[string]func(*Container){
+		"config files": func(c *Container) {
+			c.Config.Labels["com.docker.compose.project.config_files"] = "/elsewhere/compose.yml"
+		},
+		"working dir":  func(c *Container) { c.Config.Labels["com.docker.compose.project.working_dir"] = "/elsewhere" },
+		"one-off":      func(c *Container) { c.Config.Labels["com.docker.compose.oneoff"] = "True" },
+		"other server": func(c *Container) { c.Config.Labels["io.ziqx.dockyard.server"] = "other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			d, p, runner := recoveryFixture(t)
+			runner.containers[0].ID = strings.Repeat("e", 64)
+			mutate(&runner.containers[0])
+			if _, err := d.ObserveCompose(context.Background(), p); faultCode(err) != "CONTAINER_OWNERSHIP_UNKNOWN" {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func faultCode(err error) string {
+	var f *model.Fault
+	if errors.As(err, &f) {
+		return f.Code
+	}
+	return ""
 }
