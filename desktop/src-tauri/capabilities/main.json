@@ -43,6 +43,7 @@
     "allow-provider-write",
     "allow-preview-blue-green",
     "allow-preview-service-update",
-    "allow-preview-route-setup"
+    "allow-preview-route-setup",
+    "allow-reconcile-job"
   ]
 }

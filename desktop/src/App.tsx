@@ -2455,7 +2455,7 @@ function JobRecoveryHelp({
         <details>
           <summary>Older VPS service? Recover from the VPS terminal</summary>
           <p>
-            Servers before this release do not offer one-click recovery. Update
+            VPS service before 0.7.6 does not offer one-click recovery. Update
             the service in Server details → Updates, or run:
           </p>
           <pre>
