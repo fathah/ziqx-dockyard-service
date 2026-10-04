@@ -1,6 +1,7 @@
 import Button from "./Button";
 import ServerDetailsTabs from "./ServerDetailsTabs";
 import ServerDiagnostics from "./ServerDiagnostics";
+import ServerUpdater from "./ServerUpdater";
 import {
   useCallback,
   useEffect,
@@ -738,6 +739,10 @@ function App() {
               authenticate={authenticate}
               setup={() => setSetupOpen(true)}
               explore={() => setPreview(true)}
+              openOperations={() => {
+                setSelected(null);
+                setPage("deployments");
+              }}
               forget={async () => {
                 loseSession();
                 setPreview(false);
@@ -1676,8 +1681,8 @@ export function ProjectDetail({
               {p.published_route
                 ? "Managed in place · configure domains through Dockyard. Containers and their published ports stay in place."
                 : p.service_updates
-                ? "Managed in place · individual app updates use Dockyard's website routes. Database services remain in this project."
-                : "Managed in place · Caddy routes remain in the existing Caddyfile. Update individual services from Services."}
+                  ? "Managed in place · individual app updates use Dockyard's website routes. Database services remain in this project."
+                  : "Managed in place · Caddy routes remain in the existing Caddyfile. Update individual services from Services."}
             </p>
           )}
           <div className="detail-grid">
@@ -1852,8 +1857,8 @@ export function ProjectDetail({
                 <strong>Server update required</strong>
                 <p>
                   This server hasn’t reported support for individual updates. In
-                  Server details → Updates, check and update Dockyard to
-                  version 0.7.0 or later. Then refresh Services.
+                  Server details → Updates, check and update Dockyard to version
+                  0.7.0 or later. Then refresh Services.
                 </p>
               </div>
               <Button
@@ -3122,6 +3127,7 @@ function Security({
   setup,
   explore,
   forget,
+  openOperations,
 }: {
   profile: Profile | null;
   unlocked: boolean;
@@ -3131,6 +3137,7 @@ function Security({
   setup: () => void;
   explore: () => void;
   forget: () => void;
+  openOperations: () => void;
 }) {
   return (
     <>
@@ -3316,7 +3323,7 @@ function Security({
         }
         updates={
           p?.server_ip && native && unlocked ? (
-            <ServerUpdater />
+            <ServerUpdater openOperations={openOperations} />
           ) : (
             <section className="panel">
               <h2>Server updates</h2>
@@ -3512,192 +3519,6 @@ function ServerAccess() {
           )}
         </>
       )}
-      {error && (
-        <div className="alert error" role="alert">
-          {error}
-        </div>
-      )}
-    </section>
-  );
-}
-function ServerUpdater() {
-  const [preview, setPreview] = useState<api.ServerUpdatePreview | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [review, setReview] = useState(false);
-  async function check() {
-    setBusy(true);
-    setError("");
-    setReview(false);
-    try {
-      setPreview(await api.checkServerUpdate());
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function update() {
-    if (!preview) return;
-    setBusy(true);
-    setError("");
-    try {
-      const version = await api.applyServerUpdate(preview);
-      toast.success(
-        version === "unversioned"
-          ? `Dockyard service updated to bundled build ${preview.source_commit.slice(0, 12)}.`
-          : `Dockyard service updated to v${version}.`,
-      );
-      setReview(false);
-      setPreview({
-        ...preview,
-        installed_dockyard: preview.candidate_dockyard,
-        installed_dockyardctl: preview.candidate_dockyardctl,
-        installed_version:
-          preview.candidate_version === "unversioned"
-            ? null
-            : preview.candidate_version,
-        installed_commit:
-          preview.candidate_version === "unversioned"
-            ? null
-            : preview.source_commit,
-        version_status: "current",
-        update_available: false,
-      });
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function forgetPassword() {
-    setBusy(true);
-    setError("");
-    try {
-      await api.forgetRootPassword();
-      toast.success("Saved root password removed from Keychain.");
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <section className="panel server-updater">
-      <div className="server-updater-heading">
-        <div>
-          <h2>Server software</h2>
-          <p className="muted">
-            Check the VPS against the verified Ubuntu build in this Mac app.
-          </p>
-        </div>
-        <Button
-          type="button"
-          className="button"
-          disabled={busy}
-          onClick={() => void check()}
-        >
-          <RefreshCw size={16} />
-          {busy ? "Working…" : "Check version"}
-        </Button>
-      </div>
-      {preview && (
-        <div className="server-updater-status">
-          <Tag
-            tone={preview.version_status === "current" ? "green" : "neutral"}
-          >
-            {preview.version_status === "current"
-              ? "Up to date"
-              : preview.version_status === "server_newer"
-                ? "VPS is newer"
-                : preview.version_status === "same_version_different_build"
-                  ? "Same version, different build"
-                  : preview.version_status === "bundle_unversioned"
-                    ? "Bundle needs rebuild"
-                    : preview.version_status === "legacy_bundle"
-                      ? "Unversioned update"
-                      : "Update available"}
-          </Tag>
-          <span>
-            VPS:{" "}
-            {preview.installed_version
-              ? `v${preview.installed_version}`
-              : "Version unavailable"}
-          </span>
-          <span>
-            Bundled:{" "}
-            {preview.candidate_version === "unversioned"
-              ? "Version unavailable"
-              : `v${preview.candidate_version}`}
-          </span>
-          {preview.update_available && !review && (
-            <Button
-              type="button"
-              className="button primary"
-              disabled={busy}
-              onClick={() => setReview(true)}
-            >
-              Update server <ArrowRight size={15} />
-            </Button>
-          )}
-        </div>
-      )}
-      {preview?.version_status === "bundle_unversioned" && (
-        <p className="muted">
-          This Mac app contains an older, unversioned Ubuntu binary. Bundle the
-          current Go build to enable in-app updates.
-        </p>
-      )}
-      {review && preview && (
-        <div className="server-updater-review">
-          <h3>Update Dockyard on your VPS?</h3>
-          <p>
-            {preview.candidate_version === "unversioned"
-              ? "This older bundle has no version number. Check its source commit before installing; the control service will restart briefly."
-              : "The control service will restart briefly. Containers and Caddy will continue; Dockyard keeps a database and binary backup for rollback."}
-          </p>
-          <div className="server-updater-hashes">
-            <span>Installed version</span>
-            <strong>
-              {preview.installed_version
-                ? `v${preview.installed_version}`
-                : "Unavailable (older build)"}
-            </strong>
-            <span>New build</span>
-            <strong>
-              {preview.candidate_version === "unversioned"
-                ? `Unversioned · ${preview.source_commit.slice(0, 12)}`
-                : `v${preview.candidate_version}`}
-            </strong>
-          </div>
-          <div className="controls">
-            <Button
-              type="button"
-              className="button primary"
-              disabled={busy}
-              onClick={() => void update()}
-            >
-              {busy ? "Updating…" : "Confirm update with Touch ID"}
-            </Button>
-            <Button
-              type="button"
-              className="button"
-              disabled={busy}
-              onClick={() => setReview(false)}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-      <Button
-        type="button"
-        className="text-button server-updater-forget"
-        disabled={busy}
-        onClick={() => void forgetPassword()}
-      >
-        Forget saved root password
-      </Button>
       {error && (
         <div className="alert error" role="alert">
           {error}

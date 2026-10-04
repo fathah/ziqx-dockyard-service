@@ -11,6 +11,7 @@ import stat
 import subprocess
 import sys
 import time
+from update_jobs import inspect_jobs
 
 BASE = Path(__file__).resolve().parent
 BIN = Path('/usr/local/bin')
@@ -97,15 +98,16 @@ def ubuntu():
     return 'ID=ubuntu' in Path('/etc/os-release').read_text().splitlines() and run('uname', '-m') == 'x86_64'
 
 
-def pending_jobs():
+def reviewed_jobs(expected):
     if not STATE.exists():
         fail('Dockyard database is missing')
     regular(STATE)
-    db = sqlite3.connect('file:' + str(STATE) + '?mode=ro', uri=True, timeout=5)
-    try:
-        return db.execute("SELECT count(*) FROM jobs WHERE status IN ('queued','running','recovery_required')").fetchone()[0]
-    finally:
-        db.close()
+    jobs = inspect_jobs(STATE)
+    if jobs['active_count']:
+        fail('A Dockyard job is queued or running. Wait for it to finish, then check the server again')
+    if jobs['sha256'] != expected:
+        fail('Dockyard jobs changed since the update review. Check the server again')
+    return jobs
 
 
 def main():
@@ -119,9 +121,16 @@ def main():
     lock_stat = os.fstat(lock_fd)
     if not stat.S_ISREG(lock_stat.st_mode) or lock_stat.st_uid != 0 or lock_stat.st_mode & 0o077:
         fail('Unsafe updater lock file')
-    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return apply_update()
+    finally:
+        os.close(lock_fd)
+
+
+def apply_update():
     release = json.loads((BASE / 'request.json').read_text())
-    if set(release) != {'candidate', 'expected'} or set(release['candidate']) != set(NAMES) or set(release['expected']) != set(NAMES):
+    if set(release) != {'candidate', 'expected', 'jobs_sha256'} or set(release['candidate']) != set(NAMES) or set(release['expected']) != set(NAMES):
         fail('Invalid update request')
     if not ubuntu():
         fail('Only Ubuntu x86-64 servers are supported')
@@ -130,8 +139,7 @@ def main():
         fail('This server uses a custom state directory; update it with a reviewed backup procedure')
     if not active():
         fail('Dockyard service must be running before an update')
-    if pending_jobs():
-        fail('Finish or reconcile active Dockyard jobs before updating')
+    jobs = reviewed_jobs(release['jobs_sha256'])
     for name in NAMES:
         staged = regular(BASE / name)
         if name == 'dockyard' and not staged.st_mode & stat.S_IXUSR:
@@ -156,8 +164,7 @@ def main():
     changed = False
     try:
         run('systemctl', 'stop', 'dockyard', timeout=60)
-        if pending_jobs():
-            fail('Dockyard jobs changed while stopping the service')
+        reviewed_jobs(release['jobs_sha256'])
         # A consistent SQLite snapshot allows rollback if a new binary migrates its schema.
         source = sqlite3.connect('file:' + str(STATE) + '?mode=ro', uri=True)
         target = sqlite3.connect(str(backups / 'state.db'))
@@ -184,6 +191,10 @@ def main():
         run('systemctl', 'start', 'dockyard', timeout=60)
         if not healthy():
             fail('Updated Dockyard service did not stay active')
+        # Recovery blocks admission and the worker. A binary update must retain
+        # that exact job/lock; it does not claim to have repaired the deployment.
+        if jobs['recovery_count']:
+            reviewed_jobs(release['jobs_sha256'])
         return {'status': 'updated', 'hashes': {n: digest(BIN / n) for n in NAMES}}
     except Exception as error:
         if changed:

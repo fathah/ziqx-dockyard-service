@@ -42,6 +42,21 @@ export type ServerUpdatePreview = {
   installed_dockyard: string;
   installed_dockyardctl: string;
   update_available: boolean;
+  jobs: {
+    sha256: string;
+    active_count: number;
+    recovery_count: number;
+    active_jobs: UpdateJob[];
+    recovery_jobs: UpdateJob[];
+  };
+};
+export type UpdateJob = {
+  job_id: string;
+  project_id: string;
+  status: "queued" | "running" | "recovery_required";
+  action: string;
+  phase: string;
+  error_code: string;
 };
 export const checkServerUpdate = () =>
   invoke<ServerUpdatePreview>("server_update_check");

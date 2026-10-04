@@ -1829,6 +1829,31 @@ pre.terminal {
 .server-updater-forget {
   margin-top: 20px;
 }
+.server-update-jobs {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #e5c9af;
+  border-radius: 12px;
+  background: #faf5ed;
+  min-width: 0;
+}
+.server-update-jobs h3 {
+  margin: 0 0 10px;
+}
+.server-update-job {
+  display: grid;
+  gap: 5px;
+  padding: 12px 0;
+  border-top: 1px solid #e8ddcc;
+  overflow-wrap: anywhere;
+}
+.server-update-job span {
+  color: #766652;
+  font-size: 13px;
+}
+.server-update-job code {
+  font-size: 12px;
+}
 .server-card-header {
   display: flex;
   align-items: center;
@@ -2640,7 +2665,8 @@ label small {
   padding: 22px;
   margin: 20px 0;
 }
-.route-setup label, .route-setup .dockyard-select-field {
+.route-setup label,
+.route-setup .dockyard-select-field {
   display: block;
   margin-bottom: 16px;
 }
@@ -2650,7 +2676,9 @@ label small {
   color: #68786b;
 }
 @media (max-width: 700px) {
-  .route-setup .form-grid { grid-template-columns: 1fr; }
+  .route-setup .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 .checkbox-label {
   display: flex;

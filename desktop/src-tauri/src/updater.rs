@@ -11,6 +11,7 @@ use tauri::AppHandle;
 
 const MANIFEST: &str = include_str!("../resources/ubuntu/manifest.json");
 const SCRIPT: &[u8] = include_bytes!("../../updater/update.py");
+const JOB_CHECK: &str = include_str!("../../updater/update_jobs.py");
 const INSPECT: &str = "set -eu; . /etc/os-release; test \"$ID\" = ubuntu; test \"$(uname -m)\" = x86_64; test \"$(id -u)\" = 0; test -f /usr/local/bin/dockyard; test -f /usr/local/bin/dockyardctl; sha256sum /usr/local/bin/dockyard /usr/local/bin/dockyardctl; systemctl is-active dockyard; /usr/local/bin/dockyard -version-json 2>/dev/null || echo legacy";
 const ACCESS_CHECK: &str = include_str!("../../updater/access_check.py");
 const ACCESS_PREPARE: &str = "set -eu; test \"$(id -u)\" = 0; test \"$(stat -c %u /var/lib)\" = 0; test ! -L /var/lib/dockyard-desktop-updates; if test -e /var/lib/dockyard-desktop-updates; then test -d /var/lib/dockyard-desktop-updates; test \"$(stat -c %u /var/lib/dockyard-desktop-updates)\" = 0; fi; install -d -o root -g root -m 0700 /var/lib/dockyard-desktop-updates";
@@ -128,6 +129,40 @@ pub struct Preview {
     pub installed_dockyard: String,
     pub installed_dockyardctl: String,
     pub update_available: bool,
+    pub jobs: UpdateJobs,
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateJob {
+    pub job_id: String,
+    pub project_id: String,
+    pub status: String,
+    pub action: String,
+    pub phase: String,
+    pub error_code: String,
+}
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateJobs {
+    pub sha256: String,
+    pub active_count: usize,
+    pub recovery_count: usize,
+    pub active_jobs: Vec<UpdateJob>,
+    pub recovery_jobs: Vec<UpdateJob>,
+}
+impl UpdateJobs {
+    fn valid(&self) -> bool {
+        let token = |s: &str| s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        valid_hash(&self.sha256) && self.active_count <= 1000 && self.recovery_count <= 1000
+            && self.active_count + self.recovery_count <= 1000
+            && self.active_jobs.len() == self.active_count.min(10)
+            && self.recovery_jobs.len() == self.recovery_count.min(10)
+            && self.active_jobs.iter().all(|j| j.status == "queued" || j.status == "running")
+            && self.recovery_jobs.iter().all(|j| j.status == "recovery_required")
+            && self.active_jobs.iter().chain(&self.recovery_jobs).all(|j|
+                [&j.job_id, &j.project_id, &j.action, &j.phase, &j.error_code].iter().all(|s| token(s)))
+    }
 }
 
 fn hash(bytes: &[u8]) -> String {
@@ -322,6 +357,12 @@ fn inspect(session: &Session, m: &Manifest) -> Result<Preview, String> {
         &m.version,
         build.as_ref().map(|b| b.version.as_str()),
     );
+    let script = JOB_CHECK.replace('\'', "'\"'\"'");
+    let raw_jobs = command_limited(session, &format!("python3 -c '{}'", script), 15000, 16384)
+        .map_err(|_| "Could not inspect Dockyard jobs. Check Python 3 and database access on the VPS before updating".to_owned())?;
+    let jobs: UpdateJobs = serde_json::from_str(raw_jobs.trim())
+        .map_err(|_| "VPS returned an invalid update job check")?;
+    if !jobs.valid() { return Err("VPS returned an invalid update job check".into()); }
     Ok(Preview {
         source_commit: m.source_commit.clone(),
         candidate_version: m.version.clone(),
@@ -335,6 +376,7 @@ fn inspect(session: &Session, m: &Manifest) -> Result<Preview, String> {
         update_available: status == "update_available"
             || status == "legacy"
             || status == "legacy_bundle",
+        jobs,
     })
 }
 pub fn check(app: &AppHandle, identity: &SshIdentity) -> Result<Preview, String> {
@@ -376,14 +418,14 @@ pub fn apply(
         || expected.candidate_dockyard != m.dockyard_sha256
         || expected.candidate_dockyardctl != m.dockyardctl_sha256
         || !expected.update_available
+        || !expected.jobs.valid()
     {
         return Err("The Mac app build changed. Check the server version again".into());
     }
-    let session = ssh(
-        app,
-        identity,
-        Some("Update and restart the Dockyard control service on your VPS"),
-    )?;
+    if expected.jobs.active_count > 0 {
+        return Err("A Dockyard job is queued or running. Wait for it to finish, then check the server again".into());
+    }
+    let session = ssh(app, identity, None)?;
     let current = inspect(&session, &m)?;
     if current.installed_dockyard != expected.installed_dockyard
         || current.installed_dockyardctl != expected.installed_dockyardctl
@@ -395,6 +437,14 @@ pub fn apply(
             "The VPS binaries changed since your update check. Check again before updating".into(),
         );
     }
+    if current.jobs != expected.jobs {
+        return Err("Dockyard jobs changed since your update review. Check the server again before updating".into());
+    }
+    native::authenticate_reason(if current.jobs.recovery_count > 0 {
+        "Update Dockyard while preserving its recovery jobs and write lock. This does not repair the failed deployment."
+    } else {
+        "Update and restart the Dockyard control service on your VPS"
+    })?;
     let stage = format!(
         "/var/lib/dockyard-desktop-updates/{}",
         uuid::Uuid::new_v4().simple()
@@ -405,7 +455,8 @@ pub fn apply(
     command(&session, &format!("set -eu; for name in dockyard dockyardctl; do path={stage}/$name; test -f \"$path\"; test ! -L \"$path\"; test \"$(stat -c %u \"$path\")\" = 0; chmod 0700 \"$path\"; test -x \"$path\"; done"), 15000)
         .map_err(|_| "Could not make the private updater binaries executable on the VPS".to_owned())?;
     upload(&session, &format!("{stage}/update.py"), SCRIPT, false)?;
-    let request = serde_json::to_vec(&json!({"candidate":{"dockyard":m.dockyard_sha256,"dockyardctl":m.dockyardctl_sha256},"expected":{"dockyard":expected.installed_dockyard,"dockyardctl":expected.installed_dockyardctl}})).map_err(|_| "Cannot prepare update request")?;
+    upload(&session, &format!("{stage}/update_jobs.py"), JOB_CHECK.as_bytes(), false)?;
+    let request = serde_json::to_vec(&json!({"candidate":{"dockyard":m.dockyard_sha256,"dockyardctl":m.dockyardctl_sha256},"expected":{"dockyard":expected.installed_dockyard,"dockyardctl":expected.installed_dockyardctl},"jobs_sha256":expected.jobs.sha256})).map_err(|_| "Cannot prepare update request")?;
     upload(&session, &format!("{stage}/request.json"), &request, false)?;
     // Once started, this command must finish even if the UI session expires.
     let response =
@@ -444,6 +495,27 @@ pub fn apply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn job_review_accepts_recovery_but_rejects_untrusted_metadata() {
+        let raw = json!({"sha256":"a".repeat(64),"active_count":0,"recovery_count":1,"active_jobs":[],"recovery_jobs":[{
+            "job_id":"job-example","project_id":"tasks","status":"recovery_required","action":"start","phase":"draining","error_code":"CONTAINER_STOP_FAILED"
+        }]});
+        let jobs: UpdateJobs = serde_json::from_value(raw.clone()).unwrap();
+        assert!(jobs.valid());
+        let mut wrong = jobs.clone();
+        wrong.recovery_count = 0;
+        assert!(!wrong.valid());
+        wrong = jobs.clone();
+        wrong.recovery_jobs[0].status = "running".into();
+        assert!(!wrong.valid());
+        wrong = jobs;
+        wrong.recovery_jobs[0].error_code = "untrusted prose\nsecret".into();
+        assert!(!wrong.valid());
+        let mut extra = raw;
+        extra["recovery_jobs"][0]["input"] = json!({"environment":"private"});
+        assert!(serde_json::from_value::<UpdateJobs>(extra).is_err());
+    }
 
     #[test]
     fn packaged_update_manifest_has_valid_version_and_checksums() {
