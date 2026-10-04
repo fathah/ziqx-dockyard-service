@@ -155,16 +155,32 @@ export default function ProjectConfiguration({
             Edit the saved release configuration. Files stay in this unlocked
             session until you deploy or leave this tab. Deployment validates
             both files and saves a new release. Referenced build contexts and
-            additional files must exist on the VPS.
+            additional files must exist on the VPS. The server copies
+            compose.yml and .env into the managed project folder after
+            successful activation.
           </Help>
         </h2>
       </div>
       <p className="configuration-subtitle">
-        {project.environment} · /docker/
-        {project.adoption?.source_name ?? project.id}/compose.yml and .env
+        {project.environment} · Managed files: /docker/{project.id}/compose.yml
+        and .env
         {project.releases.length === 0 &&
           " · Import or paste both files to deploy your services."}
       </p>
+      {project.releases.length > 0 && (
+        <p className="muted">
+          This editor shows Dockyard’s saved release. Changes made directly on
+          the VPS are not imported automatically.
+        </p>
+      )}
+      {project.adoption && project.adoption.source_name !== project.id && (
+        <p className="muted">
+          Original files in /docker/{project.adoption.source_name} are
+          preserved. Dockyard deploys saved release files from /docker/
+          {project.id}; build contexts and relative paths still use the original
+          working folder.
+        </p>
+      )}
       {error && (
         <p className="alert error" role="alert">
           {error}

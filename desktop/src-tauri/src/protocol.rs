@@ -244,9 +244,26 @@ impl ServiceUpdate {
         if self.mode == "seamless" { "deploy.execute projects.write sites.write" } else { "deploy.execute" }
     }
 }
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteSetup {
+    pub expected_release_id: String,
+    pub domains: Vec<String>,
+    pub service: String,
+    pub container_port: u16,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub review_sha256: String,
+}
+impl RouteSetup {
+    pub fn valid(&self) -> bool {
+        token(&self.expected_release_id) && domains_ok(&self.domains)
+        && service_name(&self.service) && self.container_port > 0
+    }
+}
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Mutation {
+ RouteSetup {project: String, data: RouteSetup},
  ServiceUpdate {project: String, data: ServiceUpdate},
  BlueGreen {project: String, data: BlueGreen},
     Migrate { project: String, source_sha256: String },
@@ -323,6 +340,12 @@ fn service_name(s: &str) -> bool {
 impl Mutation {
     pub fn plan(self) -> Result<Operation, String> {
         let (method, project, action, scopes, body) = match self {
+            Self::RouteSetup { project, data } => {
+                if !data.valid() || data.review_sha256.len() != 64 || !data.review_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
+                    return Err("Review the route first".into());
+                }
+                ("POST", project, "route-setup", "projects.write sites.write", serde_json::to_string(&data))
+            }
             Self::ServiceUpdate { project, data } => {
                 if !data.valid() || data.review_sha256.len()!=64 || !data.review_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
                     return Err("Review the service update first".into());
@@ -690,6 +713,21 @@ mod tests {
             sign(&[42u8; 32], &e, &op, "1700000000"),
             "5681f2392d91fe8b3eb330325236b1eb277cc348dc845509a02eaf33d82e12a0"
         );
+    }
+    #[test]
+    fn route_setup_requires_review_and_cannot_supply_a_host_port() {
+        let base=serde_json::json!({"action":"route_setup","project":"demo","data":{"expected_release_id":"rel-original","domains":["tasks.example.com"],"service":"app","container_port":3000,"review_sha256":"a".repeat(64)}});
+        let op=serde_json::from_value::<Mutation>(base.clone()).unwrap().plan().unwrap();
+        assert_eq!(op.target,"/v1/projects/demo/route-setup");
+        assert_eq!(op.scopes,"projects.write sites.write");
+        for (field,value) in [("service",serde_json::json!("../app")),("container_port",serde_json::json!(0)),("domains",serde_json::json!([])),("review_sha256",serde_json::json!(""))] {
+            let mut bad=base.clone();bad["data"][field]=value;
+            assert!(serde_json::from_value::<Mutation>(bad).unwrap().plan().is_err());
+        }
+        for field in ["host_port","env_file","compose_yaml"] {
+            let mut unknown=base.clone();unknown["data"][field]=serde_json::json!("unreviewed");
+            assert!(serde_json::from_value::<Mutation>(unknown).is_err());
+        }
     }
     #[test]
     fn service_update_requires_review_and_only_selected_service_authority() {

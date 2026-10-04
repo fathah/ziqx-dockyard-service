@@ -55,6 +55,24 @@ export type ServerAccessReport = {
   installed_binaries: boolean;
   database: boolean;
   service_active: boolean;
+  checks: ServerAccessCheck[];
+  recent_jobs: ServerAccessJob[];
+};
+export type ServerAccessCheck = {
+  id: string;
+  label: string;
+  status: "ready" | "warning" | "failed";
+  detail: string;
+  repair?: string | null;
+};
+export type ServerAccessJob = {
+  job_id: string;
+  project_id: string;
+  action: string;
+  status: string;
+  phase: string;
+  error_code: string;
+  finished_at: string;
 };
 export const checkServerAccess = () =>
   invoke<ServerAccessReport>("server_access_check");
@@ -107,3 +125,22 @@ export const previewServiceUpdate = (
   project: string,
   data: ServiceUpdateInput,
 ) => invoke<ServiceUpdateReview>("preview_service_update", { project, data });
+
+export type RouteSetupInput = {
+  expected_release_id: string;
+  domains: string[];
+  service: string;
+  container_port: number;
+  review_sha256?: string;
+};
+export type RouteSetupReview = {
+  review_sha256: string;
+  domains: string[];
+  service: string;
+  container_port: number;
+  upstream: string;
+  imports_routes: boolean;
+  containers_unchanged: boolean;
+};
+export const previewRouteSetup = (project: string, data: RouteSetupInput) =>
+  invoke<RouteSetupReview>("preview_route_setup", { project, data });

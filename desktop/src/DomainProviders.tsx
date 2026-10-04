@@ -206,7 +206,7 @@ function Dialog({
     </dialog>
   );
 }
-export function DomainProviderSettings({
+function DomainProvidersPanel({
   preview,
   manage,
 }: {
@@ -227,7 +227,7 @@ export function DomainProviderSettings({
   return (
     <>
       <div className="page-heading">
-        <h1>Settings</h1>
+        <h1>Domains</h1>
       </div>
       <section className="panel provider-settings">
         <div className="provider-section-heading">
@@ -472,23 +472,21 @@ function ConnectProvider({
 export function ProviderDomains({
   preview,
   serverIP,
-  settings,
   routes,
-  initialProvider,
 }: {
   preview: boolean;
   serverIP?: string | null;
-  settings: () => void;
   routes: ReactNode;
-  initialProvider?: string;
 }) {
-  const [tab, setTab] = useState<"dns" | "routes">("dns");
+  const [tab, setTab] = useState<"dns" | "routes" | "providers">("dns");
+  const [provider, setProvider] = useState("");
   return (
     <>
-      <div className="dns-tabs">
+      <div className="dns-tabs" aria-label="Domain views">
         <Button
           type="button"
           className={tab === "dns" ? "button primary" : "button"}
+          aria-pressed={tab === "dns"}
           onClick={() => setTab("dns")}
         >
           Provider DNS
@@ -496,19 +494,36 @@ export function ProviderDomains({
         <Button
           type="button"
           className={tab === "routes" ? "button primary" : "button"}
+          aria-pressed={tab === "routes"}
           onClick={() => setTab("routes")}
         >
           Caddy routes
         </Button>
+        <Button
+          type="button"
+          className={tab === "providers" ? "button primary" : "button"}
+          aria-pressed={tab === "providers"}
+          onClick={() => setTab("providers")}
+        >
+          Providers
+        </Button>
       </div>
-      {tab === "routes" ? (
+      {tab === "providers" ? (
+        <DomainProvidersPanel
+          preview={preview}
+          manage={(id) => {
+            setProvider(id);
+            setTab("dns");
+          }}
+        />
+      ) : tab === "routes" ? (
         routes
       ) : (
         <DNSWorkspace
           preview={preview}
           serverIP={serverIP}
-          settings={settings}
-          initialProvider={initialProvider}
+          manageProviders={() => setTab("providers")}
+          initialProvider={provider}
         />
       )}
     </>
@@ -517,12 +532,12 @@ export function ProviderDomains({
 function DNSWorkspace({
   preview,
   serverIP,
-  settings,
+  manageProviders,
   initialProvider,
 }: {
   preview: boolean;
   serverIP?: string | null;
-  settings: () => void;
+  manageProviders: () => void;
   initialProvider?: string;
 }) {
   const [revision, setRevision] = useState(0);
@@ -555,7 +570,7 @@ function DNSWorkspace({
             Configure traffic routing separately in Caddy routes.
           </Help>
         </h1>
-        <Button type="button" className="button" onClick={settings}>
+        <Button type="button" className="button" onClick={manageProviders}>
           Domain Providers
         </Button>
       </div>
@@ -587,7 +602,7 @@ function DNSWorkspace({
               <Button
                 type="button"
                 className="button primary"
-                onClick={settings}
+                onClick={manageProviders}
               >
                 <Plus size={17} /> Add provider
               </Button>

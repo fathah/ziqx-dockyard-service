@@ -95,6 +95,20 @@ func (d Docker) nativeHealthy(ctx context.Context, p model.Project, slot string,
 				return model.Uncertain("CONTAINER_BINDING_DIVERGED")
 			}
 		}
+		if pin := p.PublishedRoute; pin != nil && name == pin.Service {
+			ipv4 := false
+			for _, binding := range c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", pin.ContainerPort)] {
+				if binding.HostPort != strconv.Itoa(pin.HostPort) {
+					return model.Uncertain("CONTAINER_BINDING_DIVERGED")
+				}
+				if binding.HostIP == "127.0.0.1" || binding.HostIP == "0.0.0.0" {
+					ipv4 = true
+				}
+			}
+			if !ipv4 || !c.State.Running {
+				return model.Uncertain("CONTAINER_BINDING_DIVERGED")
+			}
+		}
 		counts[name]++
 	}
 	for name, raw := range services {

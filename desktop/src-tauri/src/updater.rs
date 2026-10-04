@@ -12,19 +12,7 @@ use tauri::AppHandle;
 const MANIFEST: &str = include_str!("../resources/ubuntu/manifest.json");
 const SCRIPT: &[u8] = include_bytes!("../../updater/update.py");
 const INSPECT: &str = "set -eu; . /etc/os-release; test \"$ID\" = ubuntu; test \"$(uname -m)\" = x86_64; test \"$(id -u)\" = 0; test -f /usr/local/bin/dockyard; test -f /usr/local/bin/dockyardctl; sha256sum /usr/local/bin/dockyard /usr/local/bin/dockyardctl; systemctl is-active dockyard; /usr/local/bin/dockyard -version-json 2>/dev/null || echo legacy";
-const ACCESS_CHECK: &str = r#"python3 -c 'import json,os,stat,subprocess
-def info(path):
- try:
-  st=os.lstat(path)
-  kind="directory" if stat.S_ISDIR(st.st_mode) else "regular" if stat.S_ISREG(st.st_mode) else "other"
-  return {"exists":True,"kind":kind,"uid":st.st_uid,"mode":stat.S_IMODE(st.st_mode)}
- except OSError:
-  return {"exists":False,"kind":"missing","uid":-1,"mode":0}
-try:
- service=subprocess.run(["systemctl","is-active","--quiet","dockyard"],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5).returncode==0
-except Exception:
- service=False
-print(json.dumps({"root":os.geteuid()==0,"parent":info("/var/lib"),"stage":info("/var/lib/dockyard-desktop-updates"),"bin_dir":info("/usr/local/bin"),"daemon":info("/usr/local/bin/dockyard"),"ctl":info("/usr/local/bin/dockyardctl"),"database":info("/var/lib/dockyard/state.db"),"service_active":service}))'"#;
+const ACCESS_CHECK: &str = include_str!("../../updater/access_check.py");
 const ACCESS_PREPARE: &str = "set -eu; test \"$(id -u)\" = 0; test \"$(stat -c %u /var/lib)\" = 0; test ! -L /var/lib/dockyard-desktop-updates; if test -e /var/lib/dockyard-desktop-updates; then test -d /var/lib/dockyard-desktop-updates; test \"$(stat -c %u /var/lib/dockyard-desktop-updates)\" = 0; fi; install -d -o root -g root -m 0700 /var/lib/dockyard-desktop-updates";
 const BINARY_UPLOAD_MODE: i32 = 0o700;
 const DATA_UPLOAD_MODE: i32 = 0o600;
@@ -46,6 +34,28 @@ struct RawAccess {
     ctl: PathInfo,
     database: PathInfo,
     service_active: bool,
+    #[serde(default)]
+    checks: Vec<AccessCheck>,
+    #[serde(default)]
+    recent_jobs: Vec<AccessJob>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AccessCheck {
+    pub id: String,
+    pub label: String,
+    pub status: String,
+    pub detail: String,
+    pub repair: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AccessJob {
+    pub job_id: String,
+    pub project_id: String,
+    pub action: String,
+    pub status: String,
+    pub phase: String,
+    pub error_code: String,
+    pub finished_at: String,
 }
 #[derive(Clone, Serialize)]
 pub struct AccessReport {
@@ -54,6 +64,8 @@ pub struct AccessReport {
     pub installed_binaries: bool,
     pub database: bool,
     pub service_active: bool,
+    pub checks: Vec<AccessCheck>,
+    pub recent_jobs: Vec<AccessJob>,
 }
 fn secure_directory(p: &PathInfo) -> bool {
     p.exists
@@ -89,6 +101,8 @@ fn access_report(raw: RawAccess) -> AccessReport {
             && secure_file(&raw.ctl, true),
         database: secure_file(&raw.database, false),
         service_active: raw.service_active,
+        checks: raw.checks,
+        recent_jobs: raw.recent_jobs,
     }
 }
 
@@ -223,6 +237,9 @@ fn ssh(app: &AppHandle, identity: &SshIdentity, reason: Option<&str>) -> Result<
     Ok(session)
 }
 fn command(session: &Session, cmd: &str, timeout: u32) -> Result<String, String> {
+    command_limited(session, cmd, timeout, 8192)
+}
+fn command_limited(session: &Session, cmd: &str, timeout: u32, limit: usize) -> Result<String, String> {
     session.set_timeout(timeout);
     let mut channel = session
         .channel_session()
@@ -230,12 +247,12 @@ fn command(session: &Session, cmd: &str, timeout: u32) -> Result<String, String>
     channel.exec(cmd).map_err(|_| "Cannot run update command")?;
     let mut output = String::new();
     Read::by_ref(&mut channel)
-        .take(8193)
+        .take((limit + 1) as u64)
         .read_to_string(&mut output)
         .map_err(|_| {
             "Server update response was interrupted; inspect the service before retrying"
         })?;
-    if output.len() > 8192 {
+    if output.len() > limit {
         return Err("Server update response exceeded its limit".into());
     }
     channel
@@ -250,8 +267,12 @@ fn command(session: &Session, cmd: &str, timeout: u32) -> Result<String, String>
     }
     Ok(output)
 }
-fn inspect_access(session: &Session) -> Result<AccessReport, String> {
-    let output = command(session, ACCESS_CHECK, 15000).map_err(|_| {
+fn inspect_access(session: &Session, key_id: &str) -> Result<AccessReport, String> {
+    if key_id.is_empty() || key_id.len() > 48 || !key_id.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-') {
+        return Err("Invalid enrolled credential".into());
+    }
+    let script = ACCESS_CHECK.replace('\'', "'\"'\"'");
+    let output = command_limited(session, &format!("python3 -c '{}' '{}'", script, key_id), 90000, 32768).map_err(|_| {
         "Could not check updater access. Confirm Python 3 and root SSH are available on the VPS"
             .to_owned()
     })?;
@@ -259,23 +280,23 @@ fn inspect_access(session: &Session) -> Result<AccessReport, String> {
         serde_json::from_str(output.trim()).map_err(|_| "VPS returned an invalid access check")?;
     Ok(access_report(raw))
 }
-pub fn check_access(app: &AppHandle, identity: &SshIdentity) -> Result<AccessReport, String> {
+pub fn check_access(app: &AppHandle, identity: &SshIdentity, key_id: &str) -> Result<AccessReport, String> {
     let session = ssh(app, identity, None)?;
-    inspect_access(&session)
+    inspect_access(&session, key_id)
 }
-pub fn prepare_access(app: &AppHandle, identity: &SshIdentity) -> Result<AccessReport, String> {
+pub fn prepare_access(app: &AppHandle, identity: &SshIdentity, key_id: &str) -> Result<AccessReport, String> {
     let session = ssh(
         app,
         identity,
         Some("Prepare Dockyard's private updater directory on your VPS"),
     )?;
-    if inspect_access(&session)?.update_directory != "can_prepare" {
+    if inspect_access(&session, key_id)?.update_directory != "can_prepare" {
         return Err("Updater directory cannot be prepared automatically. Review its owner and path on the VPS".into());
     }
     command(&session, ACCESS_PREPARE, 15000).map_err(|_| {
         "Could not prepare the private updater directory. Review /var/lib/dockyard-desktop-updates on the VPS".to_owned()
     })?;
-    let report = inspect_access(&session)?;
+    let report = inspect_access(&session, key_id)?;
     if report.update_directory != "ready" {
         return Err("Updater directory still needs VPS review after preparation".into());
     }
@@ -479,6 +500,8 @@ mod tests {
                 ..file
             },
             service_active: true,
+            checks: vec![],
+            recent_jobs: vec![],
         };
         assert_eq!(access_report(raw.clone()).update_directory, "ready");
         raw.stage.mode = 0o777;

@@ -306,7 +306,7 @@ func (c Caddy) RestoreImportedRoutes(ctx context.Context, edits []model.RouteEdi
 }
 
 func importSlot(p model.Project) string {
-	if p.ServiceMode {
+	if p.ServiceMode || p.PublishedRoute != nil {
 		return p.Active
 	}
 	return "green"

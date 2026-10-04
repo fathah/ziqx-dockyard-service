@@ -1686,6 +1686,89 @@ pre.terminal {
 .server-access {
   margin-top: 24px;
 }
+.server-details-tabs [role="tabpanel"] > .server-access,
+.server-details-tabs [role="tabpanel"] > .server-updater {
+  margin-top: 0;
+}
+.server-details-tabs [role="tabpanel"][hidden] {
+  display: none;
+}
+.server-access-checked {
+  font-size: 13px;
+  margin: 12px 0 18px;
+}
+.server-diagnostics,
+.server-access-updater-heading {
+  margin-top: 28px;
+}
+.server-diagnostic-list {
+  display: grid;
+  gap: 10px;
+}
+.server-diagnostic {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line, #e3e9dc);
+  border-radius: 10px;
+}
+.server-diagnostic > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: #668552;
+}
+.server-diagnostic.failed > svg {
+  color: #af594f;
+}
+.server-diagnostic.warning > svg {
+  color: #97722f;
+}
+.server-diagnostic-content {
+  flex: 1;
+  min-width: 0;
+}
+.server-diagnostic-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.server-diagnostic-content p,
+.server-diagnostic-job p {
+  margin: 8px 0 0;
+  color: #657567;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.server-diagnostic .connection-details {
+  margin-top: 12px;
+}
+.server-diagnostic .connection-details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.server-diagnostic-history-heading {
+  margin-top: 28px;
+}
+.server-diagnostic-history-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.server-diagnostic-job {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line, #e3e9dc);
+}
+.server-diagnostic-job small,
+.server-diagnostic-job time {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .server-access-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -2550,6 +2633,24 @@ label small {
 }
 .form-grid small {
   display: inline;
+}
+.route-setup {
+  border: 1px solid #dce5d7;
+  border-radius: 12px;
+  padding: 22px;
+  margin: 20px 0;
+}
+.route-setup label, .route-setup .dockyard-select-field {
+  display: block;
+  margin-bottom: 16px;
+}
+.route-setup small {
+  display: block;
+  margin-top: 6px;
+  color: #68786b;
+}
+@media (max-width: 700px) {
+  .route-setup .form-grid { grid-template-columns: 1fr; }
 }
 .checkbox-label {
   display: flex;

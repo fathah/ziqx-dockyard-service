@@ -171,6 +171,8 @@ func (e *Engine) execute(ctx context.Context, j model.Job) {
 	}
 	if err == nil {
 		switch j.Action {
+		case "route_setup":
+			err = e.setupRoute(ctx, &j, &p)
 		case "service_update":
 			err = e.updateService(ctx, &j, &p)
 		case "blue_green":

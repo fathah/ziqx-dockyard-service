@@ -628,6 +628,7 @@ fn validate_pending(op: &Operation) -> Result<(), String> {
         "migrate" => json!({"action":"migrate","project":op.project,"source_sha256":body.get("source_sha256")}),
         "blue-green" => json!({"action":"blue_green","project":op.project,"data":body}),
         "service-update" => json!({"action":"service_update","project":op.project,"data":body}),
+        "route-setup" => json!({"action":"route_setup","project":op.project,"data":body}),
         "deploy" | "routes" => json!({"action":op.action,"project":op.project,"data":body}),
         "stop" => {
             json!({"action":"stop","project":op.project,"confirmation":body.get("confirmation")})
@@ -812,6 +813,15 @@ async fn preview_service_update(c: State<'_, Control>, project: String, data: pr
     Ok(result)
 }
 #[tauri::command]
+async fn preview_route_setup(c: State<'_, Control>, project: String, data: protocol::RouteSetup) -> Result<Value,String> {
+    if !protocol::id(&project) || !data.valid() { return Err("Invalid route setup".into()); }
+    let op=Operation {method:"POST".into(),target:format!("/v1/projects/{project}/route-setup-preview"),scopes:"projects.write sites.write".into(),project,action:"route-setup-preview".into(),body:serde_json::to_string(&data).map_err(|_|"Invalid request")?,idempotency:format!("preview-{}",uuid::Uuid::new_v4()),request_id:format!("req-{}",uuid::Uuid::new_v4())};
+    let mut inner=c.inner.lock().await; let s=session(&mut inner)?;
+    let result=send(s,&op).await?;
+    if s.generation!=c.generation.load(Ordering::SeqCst){return Err("SESSION_LOCKED".into());}
+    Ok(result)
+}
+#[tauri::command]
 async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, String> {
     let op = mutation.plan()?;
     let name = {
@@ -860,6 +870,7 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         review.push_str(&format!("\nService: {}\nUpdate: {}\nOther services and their data volumes remain running.", body.get("service").and_then(Value::as_str).unwrap_or(""), if body.get("mode").and_then(Value::as_str)==Some("seamless") { "Seamless traffic switch after health checks" } else { "Controlled restart of this service" }));
     }
     if op.action == "migrate" { review.push_str("\nAdopt the reviewed existing Compose stack into Dockyard. Containers, ports and Caddy routes stay in place. Future deployments use a single instance."); }
+    if op.action == "route-setup" { review.push_str("\nConfigure Caddy for the reviewed existing Compose service and published port. Import only the reviewed plain site routes. Containers, volumes and Compose files stay in place."); }
     let sensitive = op.action != "create";
     let approved = native_task(&c, move || {
         let approved = native::with_prompt(|| {
@@ -1024,9 +1035,13 @@ async fn server_access_check(
     c: State<'_, Control>,
 ) -> Result<updater::AccessReport, String> {
     let (ssh, lease) = terminal_authority(&c).await?;
+    let key_id = {
+        let mut inner = c.inner.lock().await;
+        session(&mut inner)?.saved.enrollment.key_id.clone()
+    };
     native_task(&c, move || {
         lease.check()?;
-        let result = updater::check_access(&app, &ssh)?;
+        let result = updater::check_access(&app, &ssh, &key_id)?;
         lease.check()?;
         Ok(result)
     })
@@ -1038,9 +1053,13 @@ async fn server_access_prepare(
     c: State<'_, Control>,
 ) -> Result<updater::AccessReport, String> {
     let (ssh, lease) = terminal_authority(&c).await?;
+    let key_id = {
+        let mut inner = c.inner.lock().await;
+        session(&mut inner)?.saved.enrollment.key_id.clone()
+    };
     native_task(&c, move || {
         lease.check()?;
-        updater::prepare_access(&app, &ssh)
+        updater::prepare_access(&app, &ssh, &key_id)
     })
     .await
 }
@@ -1172,6 +1191,7 @@ fn main() {
             read_api,
             preview_blue_green,
             preview_service_update,
+            preview_route_setup,
             mutate,
             retry_pending,
             pending_info,

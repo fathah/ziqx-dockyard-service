@@ -1,4 +1,4 @@
-// Development-only fixture: all reads are simulated; mutations are rejected.
+// Development-only fixture: reads and Start are simulated; no server writes.
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
@@ -17,6 +17,19 @@ const interrupted: Job = {
   actor_id: "fixture",
   request_id: "req-fixture",
   created_at: "2026-10-01T11:35:06Z",
+};
+const running: Job = {
+  ...interrupted,
+  action: "start",
+  status: "running",
+  error_code: undefined,
+};
+const failed: Job = {
+  ...running,
+  status: "failed",
+  phase: "candidate_intent",
+  error_code: "CONTAINER_START_FAILED",
+  finished_at: "2026-10-04T11:09:00Z",
 };
 const release = {
   id: "rel-original",
@@ -90,7 +103,10 @@ mockIPC((command, payload: any) => {
     }
     case "status":
       return {
-        health: "healthy",
+        health:
+          mode === "stopped" || mode === "busy" || mode === "start-failed"
+            ? "not_running"
+            : "healthy",
         route: "healthy",
         busy: mode === "busy" || mode === "recovery",
         public_tls_state: "unverified",
@@ -116,20 +132,33 @@ function Fixture() {
       <div
         style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 24 }}
       >
-        {["legacy", "current", "busy", "recovery", "unavailable", "error"].map(
-          (value) => (
-            <button
-              className="button small"
-              key={value}
-              onClick={() => {
-                mode = value;
-                setMessage(`${value} response selected; refresh Services`);
-              }}
-            >
-              {value}
-            </button>
-          ),
-        )}
+        {[
+          "legacy",
+          "current",
+          "stopped",
+          "busy",
+          "start-failed",
+          "recovery",
+          "unavailable",
+          "error",
+        ].map((value) => (
+          <button
+            className="button small"
+            key={value}
+            onClick={() => {
+              mode = value;
+              setProject((previous) => ({
+                ...previous,
+                state: ["stopped", "busy", "start-failed"].includes(value)
+                  ? "stopped"
+                  : "running",
+              }));
+              setMessage(`${value} response selected; refresh Services`);
+            }}
+          >
+            {value}
+          </button>
+        ))}
         <button className="button small" onClick={() => setShowJobs(false)}>
           Show services
         </button>
@@ -176,10 +205,24 @@ function Fixture() {
           open={() => {
             throw new Error("No project mutations allowed");
           }}
-          action={rejectMutation}
+          action={async (action) => {
+            if (action !== "start")
+              throw new Error("Only simulated start is allowed");
+            mode = "current";
+            setProject((previous) => ({ ...previous, state: "running" }));
+            setMessage("Simulated start completed; no server writes");
+          }}
           execute={rejectMutation}
           openServerDetails={() => setMessage("Server details shortcut works")}
-          jobs={mode === "recovery" ? [interrupted] : []}
+          jobs={
+            mode === "recovery"
+              ? [interrupted]
+              : mode === "busy"
+                ? [running]
+                : mode === "start-failed"
+                  ? [failed]
+                  : []
+          }
           openDeployments={() => setShowJobs(true)}
         />
       )}

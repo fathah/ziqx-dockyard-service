@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Ziqx Dockyard Service API",
-    "version": "0.7.0",
+    "version": "0.7.4",
     "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
     "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Native service update eligibility additionally verifies the current immutable Compose manifest. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved.\n\nIndividual service updates preserve the complete Compose project and its dependencies. Seamless service updates are production-only and switch only the routed stateless app; stateful services use restart."
   },
@@ -2209,6 +2209,132 @@
           }
         ]
       }
+    },
+    "/v1/projects/{id}/route-setup-preview": {
+      "post": {
+        "operationId": "previewRouteSetup",
+        "summary": "Review existing Compose route setup",
+        "tags": ["Deployments"],
+        "description": "Requires server-wide compose.admin, sites.write and projects.write. Verify a running adopted Compose release and its existing published IPv4 port. Import the complete detected plain Caddy site group, or create a route when no existing domains are detected. Compose files, containers, volumes and published ports remain unchanged. Preview has no side effects; apply requires its review hash and returns a durable route_setup job. Active/recovery jobs and stale reviews block admission. Unknown route outcomes require offline recovery. Existing published routes retain a pinned service/port binding; managed route edits cannot migrate that port.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bound review with no secrets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteSetupReview"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Compatibility or stale-state blocker"
+          },
+          "403": {
+            "description": "Scope or Compose administrator permission missing"
+          },
+          "503": {
+            "description": "Recovery blocks mutations and reviews"
+          }
+        },
+        "x-required-scopes": ["sites.write", "projects.write"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouteSetup"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}/route-setup": {
+      "post": {
+        "operationId": "configureRoute",
+        "summary": "Configure reviewed existing Compose route",
+        "tags": ["Deployments"],
+        "description": "Requires server-wide compose.admin, sites.write and projects.write. Verify a running adopted Compose release and its existing published IPv4 port. Import the complete detected plain Caddy site group, or create a route when no existing domains are detected. Compose files, containers, volumes and published ports remain unchanged. Preview has no side effects; apply requires its review hash and returns a durable route_setup job. Active/recovery jobs and stale reviews block admission. Unknown route outcomes require offline recovery. Existing published routes retain a pinned service/port binding; managed route edits cannot migrate that port.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "responses": {
+          "409": {
+            "description": "Compatibility or stale-state blocker"
+          },
+          "403": {
+            "description": "Scope or Compose administrator permission missing"
+          },
+          "202": {
+            "description": "Durable selected-service job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptedJob"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Recovery blocks mutations and reviews"
+          }
+        },
+        "x-required-scopes": ["sites.write", "projects.write"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RouteSetup"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2448,6 +2574,7 @@
         "enum": [
           "project_create",
           "routes_update",
+          "route_setup",
           "dns_create",
           "deploy",
           "rollback",
@@ -2686,6 +2813,9 @@
                 }
               }
             }
+          },
+          "published_route": {
+            "$ref": "#/components/schemas/PublishedRoute"
           }
         },
         "required": [
@@ -3343,7 +3473,9 @@
           "depends_on": {
             "type": "array",
             "nullable": true,
-            "items": { "type": "string" },
+            "items": {
+              "type": "string"
+            },
             "description": "Sorted dependency service names from the active immutable Compose manifest. Empty means none; null or omitted means metadata is unavailable for this slot or server version."
           },
           "slot": {
@@ -3728,6 +3860,106 @@
           },
           "dependencies_unchanged": {
             "type": "boolean"
+          }
+        }
+      },
+      "PublishedRoute": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["service", "container_port", "host_port"],
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "container_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "host_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          }
+        }
+      },
+      "RouteSetup": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_release_id",
+          "domains",
+          "service",
+          "container_port"
+        ],
+        "properties": {
+          "expected_release_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "domains": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "format": "hostname"
+            }
+          },
+          "service": {
+            "type": "string",
+            "minLength": 1
+          },
+          "container_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "review_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        }
+      },
+      "RouteSetupReview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "review_sha256",
+          "domains",
+          "service",
+          "container_port",
+          "upstream",
+          "imports_routes",
+          "containers_unchanged"
+        ],
+        "properties": {
+          "review_sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "domains": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "service": {
+            "type": "string"
+          },
+          "container_port": {
+            "type": "integer"
+          },
+          "upstream": {
+            "type": "string"
+          },
+          "imports_routes": {
+            "type": "boolean"
+          },
+          "containers_unchanged": {
+            "type": "boolean",
+            "const": true
           }
         }
       }

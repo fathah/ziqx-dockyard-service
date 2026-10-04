@@ -1,4 +1,6 @@
 import Button from "./Button";
+import ServerDetailsTabs from "./ServerDetailsTabs";
+import ServerDiagnostics from "./ServerDiagnostics";
 import {
   useCallback,
   useEffect,
@@ -47,8 +49,9 @@ import { composeForEditor, lintCompose } from "./composeLint";
 import ProjectConfiguration from "./ProjectConfiguration";
 import ProjectHeader, { ProjectSummary } from "./ProjectHeader";
 import ServiceUpdate from "./ServiceUpdate";
+import RouteSetup from "./RouteSetup";
 import TerminalPage from "./TerminalPage";
-import { DomainProviderSettings, ProviderDomains } from "./DomainProviders";
+import { ProviderDomains } from "./DomainProviders";
 import Help from "./Help";
 import Accordion from "./Accordion";
 import Select from "./Select";
@@ -75,8 +78,7 @@ type Page =
   | "inventory"
   | "audit"
   | "security"
-  | "terminal"
-  | "settings";
+  | "terminal";
 type Modal =
   | { kind: "create"; appID?: string }
   | { kind: "deploy" | "routes" | "stop" | "rollback"; project: Project }
@@ -89,7 +91,6 @@ const nav = [
   { id: "inventory", label: "VPS inventory", icon: Database },
   { id: "audit", label: "Audit trail", icon: History },
   { id: "terminal", label: "Terminal", icon: Terminal },
-  { id: "settings", label: "Settings", icon: Settings2 },
 ] as const;
 const environments: Environment[] = ["production", "staging", "development"];
 const labels: Record<Environment, string> = {
@@ -109,7 +110,9 @@ const operationLabel = (action: string) =>
     ? "Seamless updates"
     : action === "service-update" || action === "service_update"
       ? "Service update"
-      : action;
+      : action === "route-setup" || action === "route_setup"
+        ? "Configure route"
+        : action;
 const ago = (s?: string) =>
   s
     ? new Date(s).toLocaleString(undefined, {
@@ -317,13 +320,13 @@ function App() {
   const [sessionLoadFailed, setSessionLoadFailed] = useState(false);
   const [hasEnrollment, setHasEnrollment] = useState(false);
   const [page, setPage] = useState<Page>("projects");
-  const [domainProvider, setDomainProvider] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
   const [inventory, setInventory] = useState<Inventory | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [pending, setPending] = useState<Pending>(null);
   const [audit, setAudit] = useState<Audit[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [projectSection, setProjectSection] = useState("overview");
   const [modal, setModal] = useState<Modal>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -765,6 +768,7 @@ function App() {
             <ProjectDetail
               key={project.id + String(preview)}
               project={project}
+              initialTab={projectSection}
               preview={preview}
               jobs={shownJobs}
               refreshWorkspace={refresh}
@@ -800,7 +804,10 @@ function App() {
               updated={updated}
               loading={loading}
               initialLoading={initialWorkspaceLoading}
-              select={setSelected}
+              select={(id) => {
+                setProjectSection("overview");
+                setSelected(id);
+              }}
               selectObserved={(id) => setSelected(`observed:${id}`)}
               create={() => setModal({ kind: "create" })}
               refresh={() => {
@@ -816,26 +823,17 @@ function App() {
               refresh={refresh}
               report={report}
             />
-          ) : page === "settings" ? (
-            <DomainProviderSettings
-              preview={preview}
-              manage={(id) => {
-                setDomainProvider(id);
-                setPage("domains");
-              }}
-            />
           ) : page === "domains" ? (
             <ProviderDomains
-              initialProvider={domainProvider}
               preview={preview}
               serverIP={session.profile?.server_ip}
-              settings={() => setPage("settings")}
               routes={
                 <Domains
                   projects={shownProjects}
                   inventory={shownInventory}
                   loading={initialWorkspaceLoading}
                   select={(id) => {
+                    setProjectSection("domains");
                     setPage("projects");
                     setSelected(id);
                   }}
@@ -1352,6 +1350,7 @@ function Stat({
 }
 export function ProjectDetail({
   project: p,
+  initialTab = "overview",
   preview,
   open,
   action,
@@ -1365,15 +1364,16 @@ export function ProjectDetail({
   project: Project;
   preview: boolean;
   open: (m: Modal) => void;
-  action: (a: "start" | "restart", p: Project) => void;
+  action: (a: "start" | "restart", p: Project) => Promise<void>;
   execute: (m: unknown) => Promise<void>;
   report: (e: unknown) => void;
   openServerDetails: () => void;
+  initialTab?: string;
   jobs?: Job[];
   refreshWorkspace?: () => Promise<void>;
   openDeployments?: () => void;
 }) {
-  const [tab, setTab] = useState("overview");
+  const [tab, setTab] = useState(initialTab);
   const [configDirty, setConfigDirty] = useState(false);
   const [services, setServices] = useState<Service[]>([]);
   const [updatingService, setUpdatingService] = useState<Service>();
@@ -1396,11 +1396,40 @@ export function ProjectDetail({
   const [slot, setSlot] = useState("active");
   const [since, setSince] = useState("30m");
   const [busy, setBusy] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const [configuringRoute, setConfiguringRoute] = useState(false);
   const [dns, setDNS] = useState<
     { hostname: string; assigned: boolean; dns_record_id?: string }[]
   >([]);
   const serviceRevision = JSON.stringify(p.service_instances ?? {});
+  const operationRevision = JSON.stringify(
+    jobs
+      .filter((job) => job.project_id === p.id)
+      .map((job) => [job.job_id, job.status, job.finished_at]),
+  );
   const recoveryJob = jobs.find((job) => job.status === "recovery_required");
+  const projectOperation = jobs.find(
+    (job) =>
+      job.project_id === p.id && ["queued", "running"].includes(job.status),
+  );
+  const startBlocked =
+    preview ||
+    starting ||
+    p.state !== "stopped" ||
+    !p.active_slot ||
+    !p.slots[p.active_slot] ||
+    Boolean(recoveryJob || projectOperation || status?.busy);
+  async function startProject() {
+    if (startBlocked) return;
+    setStarting(true);
+    try {
+      await action("start", p);
+    } catch (error) {
+      report(error);
+    } finally {
+      setStarting(false);
+    }
+  }
   const needsServerUpdate =
     p.mode === "compose" &&
     services.some(
@@ -1418,7 +1447,7 @@ export function ProjectDetail({
       return "An interrupted operation needs recovery. Open Deployments.";
     if (p.state !== "running")
       return "Start this project before updating services.";
-    if (status?.busy)
+    if (starting || projectOperation || status?.busy)
       return "Another operation is running. Refresh when it finishes.";
     if (!s.updatable)
       return (
@@ -1532,6 +1561,7 @@ export function ProjectDetail({
     p.active_slot,
     p.service_updates,
     serviceRevision,
+    operationRevision,
     servicesRefresh,
     preview,
     report,
@@ -1643,7 +1673,9 @@ export function ProjectDetail({
           />
           {p.adoption && (
             <p className="alert pending">
-              {p.service_updates
+              {p.published_route
+                ? "Managed in place · configure domains through Dockyard. Containers and their published ports stay in place."
+                : p.service_updates
                 ? "Managed in place · individual app updates use Dockyard's website routes. Database services remain in this project."
                 : "Managed in place · Caddy routes remain in the existing Caddyfile. Update individual services from Services."}
             </p>
@@ -1733,10 +1765,11 @@ export function ProjectDetail({
                 <Button
                   type="button"
                   className="button"
-                  onClick={() => action("start", p)}
+                  disabled={startBlocked}
+                  onClick={() => void startProject()}
                 >
                   <Zap size={14} />
-                  Start
+                  {starting ? "Starting…" : "Start"}
                 </Button>
                 <Button
                   type="button"
@@ -1788,13 +1821,38 @@ export function ProjectDetail({
               </Button>
             </div>
           </div>
+          {p.mode === "compose" && p.state === "stopped" && !recoveryJob && (
+            <div className="service-update-notice" role="status">
+              <div>
+                <strong>Project stopped</strong>
+                <p>
+                  Service updates become available once this project is running.
+                  Start its last recorded release, then return here after the
+                  startup operation succeeds.
+                </p>
+                {(projectOperation || status?.busy) && (
+                  <p>
+                    Another operation is in progress. Wait for it to finish.
+                  </p>
+                )}
+              </div>
+              <Button
+                type="button"
+                className="button primary"
+                disabled={startBlocked}
+                onClick={() => void startProject()}
+              >
+                <Zap size={16} /> {starting ? "Starting…" : "Start project"}
+              </Button>
+            </div>
+          )}
           {!servicesLoading && needsServerUpdate && (
             <div className="service-update-notice" role="status">
               <div>
                 <strong>Server update required</strong>
                 <p>
                   This server hasn’t reported support for individual updates. In
-                  Server details → Server software, check and update Dockyard to
+                  Server details → Updates, check and update Dockyard to
                   version 0.7.0 or later. Then refresh Services.
                 </p>
               </div>
@@ -2081,14 +2139,41 @@ export function ProjectDetail({
             <Button
               type="button"
               className="button small"
-              disabled={!!p.adoption}
-              onClick={() => open({ kind: "routes", project: p })}
+              onClick={() =>
+                p.adoption && !p.domains.length
+                  ? setConfiguringRoute(true)
+                  : open({ kind: "routes", project: p })
+              }
             >
-              Edit routes <Settings2 size={14} />
+              {p.adoption && !p.domains.length
+                ? "Configure route"
+                : "Edit routes"}{" "}
+              <Settings2 size={14} />
             </Button>
           </div>
           {dnsLoading && (
             <SkeletonRows count={3} label="Loading project domains" />
+          )}
+          {p.adoption && !p.domains.length && !configuringRoute && (
+            <p className="muted">
+              This project has no Dockyard-managed route. Configure a domain
+              using its existing published port, or review its preserved Caddy
+              site.
+            </p>
+          )}
+          {configuringRoute && p.adoption && !p.domains.length && (
+            <RouteSetup
+              project={p}
+              services={services}
+              loading={servicesLoading}
+              unavailable={servicesError}
+              blocked={Boolean(recoveryJob || projectOperation || status?.busy)}
+              preview={preview}
+              execute={execute}
+              onClose={() => setConfiguringRoute(false)}
+              openDeployments={openDeployments}
+              refresh={() => setServicesRefresh((n) => n + 1)}
+            />
           )}
           {(p.external_domains ?? []).map((hostname) => (
             <div className="domain-row" key={hostname}>
@@ -2250,6 +2335,22 @@ export function Jobs({
                 {j.error_code ? ` · ${j.error_code}` : ""}
                 {j.warning_code ? ` · ${j.warning_code}` : ""}
               </p>
+              {j.warning_code === "COMPOSE_MIRROR_FAILED" && (
+                <p className="warning">
+                  The release activated, but its copy of compose.yml could not
+                  be saved in the managed project folder. Containers use the
+                  saved release file. Review folder permissions and available
+                  disk space.
+                </p>
+              )}
+              {j.warning_code === "ENVIRONMENT_MIRROR_FAILED" && (
+                <p className="warning">
+                  The release activated, but its copy of .env could not be saved
+                  in the managed project folder. Containers use the saved
+                  release environment. Review folder permissions and available
+                  disk space.
+                </p>
+              )}
               {j.status === "recovery_required" && <JobRecoveryHelp job={j} />}
             </div>
             <div>
@@ -2376,7 +2477,6 @@ function Domains({
               <Button
                 type="button"
                 className="button small"
-                disabled={!!p.adoption}
                 onClick={() => open({ kind: "routes", project: p })}
               >
                 Edit route
@@ -2385,6 +2485,24 @@ function Domains({
           )),
         )}
         {!projects.length && <Empty title="No managed domains" />}
+        {projects
+          .filter((p) => p.adoption && !p.domains.length)
+          .map((p) => (
+            <div className="domain-row" key={p.id}>
+              <Globe2 size={20} />
+              <div>
+                <strong>{p.external_domains?.join(", ") || p.app_id}</strong>
+                <p>{p.app_id} · No Dockyard-managed route</p>
+              </div>
+              <Button
+                type="button"
+                className="button small"
+                onClick={() => select(p.id)}
+              >
+                Configure route
+              </Button>
+            </div>
+          ))}
       </section>
       <section className="panel">
         <h2>Observed Caddy sites</h2>
@@ -3033,147 +3151,186 @@ function Security({
           {unlocked ? "Unlocked" : "Locked"}
         </Tag>
       </div>
-      <div className="security-grid">
-        <section className="panel enrollment-panel">
-          <div className="server-card-header">
-            <div className="security-symbol">
-              <ShieldCheck size={28} />
-            </div>
-            <div>
-              <h2>
-                {p?.name ?? "Connect your VPS"}
-                <Help label="enrollment">
-                  Set up a new Ubuntu VPS, or import an enrollment for an
-                  existing Dockyard server. Credentials are stored in macOS
-                  Keychain. Removing local enrollment does not revoke its key on
-                  the VPS.
-                </Help>
-              </h2>
-              {p?.server_ip && (
-                <p className="mono server-address">
-                  {p.server_ip}:{p.ssh_port}
-                </p>
-              )}
-            </div>
-          </div>
-          {p && (
-            <dl className="facts">
-              <dt>API origin</dt>
-              <dd className="mono">{p.origin}</dd>
-              <dt>Server ID</dt>
-              <dd>{p.server_id}</dd>
-              <dt>Credential ID</dt>
-              <dd>{p.key_id}</dd>
-              <dt>Actor</dt>
-              <dd>{p.actor_id}</dd>
-              <dt>Server certificate pin</dt>
-              <dd className="mono">{p.server_certificate_sha256}</dd>
-              {p.server_ip && (
-                <>
-                  <dt>SSH fingerprint</dt>
-                  <dd className="mono">{p.ssh_fingerprint}</dd>
-                </>
-              )}
-            </dl>
-          )}
-          <div className="controls">
-            {!p && (
-              <Button
-                type="button"
-                className="button primary"
-                disabled={busy}
-                onClick={setup}
-              >
-                <Server size={15} />
-                Set up your server
-              </Button>
-            )}
-            <Button
-              type="button"
-              className={p ? "button" : "button primary"}
-              disabled={!native || busy}
-              onClick={() => authenticate("enroll")}
-            >
-              <Plus size={15} />
-              Import existing enrollment
-            </Button>
-            {!unlocked && (
-              <Button
-                type="button"
-                className="button"
-                disabled={!native || busy}
-                onClick={() => authenticate("unlock")}
-              >
-                <Fingerprint size={15} />
-                Unlock with Touch ID
-              </Button>
-            )}
-          </div>
-          {!native && (
-            <p className="muted">Preview · use the Mac app to connect.</p>
-          )}
-          <div className="enrollment-secondary-actions">
-            {p && native && (
-              <Button
-                type="button"
-                className="text-button danger-text"
-                disabled={busy}
-                onClick={forget}
-              >
-                Remove local enrollment
-              </Button>
-            )}
-            {!p && (
-              <Button type="button" className="text-button" onClick={explore}>
-                Explore sample workspace <ArrowRight size={14} />
-              </Button>
-            )}
-          </div>
-        </section>
-        <section className="panel security-list">
-          <h2>Layered access controls</h2>
-          {[
-            {
-              icon: ShieldCheck,
-              title: "Client certificate",
-              text: "The server checks the client CA and certificate fingerprint. Rust verifies the enrolled CA, SAN, expiry and exact server certificate pin.",
-            },
-            {
-              icon: Code2,
-              title: "Signed requests",
-              text: "HMAC includes the server, actor, scope, exact route and body hash. The server enforces scopes and project permissions.",
-            },
-            {
-              icon: LockKeyhole,
-              title: "Touch ID & Keychain",
-              text: "Touch ID unlocks the app. It stays unlocked while active and locks after five minutes away. Sensitive changes require a fresh scan.",
-            },
-            {
-              icon: History,
-              title: "Safe retries",
-              text: "Exact payloads and retry IDs are saved in Keychain before submission. A pending write blocks another write.",
-            },
-            {
-              icon: Server,
-              title: "Private connection",
-              text: "API access uses a private connection and restricted SSH tunnel. Terminal access uses a separate root SSH connection. Touch ID is requested when your last Dockyard verification is more than two minutes old.",
-            },
-          ].map((s) => (
-            <div className="security-item" key={s.title}>
-              <s.icon size={20} />
-              <div>
-                <h3>
-                  {s.title}
-                  <Help label={s.title}>{s.text}</Help>
-                </h3>
+      <ServerDetailsTabs
+        key={
+          p
+            ? `${p.server_id}:${p.key_id}:${p.server_certificate_sha256}`
+            : "unenrolled"
+        }
+        connection={
+          <section className="panel enrollment-panel">
+            <div className="server-card-header">
+              <div className="security-symbol">
+                <ShieldCheck size={28} />
               </div>
-              <Check size={15} />
+              <div>
+                <h2>
+                  {p?.name ?? "Connect your VPS"}
+                  <Help label="enrollment">
+                    Set up a new Ubuntu VPS, or import an enrollment for an
+                    existing Dockyard server. Credentials are stored in macOS
+                    Keychain. Removing local enrollment does not revoke its key
+                    on the VPS.
+                  </Help>
+                </h2>
+                {p?.server_ip && (
+                  <p className="mono server-address">
+                    {p.server_ip}:{p.ssh_port}
+                  </p>
+                )}
+              </div>
             </div>
-          ))}
-        </section>
-      </div>
-      {p?.server_ip && native && unlocked && <ServerAccess />}
-      {p?.server_ip && native && unlocked && <ServerUpdater />}
+            {p && (
+              <dl className="facts">
+                <dt>API origin</dt>
+                <dd className="mono">{p.origin}</dd>
+                <dt>Server ID</dt>
+                <dd>{p.server_id}</dd>
+                <dt>Credential ID</dt>
+                <dd>{p.key_id}</dd>
+                <dt>Actor</dt>
+                <dd>{p.actor_id}</dd>
+                <dt>Server certificate pin</dt>
+                <dd className="mono">{p.server_certificate_sha256}</dd>
+                {p.server_ip && (
+                  <>
+                    <dt>SSH fingerprint</dt>
+                    <dd className="mono">{p.ssh_fingerprint}</dd>
+                  </>
+                )}
+              </dl>
+            )}
+            <div className="controls">
+              {!p && (
+                <Button
+                  type="button"
+                  className="button primary"
+                  disabled={busy}
+                  onClick={setup}
+                >
+                  <Server size={15} />
+                  Set up your server
+                </Button>
+              )}
+              <Button
+                type="button"
+                className={p ? "button" : "button primary"}
+                disabled={!native || busy}
+                onClick={() => authenticate("enroll")}
+              >
+                <Plus size={15} />
+                Import existing enrollment
+              </Button>
+              {!unlocked && (
+                <Button
+                  type="button"
+                  className="button"
+                  disabled={!native || busy}
+                  onClick={() => authenticate("unlock")}
+                >
+                  <Fingerprint size={15} />
+                  Unlock with Touch ID
+                </Button>
+              )}
+            </div>
+            {!native && (
+              <p className="muted">Preview · use the Mac app to connect.</p>
+            )}
+            <div className="enrollment-secondary-actions">
+              {p && native && (
+                <Button
+                  type="button"
+                  className="text-button danger-text"
+                  disabled={busy}
+                  onClick={forget}
+                >
+                  Remove local enrollment
+                </Button>
+              )}
+              {!p && (
+                <Button type="button" className="text-button" onClick={explore}>
+                  Explore sample workspace <ArrowRight size={14} />
+                </Button>
+              )}
+            </div>
+          </section>
+        }
+        security={
+          <section className="panel security-list">
+            <h2>Layered access controls</h2>
+            {[
+              {
+                icon: ShieldCheck,
+                title: "Client certificate",
+                text: "The server checks the client CA and certificate fingerprint. Rust verifies the enrolled CA, SAN, expiry and exact server certificate pin.",
+              },
+              {
+                icon: Code2,
+                title: "Signed requests",
+                text: "HMAC includes the server, actor, scope, exact route and body hash. The server enforces scopes and project permissions.",
+              },
+              {
+                icon: LockKeyhole,
+                title: "Touch ID & Keychain",
+                text: "Touch ID unlocks the app. It stays unlocked while active and locks after five minutes away. Sensitive changes require a fresh scan.",
+              },
+              {
+                icon: History,
+                title: "Safe retries",
+                text: "Exact payloads and retry IDs are saved in Keychain before submission. A pending write blocks another write.",
+              },
+              {
+                icon: Server,
+                title: "Private connection",
+                text: "API access uses a private connection and restricted SSH tunnel. Terminal access uses a separate root SSH connection. Touch ID is requested when your last Dockyard verification is more than two minutes old.",
+              },
+            ].map((s) => (
+              <div className="security-item" key={s.title}>
+                <s.icon size={20} />
+                <div>
+                  <h3>
+                    {s.title}
+                    <Help label={s.title}>{s.text}</Help>
+                  </h3>
+                </div>
+                <Check size={15} />
+              </div>
+            ))}
+          </section>
+        }
+        access={
+          p?.server_ip && native && unlocked ? (
+            <ServerAccess />
+          ) : (
+            <section className="panel">
+              <h2>Required server access</h2>
+              <p className="muted">
+                {!native
+                  ? "Use the Mac app to check server access and deployment health."
+                  : !p?.server_ip
+                    ? "Connect an enrolled VPS to check server access and deployment health."
+                    : "Unlock with Touch ID from the Connection tab to run server checks."}
+              </p>
+            </section>
+          )
+        }
+        updates={
+          p?.server_ip && native && unlocked ? (
+            <ServerUpdater />
+          ) : (
+            <section className="panel">
+              <h2>Server updates</h2>
+              <p className="muted">
+                {!native
+                  ? "Use the Mac app to check for server updates."
+                  : !p?.server_ip
+                    ? "Connect an enrolled VPS to check for updates."
+                    : "Unlock with Touch ID from the Connection tab to check for updates."}
+              </p>
+            </section>
+          )
+        }
+      />
     </>
   );
 }
@@ -3181,11 +3338,14 @@ function ServerAccess() {
   const [report, setReport] = useState<api.ServerAccessReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [checkedAt, setCheckedAt] = useState<Date | null>(null);
   async function check() {
     setBusy(true);
     setError("");
+    setReport(null);
     try {
       setReport(await api.checkServerAccess());
+      setCheckedAt(new Date());
     } catch (e) {
       setError(String(e));
     } finally {
@@ -3198,6 +3358,7 @@ function ServerAccess() {
     try {
       const next = await api.prepareServerAccess();
       setReport(next);
+      setCheckedAt(new Date());
       if (next.update_directory === "ready")
         toast.success("Updater access is ready.");
     } catch (e) {
@@ -3238,7 +3399,13 @@ function ServerAccess() {
   return (
     <section className="panel server-access">
       <div className="server-updater-heading">
-        <h2>Required server access</h2>
+        <div>
+          <h2>Required server access</h2>
+          <p className="muted">
+            Check permissions, routes, and deployment readiness before updating
+            services.
+          </p>
+        </div>
         <Button
           type="button"
           className="button"
@@ -3249,6 +3416,18 @@ function ServerAccess() {
           {busy ? "Checking…" : "Check access"}
         </Button>
       </div>
+      {busy && (
+        <p className="muted" role="status">
+          Checking the server over its pinned SSH connection… This may take up
+          to a minute.
+        </p>
+      )}
+      {!busy && report && checkedAt && (
+        <p className="muted server-access-checked">
+          Checked at {checkedAt.toLocaleTimeString()} · Run again after changing
+          server settings.
+        </p>
+      )}
       <div className="server-access-row">
         <span>
           Compose management{" "}
@@ -3258,28 +3437,37 @@ function ServerAccess() {
             restarts briefly.
           </Help>
         </span>
-        <Button
-          type="button"
-          className="button"
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError("");
-            try {
-              await api.enableComposeManagement();
-              toast.success("Compose management enabled.");
-            } catch (e) {
-              setError(String(e));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          Enable with Touch ID
-        </Button>
+        {report?.checks?.find((check) => check.id === "compose_access")
+          ?.status === "ready" ? (
+          <Tag tone="green">Enabled</Tag>
+        ) : (
+          <Button
+            type="button"
+            className="button"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                await api.enableComposeManagement();
+                setReport(await api.checkServerAccess());
+                setCheckedAt(new Date());
+                toast.success("Compose management enabled.");
+              } catch (e) {
+                setError(String(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Enable with Touch ID
+          </Button>
+        )}
       </div>
       {report && (
         <>
+          <ServerDiagnostics report={report} />
+          <h3 className="server-access-updater-heading">Updater access</h3>
           <div className="server-access-grid">
             {rows.map(([label, allowed, detail]) => (
               <div className="server-access-row" key={label}>
@@ -4026,8 +4214,10 @@ function OperationModal({
                             type="number"
                             disabled={
                               m.kind === "routes" &&
-                              !!p?.route_service &&
-                              !!p.service_instances?.[p.route_service]?.port
+                              (!!p?.published_route ||
+                                (!!p?.route_service &&
+                                  !!p.service_instances?.[p.route_service]
+                                    ?.port))
                             }
                             min={1024}
                             max={65535}

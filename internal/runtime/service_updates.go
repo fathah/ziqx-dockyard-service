@@ -97,7 +97,7 @@ func ServiceUpdateOptions(c config.Config, p model.Project) (map[string]ServiceO
 			reason = "This project uses the older whole-stack update strategy."
 		} else if p.Environment != model.Production {
 			reason = "This flavor uses a controlled restart."
-		} else if p.RouteService != name && (p.Adoption == nil || len(p.Domains) > 0 || len(p.ExternalDomains) == 0) {
+		} else if p.PublishedRoute != nil && p.PublishedRoute.Service != name || p.PublishedRoute == nil && p.RouteService != name && (p.Adoption == nil || len(p.Domains) > 0 || len(p.ExternalDomains) == 0) {
 			reason = "Only the service serving this project's domains can switch traffic seamlessly."
 		}
 		if n, ok := svc["scale"].(float64); ok && n != 1 {

@@ -17,7 +17,16 @@ type Adoption struct {
 	ContainerIDs   []string `json:"container_ids"`
 }
 
+// PublishedRoute pins an existing Compose binding when only its Caddy route
+// is brought under management. Configuring a route does not recreate the stack.
+type PublishedRoute struct {
+	Service       string `json:"service"`
+	ContainerPort int    `json:"container_port"`
+	HostPort      int    `json:"host_port"`
+}
+
 type Project struct {
+	PublishedRoute   *PublishedRoute            `json:"published_route,omitempty"`
 	ServiceInstances map[string]ServiceInstance `json:"service_instances,omitempty"`
 	ServicePorts     []int                      `json:"service_ports,omitempty"`
 	ServiceMode      bool                       `json:"service_updates,omitempty"`
@@ -57,7 +66,10 @@ func ValidEnvironment(value string) bool {
 }
 
 func (p Project) ValidateTarget() error {
-	if p.Adoption != nil && (!p.NativeCompose() || p.ZeroDowntime || !p.ServiceMode && (len(p.Domains) != 0 || p.RouteService != "" || p.BluePort != 0 || p.GreenPort != 0)) {
+	if pin := p.PublishedRoute; pin != nil && (!p.NativeCompose() || p.Adoption == nil || p.ZeroDowntime || p.ServiceMode || p.RouteService != "" || pin.Service == "" || pin.ContainerPort < 1 || pin.ContainerPort > 65535 || pin.HostPort < 1 || pin.HostPort > 65535 || pin.HostPort != p.BluePort || p.GreenPort != 0 || len(p.Domains) == 0) {
+		return Uncertain("PUBLISHED_ROUTE_INVALID")
+	}
+	if p.Adoption != nil && (!p.NativeCompose() || p.ZeroDowntime || !p.ServiceMode && p.PublishedRoute == nil && (len(p.Domains) != 0 || p.RouteService != "" || p.BluePort != 0 || p.GreenPort != 0)) {
 		return Uncertain("ADOPTED_ROUTES_PRESERVED")
 	}
 	if p.AppID == "" || !ValidEnvironment(p.Environment) {

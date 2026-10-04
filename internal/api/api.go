@@ -167,6 +167,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		a.serviceUpdate(w, r, p, body, parts[1], parts[2] == "service-update-preview")
 		return
 	}
+	if r.Method == "POST" && len(parts) == 3 && parts[0] == "projects" && (parts[2] == "route-setup" || parts[2] == "route-setup-preview") {
+		a.routeSetup(w, r, p, body, parts[1], parts[2] == "route-setup-preview")
+		return
+	}
 	a.mutate(w, r, p, body)
 }
 func require(w http.ResponseWriter, p auth.Principal, scope, id string) bool {
@@ -1050,7 +1054,7 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 				return
 			}
 		case "routes_update":
-			if p.Adoption != nil {
+			if p.Adoption != nil && len(p.Domains) == 0 {
 				problem(w, 409, "ADOPTED_ROUTES_PRESERVED", request)
 				return
 			}
@@ -1064,7 +1068,11 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					problem(w, 409, "SERVICE_PORT_MANAGED", request)
 					return
 				}
-				if p.RouteService == "" && (len(input.Domains) > 0 || input.Port != 0 || input.Secondary != 0) {
+				if p.PublishedRoute != nil && (len(input.Domains) == 0 || input.Port != 0 && input.Port != p.BluePort || input.Secondary != 0) {
+					problem(w, 409, "PUBLISHED_ROUTE_FIXED", request)
+					return
+				}
+				if p.RouteService == "" && p.PublishedRoute == nil && (len(input.Domains) > 0 || input.Port != 0 || input.Secondary != 0) {
 					problem(w, 400, "COMPOSE_ROUTE_NOT_CONFIGURED", request)
 					return
 				}

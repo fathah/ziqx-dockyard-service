@@ -7,6 +7,11 @@ export type Release = {
   created_at: string;
 };
 export type Project = {
+  published_route?: {
+    service: string;
+    container_port: number;
+    host_port: number;
+  };
   adoption?: { source_name: string; compose_project: string };
   external_domains?: string[];
   mode?: "compose";
