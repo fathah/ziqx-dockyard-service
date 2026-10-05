@@ -104,6 +104,10 @@ Cloudflare is optional: remove the entire `cloudflare` object when unused. When 
 
 Use separate keys with narrow project and scope lists for automation, logs, and provisioning. `projects: ["*"]` grants every project and access to audit records when combined with `deploy.read`; grant it only to the administrative backend. Key rotation may keep both old/new entries temporarily. Both require matching certificate pins. Remove a compromised key/pin and restart the agent to revoke its access; replace CA/certificates if their trust is compromised.
 
+## Private registries
+
+Log in once as root (`docker login ghcr.io`). From 0.7.10, before any command that may pull (`up`, `pull`, `build`), Dockyard copies root's registry logins from `/root/.docker/config.json` into its own `docker_config` directory. Root's login wins for a registry both define; credential helpers are copied too and must be on `/usr/bin` or `/bin`.
+
 ## Start and call
 
 For existing `/docker` projects and Caddy sites, run `sudo dockyard -config /etc/dockyard/config.json -sync-existing` with the daemon stopped to populate safe production inventory first. Normal startup refreshes it and repeats every five minutes. Manual sites and Compose files remain unchanged; existing deployments require an explicit migration before lifecycle control. See [existing services and 24/7 operation](EXISTING.md).

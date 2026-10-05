@@ -47,6 +47,10 @@ func (r Exec) Run(ctx context.Context, binary, dir string, args []string) (Resul
 	if !filepath.IsAbs(binary) || !filepath.IsAbs(dir) || r.Timeout <= 0 || r.Limit <= 0 {
 		return Result{}, errors.New("invalid process policy")
 	}
+	if logged(args) {
+		// Commands that may pull need the administrator's registry logins.
+		syncRegistryAuth(r.DockerConfig)
+	}
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
 	defer cancel()
 	c := exec.CommandContext(ctx, binary, args...)
