@@ -107,7 +107,7 @@ fn access_report(raw: RawAccess) -> AccessReport {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     source_commit: String,
@@ -242,7 +242,108 @@ fn manifest() -> Result<Manifest, String> {
     }
     Ok(m)
 }
-fn binaries(app: &AppHandle) -> Result<(Vec<u8>, Vec<u8>, Manifest), String> {
+// CI publishes each release's Ubuntu binaries with SHA256SUMS to GitHub.
+const RELEASES: &str = "https://api.github.com/repos/fathah/ziqx-dockyard-service/releases/latest";
+
+type Build = (Vec<u8>, Vec<u8>, Manifest);
+static RELEASE_CACHE: std::sync::Mutex<Option<(String, Build)>> = std::sync::Mutex::new(None);
+
+fn http() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .user_agent("dockyard-desktop")
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(180))
+        .build()
+        .map_err(|_| "Cannot start the download client".into())
+}
+
+/// Latest published release, verified against its SHA256SUMS. Cached per tag.
+fn latest_release() -> Result<Build, String> {
+    #[derive(Deserialize)]
+    struct Asset {
+        name: String,
+        browser_download_url: String,
+    }
+    #[derive(Deserialize)]
+    struct Release {
+        tag_name: String,
+        assets: Vec<Asset>,
+    }
+    let client = http()?;
+    let release: Release = client
+        .get(RELEASES)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .and_then(|r| r.error_for_status())
+        .and_then(|r| r.json())
+        .map_err(|_| "Cannot read the latest release from GitHub")?;
+    if let Some((tag, build)) = RELEASE_CACHE.lock().map_err(|_| "Release cache unavailable")?.as_ref() {
+        if *tag == release.tag_name {
+            return Ok(build.clone());
+        }
+    }
+    let fetch = |name: &str| -> Result<Vec<u8>, String> {
+        let url = release
+            .assets
+            .iter()
+            .find(|a| a.name == name)
+            .map(|a| a.browser_download_url.clone())
+            .ok_or_else(|| format!("The latest release has no {name}"))?;
+        client
+            .get(url)
+            .send()
+            .and_then(|r| r.error_for_status())
+            .and_then(|r| r.bytes())
+            .map(|b| b.to_vec())
+            .map_err(|_| format!("Download of {name} failed"))
+    };
+    let sums = String::from_utf8(fetch("SHA256SUMS")?).map_err(|_| "Invalid SHA256SUMS")?;
+    let info = String::from_utf8(fetch("BUILD-INFO.txt")?).map_err(|_| "Invalid BUILD-INFO.txt")?;
+    let field = |key: &str| {
+        info.lines()
+            .find_map(|l| l.strip_prefix(key).map(|v| v.trim().to_string()))
+            .unwrap_or_default()
+    };
+    let expected = |name: &str| {
+        sums.lines().find_map(|l| {
+            let (sum, file) = l.split_once(char::is_whitespace)?;
+            (file.trim().trim_start_matches('*') == name).then(|| sum.to_string())
+        })
+    };
+    let m = Manifest {
+        source_commit: field("Source commit:"),
+        version: field("Version:"),
+        dockyard_sha256: expected("dockyard-linux-amd64").ok_or("SHA256SUMS has no dockyard")?,
+        dockyardctl_sha256: expected("dockyardctl-linux-amd64").ok_or("SHA256SUMS has no dockyardctl")?,
+    };
+    if !valid_hex(&m.source_commit, 40) || version_parts(&m.version).is_none() || !valid_hash(&m.dockyard_sha256) || !valid_hash(&m.dockyardctl_sha256) {
+        return Err("The latest release has invalid build information".into());
+    }
+    let agent = fetch("dockyard-linux-amd64")?;
+    let ctl = fetch("dockyardctl-linux-amd64")?;
+    if hash(&agent) != m.dockyard_sha256 || hash(&ctl) != m.dockyardctl_sha256 {
+        return Err("The downloaded release failed its checksum".into());
+    }
+    let build = (agent, ctl, m);
+    *RELEASE_CACHE.lock().map_err(|_| "Release cache unavailable")? = Some((release.tag_name, build.clone()));
+    Ok(build)
+}
+
+/// The newest verified build: the latest GitHub release when it is newer than
+/// the one bundled in this app, otherwise (or offline) the bundled build.
+fn binaries(app: &AppHandle) -> Result<Build, String> {
+    let bundled = bundled_binaries(app);
+    match (latest_release(), bundled) {
+        (Ok(remote), Ok(local)) => {
+            let newer = version_parts(&remote.2.version) > version_parts(&local.2.version)
+                || (remote.2.version == local.2.version && local.2.source_commit == "local");
+            Ok(if newer { remote } else { local })
+        }
+        (Ok(remote), Err(_)) => Ok(remote),
+        (Err(_), local) => local,
+    }
+}
+fn bundled_binaries(app: &AppHandle) -> Result<Build, String> {
     let m = manifest()?;
     let agent = setup::binary(app, "dockyard")?;
     let ctl = setup::binary(app, "dockyardctl")?;
@@ -494,6 +595,16 @@ pub fn apply(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "network: downloads the latest GitHub release"]
+    fn latest_release_downloads_and_verifies() {
+        let (agent, ctl, m) = latest_release().expect("release");
+        assert!(version_parts(&m.version).is_some());
+        assert_eq!(hash(&agent), m.dockyard_sha256);
+        assert_eq!(hash(&ctl), m.dockyardctl_sha256);
+        println!("latest release {} ({})", m.version, m.source_commit);
+    }
+
     use super::*;
 
     #[test]

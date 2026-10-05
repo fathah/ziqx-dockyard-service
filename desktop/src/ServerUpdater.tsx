@@ -88,7 +88,7 @@ export default function ServerUpdater({
         <div>
           <h2>Server software</h2>
           <p className="muted">
-            Check the VPS against the verified Ubuntu build in this Mac app.
+            Compares the VPS with the latest verified release from GitHub.
           </p>
         </div>
         <Button
@@ -123,7 +123,7 @@ export default function ServerUpdater({
               : "Version unavailable"}
           </span>
           <span>
-            Bundled:{" "}
+            Latest:{" "}
             {preview.candidate_version === "unversioned"
               ? "Version unavailable"
               : `v${preview.candidate_version}`}

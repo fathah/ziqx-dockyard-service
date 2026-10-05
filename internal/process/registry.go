@@ -1,74 +1,178 @@
 package process
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"strings"
+	"time"
 )
 
 // RootDockerConfig is the VPS administrator's Docker login (`docker login` as root).
 var RootDockerConfig = "/root/.docker/config.json"
 
+// helperDirs are searched for docker-credential-* programs.
+var helperDirs = []string{"/usr/local/bin", "/usr/bin", "/bin"}
+
+// credential runs `docker-credential-<helper> <action>` as root with root's
+// real HOME, which helpers such as pass need to find their store.
+var credential = func(helper, action, input string) ([]byte, error) {
+	var path string
+	for _, dir := range helperDirs {
+		if p := filepath.Join(dir, "docker-credential-"+helper); fileExists(p) {
+			path = p
+			break
+		}
+	}
+	if path == "" {
+		return nil, fmt.Errorf("docker-credential-%s not found", helper)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c := exec.CommandContext(ctx, path, action)
+	c.Env = []string{"HOME=" + filepath.Dir(filepath.Dir(RootDockerConfig)), "PATH=/usr/local/bin:/usr/bin:/bin"}
+	c.Stdin = strings.NewReader(input)
+	return c.Output()
+}
+
+func fileExists(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.Mode().IsRegular()
+}
+
+// helperAuths asks a credential helper for its stored logins and returns them
+// as plain config.json "auths" entries.
+func helperAuths(helper string, registries []string) map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
+	if registries == nil {
+		b, err := credential(helper, "list", "")
+		var listed map[string]string
+		if err != nil || json.Unmarshal(b, &listed) != nil {
+			return out
+		}
+		for registry := range listed {
+			registries = append(registries, registry)
+		}
+	}
+	for _, registry := range registries {
+		b, err := credential(helper, "get", registry)
+		var c struct{ Username, Secret string }
+		if err != nil || json.Unmarshal(b, &c) != nil || c.Secret == "" {
+			continue
+		}
+		auth := base64.StdEncoding.EncodeToString([]byte(c.Username + ":" + c.Secret))
+		out[registry], _ = json.Marshal(map[string]string{"auth": auth})
+	}
+	return out
+}
+
 // syncRegistryAuth copies the administrator's registry logins into Dockyard's
-// private Docker config, so images root can pull, Dockyard can pull too.
-// Root's entry wins for a registry both define; Dockyard-only entries stay.
-func syncRegistryAuth(dockerConfig string) {
+// private Docker config as plain entries, so images root can pull, Dockyard can
+// pull too. Credential helpers are resolved here, as root, because Dockyard
+// runs Docker without root's HOME. Root's login wins for a shared registry;
+// Dockyard-only entries stay. It returns a one-line summary for the job log.
+func syncRegistryAuth(dockerConfig string) string {
 	if dockerConfig == "" {
-		return
+		return ""
 	}
 	src, err := os.ReadFile(RootDockerConfig)
 	if err != nil {
-		return
+		return "Registry logins: no root Docker login at " + RootDockerConfig + " (run `docker login` as root for private images)"
 	}
-	var root map[string]json.RawMessage
+	var root struct {
+		Auths       map[string]json.RawMessage `json:"auths"`
+		CredsStore  string                     `json:"credsStore"`
+		CredHelpers map[string]string          `json:"credHelpers"`
+	}
 	if json.Unmarshal(src, &root) != nil {
-		return
+		return "Registry logins: " + RootDockerConfig + " is not valid JSON"
 	}
+	logins := map[string]json.RawMessage{}
+	sources := map[string]string{}
+	for registry, raw := range root.Auths {
+		var entry map[string]any
+		if json.Unmarshal(raw, &entry) == nil && entry["auth"] != nil {
+			logins[registry], sources[registry] = raw, "root config"
+		}
+	}
+	if root.CredsStore != "" {
+		for registry, raw := range helperAuths(root.CredsStore, nil) {
+			logins[registry], sources[registry] = raw, "credential helper '"+root.CredsStore+"'"
+		}
+	}
+	for registry, helper := range root.CredHelpers {
+		for r, raw := range helperAuths(helper, []string{registry}) {
+			logins[r], sources[r] = raw, "credential helper '"+helper+"'"
+		}
+	}
+	if len(logins) == 0 {
+		if root.CredsStore != "" {
+			return fmt.Sprintf("Registry logins: root uses credential helper '%s' but it returned no logins", root.CredsStore)
+		}
+		return "Registry logins: root's Docker config has no saved logins"
+	}
+
 	target := filepath.Join(dockerConfig, "config.json")
 	own := map[string]json.RawMessage{}
 	if b, err := os.ReadFile(target); err == nil && json.Unmarshal(b, &own) != nil {
-		return // never overwrite a config we cannot parse
+		return "Registry logins: Dockyard's Docker config is not valid JSON; left unchanged"
+	}
+	auths := map[string]json.RawMessage{}
+	if raw, ok := own["auths"]; ok && json.Unmarshal(raw, &auths) != nil {
+		return "Registry logins: Dockyard's Docker config has invalid auths; left unchanged"
 	}
 	before := map[string]json.RawMessage{}
-	for k, v := range own {
+	for k, v := range auths {
 		before[k] = v
 	}
-	for _, key := range []string{"auths", "credHelpers"} {
-		merged := map[string]json.RawMessage{}
-		if raw, ok := own[key]; ok && json.Unmarshal(raw, &merged) != nil {
-			continue
-		}
-		var add map[string]json.RawMessage
-		if raw, ok := root[key]; !ok || json.Unmarshal(raw, &add) != nil || len(add) == 0 {
-			continue
-		}
-		for registry, v := range add {
-			merged[registry] = v
-		}
-		b, _ := json.Marshal(merged)
-		own[key] = b
+	for registry, raw := range logins {
+		auths[registry] = raw
 	}
-	if _, ok := own["credsStore"]; !ok && root["credsStore"] != nil {
-		own["credsStore"] = root["credsStore"]
+	names := make([]string, 0, len(logins))
+	for registry := range logins {
+		names = append(names, registry+" ("+sources[registry]+")")
 	}
-	if reflect.DeepEqual(before, own) {
-		return
+	sort.Strings(names)
+	summary := "Registry logins: " + strings.Join(names, ", ")
+	if reflect.DeepEqual(before, auths) {
+		return summary
 	}
-	b, err := json.MarshalIndent(own, "", "\t")
+	b, _ := json.Marshal(auths)
+	own["auths"] = b
+	// Helpers in Dockyard's config would run without root's HOME; logins are plain now.
+	delete(own, "credsStore")
+	delete(own, "credHelpers")
+	if err := writePrivate(dockerConfig, target, own); err != nil {
+		return "Registry logins: could not update Dockyard's Docker config: " + err.Error()
+	}
+	return summary
+}
+
+func writePrivate(dir, target string, v any) error {
+	b, err := json.MarshalIndent(v, "", "\t")
 	if err != nil {
-		return
+		return err
 	}
-	tmp, err := os.CreateTemp(dockerConfig, ".config-*.json")
+	tmp, err := os.CreateTemp(dir, ".config-*.json")
 	if err != nil {
-		return
+		return err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err = tmp.Write(b); err == nil {
+	if _, err = tmp.Write(bytes.TrimSpace(b)); err == nil {
 		err = tmp.Chmod(0600)
 	}
-	if tmp.Close() != nil || err != nil {
-		return
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
 	}
-	os.Rename(tmp.Name(), target)
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), target)
 }

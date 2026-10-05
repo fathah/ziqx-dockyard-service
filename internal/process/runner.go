@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"path/filepath"
@@ -49,7 +50,11 @@ func (r Exec) Run(ctx context.Context, binary, dir string, args []string) (Resul
 	}
 	if logged(args) {
 		// Commands that may pull need the administrator's registry logins.
-		syncRegistryAuth(r.DockerConfig)
+		if summary := syncRegistryAuth(r.DockerConfig); summary != "" {
+			if c, ok := JobLog(ctx).(*Capped); ok && c.note(summary) {
+				fmt.Fprintf(c, "\n%s\n", summary)
+			}
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.Timeout)
 	defer cancel()

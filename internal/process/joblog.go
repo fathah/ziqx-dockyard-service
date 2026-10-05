@@ -53,6 +53,18 @@ type Capped struct {
 	W     io.Writer
 	Limit int
 	n     int
+	last  string
+}
+
+// note reports whether s differs from the last note, recording it.
+func (c *Capped) note(s string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.last == s {
+		return false
+	}
+	c.last = s
+	return true
 }
 
 func (c *Capped) Write(p []byte) (int, error) {
