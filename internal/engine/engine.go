@@ -179,6 +179,9 @@ func (e *Engine) JobLogPath(id string) string {
 }
 
 func (e *Engine) openJobLog(j model.Job) (io.Writer, func()) {
+	if !filepath.IsAbs(e.Config.StateDir) {
+		return nil, func() {}
+	}
 	if err := os.MkdirAll(filepath.Dir(e.JobLogPath(j.ID)), 0700); err != nil {
 		return nil, func() {}
 	}

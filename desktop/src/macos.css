@@ -1202,3 +1202,187 @@ label small,
 .job-deploy-log .good {
   color: #30d158;
 }
+
+/* Rows are keyboard-focusable; no browser outline after a mouse click. */
+.jobs-row:focus {
+  outline: none;
+}
+.jobs-row:focus-visible > td {
+  background: rgba(31, 107, 79, 0.08);
+}
+
+/* ── macOS push buttons (ziqx Button, action variants only) ── */
+.dockyard-button:not(.dockyard-control) {
+  min-height: 26px;
+  height: 26px;
+  padding: 0 12px;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 6px;
+  background-image: none;
+  transform: none !important;
+  transition:
+    background-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.dockyard-button:not(.dockyard-control) svg {
+  width: 14px;
+  height: 14px;
+}
+/* Secondary: white bezel */
+.dockyard-button[data-variant="secondary"],
+.dockyard-button[data-variant="outline"] {
+  color: var(--label);
+  background-color: #fff;
+  border: 0.5px solid rgba(0, 0, 0, 0.14);
+  box-shadow:
+    0 0.5px 1px rgba(0, 0, 0, 0.12),
+    0 0 0 0.5px rgba(0, 0, 0, 0.02);
+}
+.dockyard-button[data-variant="secondary"]:hover:not(:disabled),
+.dockyard-button[data-variant="outline"]:hover:not(:disabled) {
+  background-color: #f7f7f7;
+  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.12);
+}
+.dockyard-button[data-variant="secondary"]:active:not(:disabled),
+.dockyard-button[data-variant="outline"]:active:not(:disabled) {
+  background-color: #ececec;
+  box-shadow: none;
+}
+/* Destructive: red label on a white bezel */
+.dockyard-button.danger {
+  color: #d70015;
+}
+/* Primary: accent fill */
+.dockyard-button[data-variant="primary"] {
+  color: #fff;
+  background-color: var(--accent-mac);
+  border: 0.5px solid rgba(0, 0, 0, 0.1);
+  box-shadow:
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.25),
+    0 0.5px 1px rgba(0, 0, 0, 0.18);
+}
+.dockyard-button[data-variant="primary"]:hover:not(:disabled) {
+  background-color: #1a5c44;
+  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.18);
+}
+.dockyard-button[data-variant="primary"]:active:not(:disabled) {
+  background-color: #164e3a;
+}
+/* Small and icon sizes */
+.dockyard-button[data-size="compact"] {
+  min-height: 22px;
+  height: 22px;
+  padding: 0 9px;
+  font-size: 12px;
+  border-radius: 5px;
+}
+.dockyard-button[data-size="icon"] {
+  width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0;
+  border-radius: 6px;
+}
+.dockyard-button[data-variant="ghost"] {
+  color: var(--accent-mac);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+.dockyard-button[data-variant="ghost"]:hover:not(:disabled) {
+  background-color: var(--fill);
+}
+/* Disabled: dimmed, same shape */
+.dockyard-button:not(.dockyard-control):disabled {
+  opacity: 0.45;
+  color: inherit;
+  background-image: none;
+  box-shadow: none;
+  cursor: default;
+}
+.dockyard-button[data-variant="primary"]:disabled {
+  color: #fff;
+  background-color: var(--accent-mac);
+}
+.dockyard-button[data-variant="secondary"]:disabled,
+.dockyard-button[data-variant="outline"]:disabled {
+  background-color: #fff;
+}
+.dockyard-button:not(.dockyard-control):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(31, 107, 79, 0.35);
+}
+
+/* ── macOS pop-up buttons (ziqx Select) ── */
+.dockyard-select,
+.operation-modal .dockyard-select,
+.dockyard-select-field.provider-field .dockyard-select {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 6px 0 10px;
+  font-size: 13px;
+  color: var(--label);
+  background: #fff;
+  border: 0.5px solid rgba(0, 0, 0, 0.14);
+  border-radius: 6px;
+  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.12);
+}
+.dockyard-select:hover:not(:disabled) {
+  background: #f7f7f7;
+  border-color: rgba(0, 0, 0, 0.14);
+}
+.dockyard-select:focus-visible {
+  border-color: var(--accent-mac);
+  box-shadow: 0 0 0 3px rgba(31, 107, 79, 0.25);
+}
+.dockyard-select .ziqx-control-icon {
+  width: 14px;
+  height: 14px;
+  flex-basis: 14px;
+  color: var(--secondary);
+}
+.dockyard-select-field .ziqx-field-label,
+.operation-modal .dockyard-select-field .ziqx-field-label,
+.dockyard-select-field.provider-field .ziqx-field-label {
+  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--secondary);
+}
+/* Menu: compact rows, accent highlight */
+.ziqx-select-content {
+  border-radius: 8px;
+  border: 0.5px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(20px);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.16),
+    0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
+.ziqx-select-viewport {
+  padding: 4px;
+}
+.ziqx-select-item {
+  min-height: 24px;
+  padding-inline: 24px 10px;
+  font-size: 13px;
+  font-weight: 400;
+  border-radius: 4px;
+  color: var(--label);
+}
+.ziqx-select-item[data-highlighted] {
+  color: #fff;
+  background: var(--accent-mac);
+}
+.ziqx-select-check {
+  inset-inline-start: 6px;
+  inset-inline-end: auto;
+  width: 13px;
+  height: 13px;
+}
+.ziqx-select-check svg {
+  width: 13px;
+  height: 13px;
+}
