@@ -140,6 +140,7 @@ func (d Docker) Start(ctx context.Context, p model.Project, slot string) error {
 			}
 			if len(args) > 4 {
 				if res, err := d.command(ctx, p, slot, args...); err != nil {
+					d.explainStart(ctx, p, slot)
 					return d.failure(p, "CONTAINER_START_FAILED", res)
 				}
 			}
@@ -152,6 +153,7 @@ func (d Docker) Start(ctx context.Context, p model.Project, slot string) error {
 		}
 		res, err := d.command(ctx, p, slot, "up", "--detach", "--force-recreate", "--wait", "--wait-timeout", strconv.Itoa(d.Config.HealthSeconds))
 		if err != nil {
+			d.explainStart(ctx, p, slot)
 			return d.failure(p, "CONTAINER_START_FAILED", res)
 		}
 		return nil
@@ -165,6 +167,7 @@ func (d Docker) Start(ctx context.Context, p model.Project, slot string) error {
 		if errors.As(e, &fault) {
 			return e
 		}
+		d.explainStart(ctx, p, slot)
 		return d.failure(p, "CONTAINER_START_FAILED", res)
 	}
 	return nil

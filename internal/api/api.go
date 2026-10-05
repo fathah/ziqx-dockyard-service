@@ -496,6 +496,10 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		slot := q["slot"]
 		if slot == "" || slot == "active" {
 			slot = project.Active
+			// A never-activated project's only containers are its first candidate.
+			if slot == "" {
+				slot = "blue"
+			}
 		}
 		if slot == "inactive" {
 			slot = "blue"

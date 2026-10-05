@@ -130,3 +130,16 @@ func TestFaultDetailReachesErrorResponse(t *testing.T) {
 		t.Fatal("empty detail should be omitted", w.Body.String())
 	}
 }
+
+func TestLogsOfNeverActivatedProjectUseFirstCandidate(t *testing.T) {
+	a, _, _, send := apiFixture(t)
+	release := model.Release{ID: "rel-1", Image: "ghcr.io/ziqx/demo@sha256:" + strings.Repeat("a", 64)}
+	p := model.Project{ID: "demo", AppID: "demo", Template: "node", Environment: model.Production, State: "awaiting_release", Slots: map[string]model.Release{"blue": release}, Releases: []model.Release{}}
+	job := model.Job{ID: "job-first", ProjectID: p.ID, Action: "deploy", Status: "failed", Created: time.Now()}
+	if err := a.Engine.Store.Accept(job, &p, "op-first", "fp", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	if w := send("GET", "/v1/projects/demo/logs?service=app&slot=active&tail=300&since=1h", "", "deploy.logs", "logs-first"); w.Code == 400 {
+		t.Fatal("logs of a never-activated project were rejected", w.Body.String())
+	}
+}

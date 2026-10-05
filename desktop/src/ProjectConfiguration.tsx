@@ -94,9 +94,7 @@ export default function ProjectConfiguration({
           "services:\n  web:\n    image: nginx:alpine\n    environment:\n      APP_URL: ${APP_URL}\n",
         env_file: "APP_URL=https://example.com\n",
       }
-    : project.releases.length === 0
-      ? { release_id: "", compose_yaml: "", env_file: "" }
-      : undefined;
+    : undefined; // Always ask the server: a never-deployed project may have a saved draft.
   const [saved, setSaved] = useState<Configuration | undefined>(initial);
   const [compose, setCompose] = useState(initial?.compose_yaml ?? "");
   const [dotenv, setDotenv] = useState(initial?.env_file ?? "");
