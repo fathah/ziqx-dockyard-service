@@ -3441,6 +3441,16 @@
           "expected_release_id": {
             "type": "string",
             "description": "Optional optimistic concurrency check against the current release. An empty string requires an undeployed project. A mismatch returns CONFIGURATION_CHANGED before any files are prepared."
+          },
+          "route_service": {
+            "type": "string",
+            "description": "Compose projects with domains: the service that receives the domains' traffic for this release. Requires route_port."
+          },
+          "route_port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "description": "Container port of route_service."
           }
         },
         "required": ["compose_yaml", "environment"],

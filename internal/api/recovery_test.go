@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,5 +115,18 @@ func TestJobLogEndpoint(t *testing.T) {
 	}
 	if w := send("GET", "/v1/jobs/job-log/log", "", "deploy.read", "l3"); w.Code != 403 {
 		t.Fatal(w.Code)
+	}
+}
+
+func TestFaultDetailReachesErrorResponse(t *testing.T) {
+	w := httptest.NewRecorder()
+	fail(w, model.FailDetail("COMPOSE_VALIDATION_FAILED", "required variable POSTGRES_PASSWORD is missing a value"), "req-1")
+	if w.Code != 409 || !strings.Contains(w.Body.String(), `"detail":"required variable POSTGRES_PASSWORD is missing a value"`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	fail(w, model.Fail("PROJECT_BUSY"), "req-2")
+	if strings.Contains(w.Body.String(), "detail") {
+		t.Fatal("empty detail should be omitted", w.Body.String())
 	}
 }

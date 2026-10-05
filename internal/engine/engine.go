@@ -405,6 +405,10 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 		return model.Fail("RELEASE_INVALID")
 	}
 	r := *j.Input.Release
+	// The release was prepared for a corrected web service and port.
+	if j.Action == "deploy" && j.Input.Project != nil && p.NativeCompose() {
+		p.RouteService, p.RoutePort = j.Input.Project.RouteService, j.Input.Project.RoutePort
+	}
 	if err := e.Routes.Ensure(ctx, *p); err != nil {
 		return err
 	}

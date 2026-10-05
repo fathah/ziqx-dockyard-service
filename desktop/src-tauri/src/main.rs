@@ -451,12 +451,26 @@ async fn send(s: &Session, op: &Operation) -> Result<Value, String> {
             .or_else(|| data.get("error").and_then(|e| e.get("code")))
             .and_then(Value::as_str)
             .unwrap_or("REQUEST_REJECTED");
-        // Never include raw responses or request bodies in an error (may contain secrets).
+        // Never include raw responses or request bodies in an error.
         let code: String = code
             .chars()
             .filter(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
             .take(80)
             .collect();
+        // The server may add Docker's explanation (known .env values already
+        // redacted). Keep it bounded and printable; append it after the code.
+        let detail: String = data
+            .get("error")
+            .and_then(|e| e.get("detail"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .chars()
+            .filter(|c| *c == '\n' || !c.is_control())
+            .take(4000)
+            .collect();
+        if !detail.is_empty() {
+            return Err(format!("HTTP_{}: {}\n{}", status.as_u16(), code, detail));
+        }
         return Err(format!("HTTP_{}: {}", status.as_u16(), code));
     }
     Ok(data)

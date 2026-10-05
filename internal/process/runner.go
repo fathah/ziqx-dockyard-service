@@ -37,6 +37,7 @@ func (r Exec) dockerConfig() string {
 	}
 	return r.DockerConfig
 }
+
 type bounded struct {
 	mu        sync.Mutex
 	b         []byte

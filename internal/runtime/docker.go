@@ -82,7 +82,7 @@ func (d Docker) command(ctx context.Context, p model.Project, slot string, args 
 	argv[6] = path
 	return d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), argv)
 }
-func (d Docker) releaseCommand(ctx context.Context, p model.Project, r model.Release, args ...string) error {
+func (d Docker) releaseCommand(ctx context.Context, p model.Project, r model.Release, code string, args ...string) error {
 	path, _, err := ReleaseCompose(d.Config, p, r)
 	if err != nil {
 		return err
@@ -102,31 +102,24 @@ func (d Docker) releaseCommand(ctx context.Context, p model.Project, r model.Rel
 		argv[2] = "dy-" + d.Config.ServerID + "-" + p.ID + "-validation"
 	}
 	argv[6], argv[8] = path, f.Name()
-	_, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), argv)
-	return err
-}
-func (d Docker) Validate(ctx context.Context, p model.Project, r model.Release) error {
-	if err := d.releaseCommand(ctx, p, r, "config", "--quiet"); err != nil {
+	res, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), argv)
+	if err != nil {
 		var fault *model.Fault
 		if errors.As(err, &fault) {
 			return err
 		}
-		return model.Fail("COMPOSE_INVALID")
+		return d.failure(p, code, res)
 	}
 	return nil
+}
+func (d Docker) Validate(ctx context.Context, p model.Project, r model.Release) error {
+	return d.releaseCommand(ctx, p, r, "COMPOSE_INVALID", "config", "--quiet")
 }
 func (d Docker) Pull(ctx context.Context, p model.Project, r model.Release) error {
 	if p.NativeCompose() {
 		return nil
 	} // Compose up honors image/build/pull_policy.
-	if err := d.releaseCommand(ctx, p, r, "pull"); err != nil {
-		var fault *model.Fault
-		if errors.As(err, &fault) {
-			return err
-		}
-		return model.Fail("IMAGE_PULL_FAILED")
-	}
-	return nil
+	return d.releaseCommand(ctx, p, r, "IMAGE_PULL_FAILED", "pull")
 }
 func (d Docker) Start(ctx context.Context, p model.Project, slot string) error {
 	if p.NativeCompose() {

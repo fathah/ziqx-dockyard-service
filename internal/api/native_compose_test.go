@@ -209,3 +209,42 @@ func TestNativeDeploymentQueuesRevisionsWithoutSecrets(t *testing.T) {
 		t.Fatal("native service inventory", err)
 	}
 }
+
+func TestNativeDeployCanCorrectRouteService(t *testing.T) {
+	a, d, _, send := apiFixture(t)
+	a.Engine.Config.Keys[0].Projects = []string{"*"}
+	a.Engine.Config.Keys[0].Scopes = append(a.Engine.Config.Keys[0].Scopes, "compose.admin")
+	a.Engine.Config.Templates = nil
+	a.Auth, _ = auth.New(a.Engine.Config)
+	a.Engine.Docker = nativePreparer{d, a.Engine.Config}
+	w := send("POST", "/v1/projects", `{"id":"demo","app_id":"demo","environment":"production","domains":["app.example.com"],"route_service":"app","route_port":80}`, "projects.write sites.write", "create-routed")
+	if w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var created model.Job
+	json.Unmarshal(w.Body.Bytes(), &created)
+	job, _ := a.Engine.Store.Job(created.ID)
+	p, _ := a.Engine.Store.Project("demo")
+	p.State, job.Status = "awaiting_release", "succeeded"
+	if err := a.Engine.Store.Update(job, &p); err != nil {
+		t.Fatal(err)
+	}
+	compose := `"compose_yaml":"services:\n  api:\n    image: nginx:alpine\n","env_file":"","expected_release_id":""`
+	// The test runner's resolved Compose always contains one service: web.
+	if w := send("POST", "/v1/projects/demo/deploy", `{"environment":"production",`+compose+`}`, "deploy.environment deploy.execute", "route-missing"); w.Code != 409 || !strings.Contains(w.Body.String(), "COMPOSE_ROUTE_SERVICE_MISSING") {
+		t.Fatal("expected the missing web service to be rejected", w.Code, w.Body.String())
+	}
+	if w := send("POST", "/v1/projects/demo/deploy", `{"environment":"production",`+compose+`,"route_service":"web"}`, "deploy.environment deploy.execute", "route-half"); w.Code != 400 {
+		t.Fatal("service without port must be rejected", w.Code)
+	}
+	w = send("POST", "/v1/projects/demo/deploy", `{"environment":"production",`+compose+`,"route_service":"web","route_port":3000}`, "deploy.environment deploy.execute", "route-fixed")
+	if w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var deployed model.Job
+	json.Unmarshal(w.Body.Bytes(), &deployed)
+	job, _ = a.Engine.Store.Job(deployed.ID)
+	if job.Input.Project == nil || job.Input.Project.RouteService != "web" || job.Input.Project.RoutePort != 3000 {
+		t.Fatal("corrected route not carried by the job", job.Input.Project)
+	}
+}

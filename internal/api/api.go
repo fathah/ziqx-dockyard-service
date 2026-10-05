@@ -49,6 +49,15 @@ func write(w http.ResponseWriter, status int, v any) {
 func problem(w http.ResponseWriter, status int, code, request string) {
 	write(w, status, map[string]any{"error": map[string]string{"code": code, "message": "The operation could not be completed.", "request_id": request}})
 }
+
+// problemDetail adds Docker's (redacted) explanation, when a fault carries one.
+func problemDetail(w http.ResponseWriter, status int, code, detail, request string) {
+	body := map[string]string{"code": code, "message": "The operation could not be completed.", "request_id": request}
+	if detail != "" {
+		body["detail"] = detail
+	}
+	write(w, status, map[string]any{"error": body})
+}
 func faultCode(err error) string {
 	var f *model.Fault
 	if errors.As(err, &f) {
@@ -67,7 +76,12 @@ func fail(w http.ResponseWriter, err error, request string) {
 	case "HOSTNAME_INVALID", "HOSTNAME_NOT_ALLOWED", "PORT_INVALID", "ENVIRONMENT_INVALID", "IMAGE_INVALID", "REQUEST_INVALID", "COMPOSE_INVALID", "COMPOSE_PERSISTENT_BLUE_GREEN", "COMPOSE_RESOURCE_LIMIT":
 		status = 400
 	}
-	problem(w, status, code, request)
+	detail := ""
+	var f *model.Fault
+	if errors.As(err, &f) {
+		detail = f.Detail
+	}
+	problemDetail(w, status, code, detail, request)
 }
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -620,6 +634,9 @@ type deployRequest struct {
 	Compose         string            `json:"compose_yaml"`
 	Variables       map[string]string `json:"variables,omitempty"`
 	EnvFile         *string           `json:"env_file,omitempty"`
+	// Compose projects with domains may re-point their web service per release.
+	RouteService *string `json:"route_service,omitempty"`
+	RoutePort    *int    `json:"route_port,omitempty"`
 }
 
 // Full Compose can mount the host or run privileged services. It is only
@@ -971,6 +988,16 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					}
 					dotenv = string(b)
 				}
+				// A deploy may correct which service receives the domains' traffic.
+				target := p
+				if input.RouteService != nil || input.RoutePort != nil {
+					if input.RouteService == nil || input.RoutePort == nil || len(p.Domains) == 0 || p.ZeroDowntime || p.PublishedRoute != nil || !config.ServiceName.MatchString(*input.RouteService) || *input.RoutePort < 1 || *input.RoutePort > 65535 {
+						problem(w, 400, "COMPOSE_ROUTE_INVALID", request)
+						return
+					}
+					target.RouteService, target.RoutePort = *input.RouteService, *input.RoutePort
+					j.Input.Project = &target
+				}
 				preparer, ok := e.Docker.(interface {
 					PrepareNative(context.Context, model.Project, string, string) (model.Release, error)
 				})
@@ -978,7 +1005,7 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					fail(w, model.Fail("COMPOSE_UNAVAILABLE"), request)
 					return
 				}
-				release, prepareErr := preparer.PrepareNative(r.Context(), p, input.Compose, dotenv)
+				release, prepareErr := preparer.PrepareNative(r.Context(), target, input.Compose, dotenv)
 				if prepareErr != nil {
 					fail(w, prepareErr, request)
 					return
@@ -986,11 +1013,11 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 				release.ID = state.NewID("rel-")
 				release.Created = time.Now().UTC()
 				j.Input.Release = &release
-				if err = e.Docker.Validate(r.Context(), p, release); err != nil {
+				if err = e.Docker.Validate(r.Context(), target, release); err != nil {
 					fail(w, err, request)
 					return
 				}
-				if err = runtime.IndexCompose(e.Config, e.Store, p, release); err != nil {
+				if err = runtime.IndexCompose(e.Config, e.Store, target, release); err != nil {
 					fail(w, err, request)
 					return
 				}

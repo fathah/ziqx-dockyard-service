@@ -67,9 +67,8 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	args[6], args[8] = f.Name(), envPath(d.Config, p.ID, env)
 	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, dir, args)
 	if err != nil || result.Truncated {
-		// Compose diagnostics may interpolate environment secrets or host file
-		// content. Never put raw stdout/stderr into HTTP responses or audit.
-		return r, model.Fail("COMPOSE_VALIDATION_FAILED")
+		// Docker's message (with known .env values redacted) says what to fix.
+		return r, d.failure(p, "COMPOSE_VALIDATION_FAILED", result)
 	}
 	// Resolve env_file paths after interpolation/includes, so even an alias or
 	// ${ENV_FILE:-.env} uses this deployment's .env rather than the old mirror.
@@ -95,7 +94,7 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	args = args[:len(args)-1] // Resolve service env_file contents in the second pass.
 	result, err = d.Runner.Run(ctx, d.Config.DockerBinary, dir, args)
 	if err != nil || result.Truncated {
-		return r, model.Fail("COMPOSE_VALIDATION_FAILED")
+		return r, d.failure(p, "COMPOSE_VALIDATION_FAILED", result)
 	}
 	// Compose config escapes dollars for reuse. Decode that serialization
 	// escape once before collecting secrets and adding slot substitutions.

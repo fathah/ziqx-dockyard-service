@@ -1,5 +1,5 @@
 import Button from "./Button";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   ArrowUpRight,
   FileCode2,
@@ -14,6 +14,9 @@ import Help from "./Help";
 import CodeEditor, { type CodeEditorHandle } from "./CodeEditor";
 import { composeForEditor, lintCompose } from "./composeLint";
 import { addHealthcheck, suggestHealthcheck } from "./composeHealthcheck";
+import SecretGenerator from "./SecretGenerator";
+import Select from "./Select";
+import { detectComposeRoutes, suggestComposeRoute } from "./composeRoute";
 import type { Project } from "./types";
 
 export type HealthcheckRequest = {
@@ -32,8 +35,13 @@ type Configuration = {
 type ComposeConfiguration = Omit<Configuration, "env_file"> & {
   env_file?: string;
 };
+// Docker's explanation, if the server sent one (lines after the error code).
+function detailOf(error: unknown): string {
+  return String(error).split("\n").slice(1).join("\n").trim();
+}
+
 function message(error: unknown): string {
-  const text = String(error);
+  const text = String(error).split("\n")[0];
   if (/HTTP_404/.test(text))
     return "Update Dockyard on your VPS to 0.5.0 or later in Server details, then try again.";
   if (/CONFIGURATION_CHANGED/.test(text))
@@ -46,6 +54,10 @@ function message(error: unknown): string {
     )
   )
     return "Compose validation failed. Check YAML, required .env values, and referenced files on the VPS. Your edits are still here.";
+  if (/COMPOSE_ROUTE_SERVICE_MISSING/.test(text))
+    return "The service that should receive your domain's traffic isn't in this Compose file. Pick the right one below, then deploy.";
+  if (/COMPOSE_ROUTE_INVALID/.test(text))
+    return "Choose the service and container port that should receive your domain's traffic.";
   if (/PROJECT_BUSY/.test(text))
     return "A project operation is still running. Wait for it to finish, then deploy again.";
   if (
@@ -89,6 +101,7 @@ export default function ProjectConfiguration({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [errorDetail, setErrorDetail] = useState("");
   // A saved release's .env stays hidden until Touch ID (2-minute reuse).
   const [envLoaded, setEnvLoaded] = useState(!!initial);
   const composeEditor = useRef<CodeEditorHandle>(null);
@@ -129,6 +142,7 @@ export default function ProjectConfiguration({
         setCompose(addHealthcheck(source, healthcheck.service, probe));
         setFile("compose");
         setError("");
+        setErrorDetail("");
         setNotice(
           `Healthcheck added to ${healthcheck.service} — review it, then Deploy.`,
         );
@@ -142,6 +156,7 @@ export default function ProjectConfiguration({
     }
     setBusy(true);
     setError("");
+    setErrorDetail("");
     fetchCompose()
       .then((source) => source !== undefined && apply(source))
       .catch((e) => alive.current && setError(message(e)))
@@ -149,6 +164,38 @@ export default function ProjectConfiguration({
     // Runs once per request; saved/compose are read at that moment.
   }, [healthcheck]);
   const bytes = (value: string) => new TextEncoder().encode(value).length;
+  // The project's web service must exist in the file being deployed.
+  const routable =
+    project.mode === "compose" &&
+    project.domains.length > 0 &&
+    !project.zerodowntime &&
+    !project.published_route;
+  const detection = useMemo(
+    () => detectComposeRoutes(compose, dotenv),
+    [compose, dotenv],
+  );
+  const routeMissing =
+    routable &&
+    !!saved &&
+    detection.services.length > 0 &&
+    !detection.services.some((s) => s.name === project.route_service);
+  const [routeFix, setRouteFix] = useState({ service: "", port: "" });
+  useEffect(() => {
+    if (!routeMissing) return;
+    setRouteFix((current) => {
+      if (detection.services.some((s) => s.name === current.service))
+        return current;
+      const suggestion = suggestComposeRoute(detection);
+      return {
+        service: suggestion.service,
+        port: suggestion.port ? String(suggestion.port) : "",
+      };
+    });
+  }, [routeMissing, detection]);
+  const routePortValid =
+    Number.isInteger(Number(routeFix.port)) &&
+    Number(routeFix.port) > 0 &&
+    Number(routeFix.port) <= 65535;
   async function fetchCompose(): Promise<string | undefined> {
     const data = await api.read<ComposeConfiguration>({
       kind: "configuration",
@@ -172,6 +219,7 @@ export default function ProjectConfiguration({
       return;
     setBusy(true);
     setError("");
+    setErrorDetail("");
     try {
       await fetchCompose();
     } catch (e) {
@@ -200,6 +248,7 @@ export default function ProjectConfiguration({
   async function unlockEnv() {
     setBusy(true);
     setError("");
+    setErrorDetail("");
     try {
       await fetchEnv();
     } catch (e) {
@@ -216,8 +265,16 @@ export default function ProjectConfiguration({
       setError("Fix the highlighted Compose syntax errors before deploying.");
       return;
     }
+    if (routeMissing && (!routeFix.service || !routePortValid)) {
+      setFile("compose");
+      setError(
+        "Choose the service and port that should receive your domain's traffic.",
+      );
+      return;
+    }
     setBusy(true);
     setError("");
+    setErrorDetail("");
     try {
       // Deploy needs the .env; its Touch ID also covers the deploy prompt.
       const env = await fetchEnv();
@@ -228,6 +285,12 @@ export default function ProjectConfiguration({
           environment: project.environment,
           compose_yaml: compose,
           env_file: env,
+          ...(routeMissing
+            ? {
+                route_service: routeFix.service,
+                route_port: Number(routeFix.port),
+              }
+            : {}),
           expected_release_id: saved.release_id,
         },
       });
@@ -238,7 +301,10 @@ export default function ProjectConfiguration({
         setEnvLoaded(false);
       }
     } catch (e) {
-      if (alive.current) setError(message(e));
+      if (alive.current) {
+        setError(message(e));
+        setErrorDetail(detailOf(e));
+      }
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -262,9 +328,10 @@ export default function ProjectConfiguration({
         {project.environment} · /docker/{project.id}/compose.yml and .env
       </p>
       {error && (
-        <p className="alert error" role="alert">
-          {error}
-        </p>
+        <div className="alert error configuration-error" role="alert">
+          <span>{error}</span>
+          {errorDetail && <pre>{errorDetail}</pre>}
+        </div>
       )}
       {notice && dirty && (
         <p className="alert pending" role="status">
@@ -444,6 +511,46 @@ export default function ProjectConfiguration({
             <p className="configuration-note">
               An empty .env clears saved values.
             </p>
+          )}
+          {file === "env" && envLoaded && <SecretGenerator />}
+          {routeMissing && (
+            <div className="route-fix" role="group" aria-label="Domain traffic">
+              <span>
+                <strong>{project.domains[0]}</strong> sends traffic to{" "}
+                <code>{project.route_service || "no service"}</code>, which
+                isn't in this file. Send it to
+              </span>
+              <Select
+                label="Service"
+                value={routeFix.service}
+                options={detection.services.map((s) => ({
+                  value: s.name,
+                  label: s.name,
+                }))}
+                onValueChange={(service) => {
+                  const ports =
+                    detection.services.find((s) => s.name === service)?.ports ??
+                    [];
+                  setRouteFix({
+                    service,
+                    port: ports[0] ? String(ports[0]) : routeFix.port,
+                  });
+                }}
+              />
+              <label className="route-fix-port">
+                <span>port</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  placeholder="3000"
+                  value={routeFix.port}
+                  onChange={(e) =>
+                    setRouteFix({ ...routeFix, port: e.target.value })
+                  }
+                />
+              </label>
+            </div>
           )}
           <div className="configuration-footer">
             <span>
