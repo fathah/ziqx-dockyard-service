@@ -201,3 +201,49 @@ class UpdateTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class UnitUpdateTest(UpdateTest):
+    def setUp(self):
+        super().setUp()
+        self.unit = Path(self.temp.name) / 'systemd' / 'dockyard.service'
+        self.unit.parent.mkdir()
+        self.unit.write_text('ProtectHome=true\n')
+        (self.stage / 'dockyard.service').write_text('ProtectHome=read-only\n')
+        patcher = mock.patch.object(update, 'UNIT', self.unit)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_changed_unit_is_installed_and_reloaded(self):
+        calls = []
+        with mock.patch.object(update, 'run', side_effect=lambda *a, **k: calls.append(a)):
+            self.assertEqual(update.main()['status'], 'updated')
+        self.assertEqual(self.unit.read_text(), 'ProtectHome=read-only\n')
+        self.assertIn(('systemctl', 'daemon-reload'), calls)
+        self.assertLess(calls.index(('systemctl', 'daemon-reload')), calls.index(('systemctl', 'start', 'dockyard')))
+
+    def test_unit_change_alone_is_not_current(self):
+        request = json.loads((self.stage / 'request.json').read_text())
+        for name in update.NAMES:
+            (self.stage / name).write_bytes((self.bin / name).read_bytes())
+            request['candidate'][name] = request['expected'][name]
+        (self.stage / 'request.json').write_text(json.dumps(request))
+        with mock.patch.object(update, 'run'):
+            self.assertEqual(update.main()['status'], 'updated')
+        self.assertEqual(self.unit.read_text(), 'ProtectHome=read-only\n')
+
+    def test_failed_start_restores_previous_unit(self):
+        running = True
+
+        def command(*args, **kwargs):
+            nonlocal running
+            if args == ('systemctl', 'stop', 'dockyard'):
+                running = False
+            if args == ('systemctl', 'start', 'dockyard'):
+                if self.unit.read_text().endswith('read-only\n'):
+                    raise RuntimeError('start failed')
+                running = True
+        with mock.patch.object(update, 'run', side_effect=command), mock.patch.object(update, 'active', side_effect=lambda: running):
+            with self.assertRaisesRegex(RuntimeError, 'restored'):
+                update.main()
+        self.assertEqual(self.unit.read_text(), 'ProtectHome=true\n')

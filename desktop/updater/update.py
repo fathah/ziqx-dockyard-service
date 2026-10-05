@@ -18,6 +18,7 @@ BIN = Path('/usr/local/bin')
 STATE = Path('/var/lib/dockyard/state.db')
 CONFIG = Path('/etc/dockyard/config.json')
 NAMES = ('dockyard', 'dockyardctl')
+UNIT = Path('/etc/systemd/system/dockyard.service')
 
 
 def fail(message):
@@ -149,7 +150,14 @@ def apply_update():
             fail('Uploaded ' + name + ' failed its checksum')
         if digest(BIN / name) != release['expected'][name]:
             fail('Installed ' + name + ' changed since the update check. Check again.')
-    if all(release['candidate'][n] == release['expected'][n] for n in NAMES):
+    # Older Mac apps do not upload the unit; then it is left unchanged.
+    staged_unit = BASE / 'dockyard.service'
+    new_unit = staged_unit.read_bytes() if staged_unit.exists() else None
+    if new_unit is not None:
+        regular(staged_unit)
+        regular(UNIT)
+    unit_changed = new_unit is not None and UNIT.read_bytes() != new_unit
+    if all(release['candidate'][n] == release['expected'][n] for n in NAMES) and not unit_changed:
         return {'status': 'current'}
     run(str(BASE / 'dockyard'), '-config', '/etc/dockyard/config.json', '-check', timeout=30)
     backups = BASE / 'backup'
@@ -159,6 +167,9 @@ def apply_update():
         shutil.copy2(BIN / name, backups / name)
         regular(backups / name)
         sync_file(backups / name)
+    if unit_changed:
+        shutil.copy2(UNIT, backups / 'dockyard.service')
+        sync_file(backups / 'dockyard.service')
     sync_dir(backups)
     # Docker and Caddy remain running; only the Dockyard control service stops.
     changed = False
@@ -188,6 +199,18 @@ def apply_update():
             os.replace(replacement, BIN / name)
             changed = True
         sync_dir(BIN)
+        if unit_changed:
+            replacement = UNIT.with_name('.dockyard.service.dockyard-update')
+            replacement.unlink(missing_ok=True)
+            with replacement.open('xb') as dst:
+                dst.write(new_unit)
+                dst.flush()
+                os.fsync(dst.fileno())
+            os.chmod(replacement, 0o644)
+            os.replace(replacement, UNIT)
+            changed = True
+            sync_dir(UNIT.parent)
+            run('systemctl', 'daemon-reload', timeout=60)
         run('systemctl', 'start', 'dockyard', timeout=60)
         if not healthy():
             fail('Updated Dockyard service did not stay active')
@@ -209,6 +232,13 @@ def apply_update():
                 if (backups / name).exists():
                     os.replace(backups / name, BIN / name)
             sync_dir(BIN)
+            if (backups / 'dockyard.service').exists():
+                os.replace(backups / 'dockyard.service', UNIT)
+                sync_dir(UNIT.parent)
+                try:
+                    run('systemctl', 'daemon-reload', timeout=60)
+                except Exception:
+                    pass
             if (backups / 'state.db').exists():
                 # Stop closed SQLite; replace its database and remove WAL companions.
                 for suffix in ('-wal', '-shm'):

@@ -12,6 +12,8 @@ use tauri::AppHandle;
 const MANIFEST: &str = include_str!("../resources/ubuntu/manifest.json");
 const SCRIPT: &[u8] = include_bytes!("../../updater/update.py");
 const JOB_CHECK: &str = include_str!("../../updater/update_jobs.py");
+// The service unit ships with updates so hardening changes reach existing servers.
+const UNIT: &[u8] = include_bytes!("../../../deploy/dockyard.service");
 const INSPECT: &str = "set -eu; . /etc/os-release; test \"$ID\" = ubuntu; test \"$(uname -m)\" = x86_64; test \"$(id -u)\" = 0; test -f /usr/local/bin/dockyard; test -f /usr/local/bin/dockyardctl; sha256sum /usr/local/bin/dockyard /usr/local/bin/dockyardctl; systemctl is-active dockyard; /usr/local/bin/dockyard -version-json 2>/dev/null || echo legacy";
 const ACCESS_CHECK: &str = include_str!("../../updater/access_check.py");
 const ACCESS_PREPARE: &str = "set -eu; test \"$(id -u)\" = 0; test \"$(stat -c %u /var/lib)\" = 0; test ! -L /var/lib/dockyard-desktop-updates; if test -e /var/lib/dockyard-desktop-updates; then test -d /var/lib/dockyard-desktop-updates; test \"$(stat -c %u /var/lib/dockyard-desktop-updates)\" = 0; fi; install -d -o root -g root -m 0700 /var/lib/dockyard-desktop-updates";
@@ -557,6 +559,7 @@ pub fn apply(
         .map_err(|_| "Could not make the private updater binaries executable on the VPS".to_owned())?;
     upload(&session, &format!("{stage}/update.py"), SCRIPT, false)?;
     upload(&session, &format!("{stage}/update_jobs.py"), JOB_CHECK.as_bytes(), false)?;
+    upload(&session, &format!("{stage}/dockyard.service"), UNIT, false)?;
     let request = serde_json::to_vec(&json!({"candidate":{"dockyard":m.dockyard_sha256,"dockyardctl":m.dockyardctl_sha256},"expected":{"dockyard":expected.installed_dockyard,"dockyardctl":expected.installed_dockyardctl},"jobs_sha256":expected.jobs.sha256})).map_err(|_| "Cannot prepare update request")?;
     upload(&session, &format!("{stage}/request.json"), &request, false)?;
     // Once started, this command must finish even if the UI session expires.

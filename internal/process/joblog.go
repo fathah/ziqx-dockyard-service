@@ -27,6 +27,16 @@ func JobLog(ctx context.Context) io.Writer {
 // Read-only queries (ps, inspect, config) would drown the log in JSON.
 var mutating = map[string]bool{"up": true, "pull": true, "stop": true, "start": true, "restart": true, "build": true, "down": true, "rm": true, "create": true, "kill": true}
 
+// pulls reports whether a command may pull images and so needs registry logins.
+func pulls(args []string) bool {
+	for _, a := range args {
+		if a == "up" || a == "pull" || a == "build" || a == "create" {
+			return true
+		}
+	}
+	return false
+}
+
 func logged(args []string) bool {
 	for _, a := range args {
 		if mutating[a] {
@@ -56,7 +66,8 @@ type Capped struct {
 	last  string
 }
 
-// note reports whether s differs from the last note, recording it.
+// note reports whether s differs from the last note, recording it, so the
+// registry summary appears once above the first pulling command.
 func (c *Capped) note(s string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -20,7 +20,9 @@ NoNewPrivileges=true
 CapabilityBoundingSet=CAP_DAC_OVERRIDE
 AmbientCapabilities=
 ProtectSystem=strict
-ProtectHome=true
+# Read-only, so Dockyard can use root's `docker login` (/root/.docker) for
+# private registries. Nothing under /home or /root is writable.
+ProtectHome=read-only
 PrivateTmp=true
 PrivateDevices=true
 ProtectKernelTunables=true

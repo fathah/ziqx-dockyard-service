@@ -48,7 +48,7 @@ func (r Exec) Run(ctx context.Context, binary, dir string, args []string) (Resul
 	if !filepath.IsAbs(binary) || !filepath.IsAbs(dir) || r.Timeout <= 0 || r.Limit <= 0 {
 		return Result{}, errors.New("invalid process policy")
 	}
-	if logged(args) {
+	if pulls(args) {
 		// Commands that may pull need the administrator's registry logins.
 		if summary := syncRegistryAuth(r.DockerConfig); summary != "" {
 			if c, ok := JobLog(ctx).(*Capped); ok && c.note(summary) {

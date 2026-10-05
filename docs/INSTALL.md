@@ -106,7 +106,7 @@ Use separate keys with narrow project and scope lists for automation, logs, and 
 
 ## Private registries
 
-Log in once as root (`docker login ghcr.io`). Before any command that may pull (`up`, `pull`, `build`), Dockyard copies root's registry logins from `/root/.docker/config.json` into its own `docker_config` directory as plain entries. If root uses a credential helper (`credsStore`/`credHelpers`, e.g. `pass`), Dockyard (0.7.11+) runs the helper as root with root's `HOME` to read those logins. Root's login wins for a registry both define. Each deployment log records which registry logins were used.
+Log in once as root (`docker login ghcr.io`). Before any command that may pull (`up`, `pull`, `build`), Dockyard copies root's registry logins from `/root/.docker/config.json` into its own `docker_config` directory as plain entries. If root uses a credential helper (`credsStore`/`credHelpers`, e.g. `pass`), Dockyard (0.7.11+) runs the helper as root with root's `HOME` to read those logins. Root's login wins for a registry both define. Each deployment log records which registry logins were used. The service unit uses `ProtectHome=read-only` (0.7.12+) so it can read `/root/.docker`; the Mac app installs the updated unit during the next server update.
 
 ## Start and call
 
