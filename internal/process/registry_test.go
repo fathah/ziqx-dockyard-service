@@ -10,7 +10,8 @@ import (
 	"testing"
 )
 
-func setupRegistry(t *testing.T, rootConfig, ownConfig string) string {
+// setupRegistry returns (base, runtime) directories for a root and base config.
+func setupRegistry(t *testing.T, rootConfig, baseConfig string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
 	RootDockerConfig = filepath.Join(dir, "root", ".docker", "config.json")
@@ -18,41 +19,54 @@ func setupRegistry(t *testing.T, rootConfig, ownConfig string) string {
 	if rootConfig != "" {
 		os.WriteFile(RootDockerConfig, []byte(rootConfig), 0600)
 	}
-	own := filepath.Join(dir, "dockyard")
-	os.Mkdir(own, 0700)
-	if ownConfig != "" {
-		os.WriteFile(filepath.Join(own, "config.json"), []byte(ownConfig), 0600)
+	base := filepath.Join(dir, "etc-docker")
+	os.Mkdir(base, 0500) // read-only, like /etc under ProtectSystem=strict
+	if baseConfig != "" {
+		os.Chmod(base, 0700)
+		os.WriteFile(filepath.Join(base, "config.json"), []byte(baseConfig), 0600)
+		os.Chmod(base, 0500)
 	}
-	return own
+	t.Cleanup(func() { os.Chmod(base, 0700) })
+	return base, filepath.Join(dir, "state", "docker")
 }
 
-func readAuths(t *testing.T, own string) map[string]map[string]string {
+func readConfig(t *testing.T, dir string) map[string]any {
 	t.Helper()
-	b, _ := os.ReadFile(filepath.Join(own, "config.json"))
-	var got struct {
-		Auths map[string]map[string]string
+	b, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
 	}
+	var got map[string]any
 	json.Unmarshal(b, &got)
-	return got.Auths
+	return got
 }
 
-func TestSyncRegistryAuthCopiesPlainLogins(t *testing.T) {
-	own := setupRegistry(t, `{"auths":{"ghcr.io":{"auth":"cm9vdA=="}}}`, `{"auths":{"ghcr.io":{"auth":"b2xk"},"registry.example":{"auth":"a2VlcA=="}},"psFormat":"x"}`)
-	summary := syncRegistryAuth(own)
-	auths := readAuths(t, own)
-	if auths["ghcr.io"]["auth"] != "cm9vdA==" || auths["registry.example"]["auth"] != "a2VlcA==" || !strings.Contains(summary, "ghcr.io (root config)") {
-		t.Fatal(summary, auths)
+func auth(cfg map[string]any, registry string) string {
+	a, _ := cfg["auths"].(map[string]any)[registry].(map[string]any)
+	s, _ := a["auth"].(string)
+	return s
+}
+
+func TestSyncRegistryAuthMergesBaseAndRootIntoRuntime(t *testing.T) {
+	base, runtime := setupRegistry(t, `{"auths":{"ghcr.io":{"auth":"cm9vdA=="}}}`, `{"auths":{"ghcr.io":{"auth":"b2xk"},"registry.example":{"auth":"a2VlcA=="}},"psFormat":"x"}`)
+	summary := syncRegistryAuth(base, runtime)
+	cfg := readConfig(t, runtime)
+	if auth(cfg, "ghcr.io") != "cm9vdA==" || auth(cfg, "registry.example") != "a2VlcA==" || cfg["psFormat"] != "x" || !strings.Contains(summary, "ghcr.io (root config)") {
+		t.Fatal(summary, cfg)
 	}
-	if b, _ := os.ReadFile(filepath.Join(own, "config.json")); !strings.Contains(string(b), "psFormat") {
-		t.Fatal("dropped other settings")
-	}
-	if st, _ := os.Stat(filepath.Join(own, "config.json")); st.Mode().Perm() != 0600 {
+	if st, _ := os.Stat(filepath.Join(runtime, "config.json")); st.Mode().Perm() != 0600 {
 		t.Fatal(st.Mode())
+	}
+	if b, _ := os.ReadFile(filepath.Join(base, "config.json")); strings.Contains(string(b), "cm9vdA==") {
+		t.Fatal("wrote to the read-only base config")
+	}
+	if (Exec{DockerConfig: base, RuntimeDockerConfig: runtime}).dockerConfig() != runtime {
+		t.Fatal("Docker should read the merged runtime config")
 	}
 }
 
 func TestSyncRegistryAuthResolvesCredentialHelper(t *testing.T) {
-	own := setupRegistry(t, `{"auths":{"ghcr.io":{}},"credsStore":"pass"}`, `{"credsStore":"pass"}`)
+	base, runtime := setupRegistry(t, `{"auths":{"ghcr.io":{}},"credsStore":"pass"}`, "")
 	credential = func(helper, action, input string) ([]byte, error) {
 		if helper != "pass" {
 			return nil, errors.New("unexpected helper")
@@ -62,26 +76,28 @@ func TestSyncRegistryAuthResolvesCredentialHelper(t *testing.T) {
 		}
 		return []byte(`{"ServerURL":"ghcr.io","Username":"fathah","Secret":"ghp_token"}`), nil
 	}
-	summary := syncRegistryAuth(own)
-	want := base64.StdEncoding.EncodeToString([]byte("fathah:ghp_token"))
-	if readAuths(t, own)["ghcr.io"]["auth"] != want || !strings.Contains(summary, "credential helper 'pass'") {
-		t.Fatal(summary, readAuths(t, own))
-	}
-	if b, _ := os.ReadFile(filepath.Join(own, "config.json")); strings.Contains(string(b), "credsStore") {
-		t.Fatal("left a helper Dockyard cannot run", string(b))
+	summary := syncRegistryAuth(base, runtime)
+	cfg := readConfig(t, runtime)
+	if auth(cfg, "ghcr.io") != base64.StdEncoding.EncodeToString([]byte("fathah:ghp_token")) || cfg["credsStore"] != nil || !strings.Contains(summary, "credential helper 'pass'") {
+		t.Fatal(summary, cfg)
 	}
 }
 
-func TestSyncRegistryAuthReportsMissingLoginAndKeepsBadConfig(t *testing.T) {
-	own := setupRegistry(t, "", "")
-	if s := syncRegistryAuth(own); !strings.Contains(s, "no root Docker login") {
+func TestSyncRegistryAuthFallsBackWithoutRootLogin(t *testing.T) {
+	base, runtime := setupRegistry(t, `{"auths":{"ghcr.io":{"auth":"cm9vdA=="}}}`, "")
+	syncRegistryAuth(base, runtime)
+	os.Remove(RootDockerConfig)
+	if s := syncRegistryAuth(base, runtime); !strings.Contains(s, "no root Docker login") {
 		t.Fatal(s)
 	}
-	own = setupRegistry(t, `{"auths":{"ghcr.io":{"auth":"cm9vdA=="}}}`, "not json")
-	if s := syncRegistryAuth(own); !strings.Contains(s, "not valid JSON") {
-		t.Fatal(s)
+	if (Exec{DockerConfig: base, RuntimeDockerConfig: runtime}).dockerConfig() != base {
+		t.Fatal("stale merged config should be dropped")
 	}
-	if b, _ := os.ReadFile(filepath.Join(own, "config.json")); string(b) != "not json" {
-		t.Fatal("overwrote an unparseable config")
+}
+
+func TestSyncRegistryAuthKeepsBadBaseConfigUnmerged(t *testing.T) {
+	base, runtime := setupRegistry(t, `{"auths":{"ghcr.io":{"auth":"cm9vdA=="}}}`, "not json")
+	if s := syncRegistryAuth(base, runtime); !strings.Contains(s, "not valid JSON") {
+		t.Fatal(s)
 	}
 }

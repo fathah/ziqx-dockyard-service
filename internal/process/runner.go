@@ -24,6 +24,18 @@ type Exec struct {
 	Timeout      time.Duration
 	Limit        int
 	DockerConfig string
+	// RuntimeDockerConfig is a writable directory where Dockyard's base
+	// DockerConfig is merged with root's registry logins. Empty disables it.
+	RuntimeDockerConfig string
+}
+
+// dockerConfig is the directory Docker reads: the merged runtime config once
+// it exists, otherwise the administrator's base config.
+func (r Exec) dockerConfig() string {
+	if r.RuntimeDockerConfig != "" && fileExists(filepath.Join(r.RuntimeDockerConfig, "config.json")) {
+		return r.RuntimeDockerConfig
+	}
+	return r.DockerConfig
 }
 type bounded struct {
 	mu        sync.Mutex
@@ -50,7 +62,7 @@ func (r Exec) Run(ctx context.Context, binary, dir string, args []string) (Resul
 	}
 	if pulls(args) {
 		// Commands that may pull need the administrator's registry logins.
-		if summary := syncRegistryAuth(r.DockerConfig); summary != "" {
+		if summary := syncRegistryAuth(r.DockerConfig, r.RuntimeDockerConfig); summary != "" {
 			if c, ok := JobLog(ctx).(*Capped); ok && c.note(summary) {
 				fmt.Fprintf(c, "\n%s\n", summary)
 			}
@@ -60,7 +72,7 @@ func (r Exec) Run(ctx context.Context, binary, dir string, args []string) (Resul
 	defer cancel()
 	c := exec.CommandContext(ctx, binary, args...)
 	c.Dir = dir
-	c.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "HOME=/nonexistent", "DOCKER_HOST=unix:///var/run/docker.sock", "DOCKER_CONFIG=" + r.DockerConfig}
+	c.Env = []string{"PATH=/usr/bin:/bin", "LANG=C.UTF-8", "HOME=/nonexistent", "DOCKER_HOST=unix:///var/run/docker.sock", "DOCKER_CONFIG=" + r.dockerConfig()}
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	c.Cancel = func() error {
 		if c.Process == nil {

@@ -73,17 +73,18 @@ func helperAuths(helper string, registries []string) map[string]json.RawMessage 
 	return out
 }
 
-// syncRegistryAuth copies the administrator's registry logins into Dockyard's
-// private Docker config as plain entries, so images root can pull, Dockyard can
-// pull too. Credential helpers are resolved here, as root, because Dockyard
-// runs Docker without root's HOME. Root's login wins for a shared registry;
-// Dockyard-only entries stay. It returns a one-line summary for the job log.
-func syncRegistryAuth(dockerConfig string) string {
-	if dockerConfig == "" {
+// syncRegistryAuth writes runtime/config.json: Dockyard's base Docker config
+// (read-only) plus the administrator's registry logins as plain entries, so
+// images root can pull, Dockyard can pull too. Credential helpers are resolved
+// here, as root, because Dockyard runs Docker without root's HOME. Root's login
+// wins for a shared registry. It returns a one-line summary for the job log.
+func syncRegistryAuth(base, runtime string) string {
+	if runtime == "" {
 		return ""
 	}
 	src, err := os.ReadFile(RootDockerConfig)
 	if err != nil {
+		os.Remove(filepath.Join(runtime, "config.json"))
 		return "Registry logins: no root Docker login at " + RootDockerConfig + " (run `docker login` as root for private images)"
 	}
 	var root struct {
@@ -113,24 +114,21 @@ func syncRegistryAuth(dockerConfig string) string {
 		}
 	}
 	if len(logins) == 0 {
+		// Without root logins, Docker should read the base config again.
+		os.Remove(filepath.Join(runtime, "config.json"))
 		if root.CredsStore != "" {
 			return fmt.Sprintf("Registry logins: root uses credential helper '%s' but it returned no logins", root.CredsStore)
 		}
 		return "Registry logins: root's Docker config has no saved logins"
 	}
 
-	target := filepath.Join(dockerConfig, "config.json")
 	own := map[string]json.RawMessage{}
-	if b, err := os.ReadFile(target); err == nil && json.Unmarshal(b, &own) != nil {
+	if b, err := os.ReadFile(filepath.Join(base, "config.json")); err == nil && json.Unmarshal(b, &own) != nil {
 		return "Registry logins: Dockyard's Docker config is not valid JSON; left unchanged"
 	}
 	auths := map[string]json.RawMessage{}
 	if raw, ok := own["auths"]; ok && json.Unmarshal(raw, &auths) != nil {
 		return "Registry logins: Dockyard's Docker config has invalid auths; left unchanged"
-	}
-	before := map[string]json.RawMessage{}
-	for k, v := range auths {
-		before[k] = v
 	}
 	for registry, raw := range logins {
 		auths[registry] = raw
@@ -141,18 +139,36 @@ func syncRegistryAuth(dockerConfig string) string {
 	}
 	sort.Strings(names)
 	summary := "Registry logins: " + strings.Join(names, ", ")
-	if reflect.DeepEqual(before, auths) {
-		return summary
-	}
 	b, _ := json.Marshal(auths)
 	own["auths"] = b
-	// Helpers in Dockyard's config would run without root's HOME; logins are plain now.
+	// Helpers would run without root's HOME; logins are plain entries now.
 	delete(own, "credsStore")
 	delete(own, "credHelpers")
-	if err := writePrivate(dockerConfig, target, own); err != nil {
-		return "Registry logins: could not update Dockyard's Docker config: " + err.Error()
+	target := filepath.Join(runtime, "config.json")
+	if current, err := os.ReadFile(target); err == nil {
+		var existing map[string]json.RawMessage
+		if json.Unmarshal(current, &existing) == nil && reflect.DeepEqual(normalize(existing), normalize(own)) {
+			return summary
+		}
+	}
+	if err := os.MkdirAll(runtime, 0700); err != nil {
+		return "Registry logins: could not prepare " + runtime + ": " + err.Error()
+	}
+	if err := writePrivate(runtime, target, own); err != nil {
+		return "Registry logins: could not write " + target + ": " + err.Error()
 	}
 	return summary
+}
+
+// normalize decodes raw values so equal JSON compares equal regardless of spacing.
+func normalize(m map[string]json.RawMessage) map[string]any {
+	out := map[string]any{}
+	for k, v := range m {
+		var x any
+		json.Unmarshal(v, &x)
+		out[k] = x
+	}
+	return out
 }
 
 func writePrivate(dir, target string, v any) error {

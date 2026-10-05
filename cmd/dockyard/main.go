@@ -99,7 +99,9 @@ func run() error {
 		return err
 	}
 	defer s.Close()
-	runner := process.Exec{Timeout: time.Duration(c.CommandSeconds) * time.Second, Limit: 2 << 20, DockerConfig: c.DockerConfig}
+	// docker_config may sit on a read-only path (/etc); merged registry logins
+	// are written under the state directory, which the service can write.
+	runner := process.Exec{Timeout: time.Duration(c.CommandSeconds) * time.Second, Limit: 2 << 20, DockerConfig: c.DockerConfig, RuntimeDockerConfig: filepath.Join(c.StateDir, "docker")}
 	docker := adapter.Docker{Config: c, Runner: runner, Store: s}
 	caddy := adapter.Caddy{Config: c, Runner: runner}
 	dns := adapter.NewDNS(c)
