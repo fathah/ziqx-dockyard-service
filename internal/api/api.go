@@ -169,6 +169,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/"), "/")
+	if r.Method == "POST" && len(parts) == 3 && parts[0] == "projects" && parts[2] == "draft" {
+		a.saveDraft(w, p, body, parts[1])
+		return
+	}
 	if r.Method == "POST" && len(parts) == 3 && parts[0] == "jobs" && parts[2] == "reconcile" {
 		a.reconcileJob(w, r, p, parts[1])
 		return
@@ -465,6 +469,12 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 			return
 		}
 		current, exists := project.Current()
+		if compose, dotenv, ok := runtime.ReadDraft(e.Config, project); ok {
+			// release_id stays the deployed release, so a deploy still detects
+			// someone else's newer release.
+			write(w, 200, map[string]any{"release_id": current.ID, "compose_yaml": compose, "env_file": dotenv, "draft": true})
+			return
+		}
 		if !exists {
 			write(w, 200, map[string]string{"release_id": "", "compose_yaml": "", "env_file": ""})
 			return
@@ -988,6 +998,13 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					}
 					dotenv = string(b)
 				}
+				// Keep the files even if validation or the deployment fails.
+				draftSHA, err := runtime.SaveDraft(e.Config, p, input.Compose, dotenv)
+				if err != nil {
+					fail(w, err, request)
+					return
+				}
+				j.Input.DraftSHA = draftSHA
 				// A deploy may correct which service receives the domains' traffic.
 				target := p
 				if input.RouteService != nil || input.RoutePort != nil {

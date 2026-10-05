@@ -2323,6 +2323,80 @@
         ]
       }
     },
+    "/v1/projects/{id}/draft": {
+      "post": {
+        "operationId": "saveDraft",
+        "summary": "Save Compose and .env without deploying",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Requires server-wide compose.admin and deploy.environment. Stores the Compose file and .env verbatim (not validated) in the project's private draft folder. Omitting env_file keeps the draft's .env, or else the deployed one. GET configuration returns the draft (with `draft: true`) until a deployment of that exact content succeeds. Every Compose deploy also saves its files as the draft first, so a failed deployment keeps them.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "compose_yaml"
+                ],
+                "properties": {
+                  "compose_yaml": {
+                    "type": "string",
+                    "maxLength": 65536
+                  },
+                  "env_file": {
+                    "type": "string",
+                    "maxLength": 65536
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{project_id, draft_sha, saved}"
+          },
+          "403": {
+            "description": "Scope or Compose administrator permission missing"
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "409": {
+            "description": "Not a Compose project"
+          }
+        },
+        "x-required-scopes": [
+          "deploy.environment"
+        ]
+      }
+    },
     "/v1/jobs/{job}/log": {
       "get": {
         "operationId": "jobLog",

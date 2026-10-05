@@ -1493,3 +1493,8 @@ label small,
   margin: 0;
   padding: 0 8px;
 }
+.configuration-buttons {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}

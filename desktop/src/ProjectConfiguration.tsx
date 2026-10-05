@@ -7,8 +7,10 @@ import {
   RefreshCw,
   Settings2,
   AlignLeft,
+  Save,
   Upload,
 } from "lucide-react";
+import toast from "react-hot-toast";
 import * as api from "./api";
 import Help from "./Help";
 import CodeEditor, { type CodeEditorHandle } from "./CodeEditor";
@@ -30,6 +32,7 @@ type Configuration = {
   release_id: string;
   compose_yaml: string;
   env_file: string;
+  draft?: boolean;
 };
 // Compose loads without Touch ID; the server's .env is fetched separately.
 type ComposeConfiguration = Omit<Configuration, "env_file"> & {
@@ -43,7 +46,7 @@ function detailOf(error: unknown): string {
 function message(error: unknown): string {
   const text = String(error).split("\n")[0];
   if (/HTTP_404/.test(text))
-    return "Update Dockyard on your VPS to 0.5.0 or later in Server details, then try again.";
+    return "Update the Dockyard service on your VPS in Server details → Updates, then try again.";
   if (/CONFIGURATION_CHANGED/.test(text))
     return "Another release changed this project. Copy your edits, reload the current files, then apply your changes again.";
   if (/SCOPE_REQUIRED|COMPOSE_ACCESS_REQUIRED/.test(text))
@@ -102,6 +105,8 @@ export default function ProjectConfiguration({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [errorDetail, setErrorDetail] = useState("");
+  // The editor holds a saved draft that is not (yet) the deployed release.
+  const [isDraft, setIsDraft] = useState(false);
   // A saved release's .env stays hidden until Touch ID (2-minute reuse).
   const [envLoaded, setEnvLoaded] = useState(!!initial);
   const composeEditor = useRef<CodeEditorHandle>(null);
@@ -206,7 +211,9 @@ export default function ProjectConfiguration({
     setSaved({ ...data, compose_yaml: source, env_file: "" });
     setCompose(source);
     setDotenv("");
-    setEnvLoaded(!data.release_id);
+    setIsDraft(!!data.draft);
+    // A draft's .env is on the server too; only a blank new project starts empty.
+    setEnvLoaded(!data.release_id && !data.draft);
     return source;
   }
   async function load() {
@@ -234,7 +241,7 @@ export default function ProjectConfiguration({
     // Mount only.
   }, []);
   async function fetchEnv(): Promise<string> {
-    if (envLoaded || !saved?.release_id) return dotenv;
+    if (envLoaded || !saved) return dotenv;
     const data = await api.readEnv(project.id);
     if (data.release_id !== saved.release_id)
       throw new Error("Files changed on the server. Reload and try again.");
@@ -253,6 +260,33 @@ export default function ProjectConfiguration({
       await fetchEnv();
     } catch (e) {
       if (alive.current) setError(message(e));
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }
+  async function save() {
+    if (!saved) return;
+    setBusy(true);
+    setError("");
+    setErrorDetail("");
+    try {
+      await api.saveDraft(project.id, {
+        compose_yaml: compose,
+        ...(envLoaded ? { env_file: dotenv } : {}),
+      });
+      if (!alive.current) return;
+      setSaved({
+        ...saved,
+        compose_yaml: compose,
+        env_file: envLoaded ? dotenv : saved.env_file,
+      });
+      setIsDraft(true);
+      toast.success("Saved · not deployed yet");
+    } catch (e) {
+      if (alive.current) {
+        setError(message(e));
+        setErrorDetail(detailOf(e));
+      }
     } finally {
       if (alive.current) setBusy(false);
     }
@@ -295,10 +329,11 @@ export default function ProjectConfiguration({
         },
       });
       if (alive.current) {
-        setSaved(undefined);
-        setCompose("");
-        setDotenv("");
-        setEnvLoaded(false);
+        // Deploy saved these files as the draft; keep them open.
+        setSaved({ ...saved, compose_yaml: compose, env_file: env });
+        setDotenv(env);
+        setEnvLoaded(true);
+        setIsDraft(true);
       }
     } catch (e) {
       if (alive.current) {
@@ -502,9 +537,11 @@ export default function ProjectConfiguration({
                 ? "Sample files · read-only"
                 : dirty
                   ? "Unsaved changes"
-                  : saved.release_id
-                    ? "Saved configuration"
-                    : "New deployment"}
+                  : isDraft
+                    ? "Saved · not deployed"
+                    : saved.release_id
+                      ? "Deployed"
+                      : "New project"}
             </span>
           </div>
           {file === "env" && envLoaded && (
@@ -558,20 +595,36 @@ export default function ProjectConfiguration({
                 ? "Health checks before traffic switches."
                 : "Restarts all services. To update one, use Services → Pull & update."}
             </span>
-            <Button
-              type="submit"
-              className="button primary"
-              disabled={
-                preview ||
-                busy ||
-                !compose.trim() ||
-                bytes(compose) > 65536 ||
-                bytes(dotenv) > 65536
-              }
-            >
-              <ArrowUpRight size={18} />{" "}
-              {busy ? "Preparing deployment…" : "Deploy all services"}
-            </Button>
+            <div className="configuration-buttons">
+              <Button
+                type="button"
+                className="button"
+                disabled={
+                  preview ||
+                  busy ||
+                  !dirty ||
+                  bytes(compose) > 65536 ||
+                  bytes(dotenv) > 65536
+                }
+                title="Save the Compose file and .env on the VPS without deploying"
+                onClick={() => void save()}
+              >
+                <Save size={15} /> Save
+              </Button>
+              <Button
+                type="submit"
+                className="button primary"
+                disabled={
+                  preview ||
+                  busy ||
+                  !compose.trim() ||
+                  bytes(compose) > 65536 ||
+                  bytes(dotenv) > 65536
+                }
+              >
+                <ArrowUpRight size={15} /> {busy ? "Working…" : "Deploy"}
+              </Button>
+            </div>
           </div>
         </form>
       )}

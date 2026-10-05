@@ -22,6 +22,10 @@ export const resolvePending = () =>
   }>("resolve_pending");
 export const readEnv = (project: string) =>
   invoke<{ release_id: string; env_file: string }>("read_env", { project });
+export const saveDraft = (
+  project: string,
+  data: { compose_yaml: string; env_file?: string },
+) => invoke<{ saved: boolean }>("save_draft", { project, data });
 export const retry = () => invoke<{ job_id: string }>("retry_pending");
 export const pendingInfo = () => invoke<Pending>("pending_info");
 export const importCompose = () => invoke<string | null>("import_compose");

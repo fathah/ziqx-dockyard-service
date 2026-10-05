@@ -248,3 +248,33 @@ func TestNativeDeployCanCorrectRouteService(t *testing.T) {
 		t.Fatal("corrected route not carried by the job", job.Input.Project)
 	}
 }
+
+func TestDraftSaveReadAndDeployKeepsFiles(t *testing.T) {
+	a, d, _, send := apiFixture(t)
+	a.Engine.Config.Keys[0].Projects = []string{"*"}
+	a.Engine.Config.Keys[0].Scopes = append(a.Engine.Config.Keys[0].Scopes, "compose.admin")
+	a.Engine.Config.Templates = nil
+	a.Auth, _ = auth.New(a.Engine.Config)
+	a.Engine.Docker = nativePreparer{d, a.Engine.Config}
+	if w := send("POST", "/v1/projects", `{"id":"demo","app_id":"demo","environment":"production"}`, "projects.write", "create-draft"); w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	draft := `{"compose_yaml":"services:\n  web: {image: nginx}\n","env_file":"PASSWORD=\n"}`
+	if w := send("POST", "/v1/projects/demo/draft", draft, "deploy.read", "draft-denied"); w.Code != 403 {
+		t.Fatal("draft needs the environment scope", w.Code)
+	}
+	if w := send("POST", "/v1/projects/demo/draft", draft, "deploy.environment", "draft-save"); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	w := send("GET", "/v1/projects/demo/configuration", "", "deploy.environment", "draft-read")
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"draft":true`) || !strings.Contains(w.Body.String(), "PASSWORD=") || !strings.Contains(w.Body.String(), "nginx") {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	// Omitting env_file keeps the saved .env.
+	if w := send("POST", "/v1/projects/demo/draft", `{"compose_yaml":"services: {}\n"}`, "deploy.environment", "draft-compose-only"); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if w := send("GET", "/v1/projects/demo/configuration", "", "deploy.environment", "draft-read-2"); !strings.Contains(w.Body.String(), "PASSWORD=") || !strings.Contains(w.Body.String(), "services: {}") {
+		t.Fatal(w.Body.String())
+	}
+}

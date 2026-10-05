@@ -525,6 +525,10 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 	if err = e.Store.Update(*j, p); err != nil {
 		return model.Uncertain("STATE_WRITE_FAILED")
 	}
+	// The deployed draft is now the release; a newer saved draft is kept.
+	if p.NativeCompose() {
+		runtime.ClearDraft(e.Config, *p, j.Input.DraftSHA)
+	}
 	// Operator-facing .env mirrors only the successfully activated revision.
 	// Containers always use their immutable slot revision, never this mirror.
 	if b, readErr := os.ReadFile(filepath.Join(e.Config.ProjectsRoot, p.ID, "env", r.Environment+".env")); readErr != nil {

@@ -876,6 +876,31 @@ async fn read_env(c: State<'_, Control>, project: String) -> Result<Value, Strin
     }
     Ok(result)
 }
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+struct DraftInput {
+    compose_yaml: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    env_file: Option<String>,
+}
+#[tauri::command]
+async fn save_draft(c: State<'_, Control>, project: String, mut data: DraftInput) -> Result<Value, String> {
+    // Saves the files on the VPS without validating or deploying them.
+    if !protocol::id(&project) || data.compose_yaml.len() > 65536 || data.env_file.as_ref().is_some_and(|e| e.len() > 65536 || e.contains('\0')) {
+        return Err("Compose and .env must each be at most 64 KiB".into());
+    }
+    let body = serde_json::to_string(&data).map_err(|_| "Invalid request")?;
+    data.compose_yaml.zeroize();
+    if let Some(env) = data.env_file.as_mut() {
+        env.zeroize();
+    }
+    let op = Operation { method: "POST".into(), target: format!("/v1/projects/{project}/draft"), scopes: "deploy.environment".into(), project, action: "draft".into(), body, idempotency: format!("draft-{}", uuid::Uuid::new_v4()), request_id: format!("req-{}", uuid::Uuid::new_v4()) };
+    let mut inner = c.inner.lock().await;
+    let s = session(&mut inner)?;
+    let result = send(s, &op).await?;
+    if s.generation != c.generation.load(Ordering::SeqCst) { return Err("SESSION_LOCKED".into()); }
+    Ok(result)
+}
 #[tauri::command]
 async fn reconcile_job(c: State<'_, Control>, job: String) -> Result<Value, String> {
     // Same verified recovery as `dockyard -reconcile-job`, run by the daemon.
@@ -1348,6 +1373,7 @@ fn main() {
             reconcile_job,
             resolve_pending,
             read_env,
+            save_draft,
             retry_pending,
             pending_info,
             import_compose,

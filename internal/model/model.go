@@ -118,6 +118,8 @@ type Input struct {
 	Release       *Release       `json:"release,omitempty"`
 	Hostname      string         `json:"hostname,omitempty"`
 	DNSRecordID   string         `json:"dns_record_id,omitempty"`
+	// DraftSHA identifies the saved draft this deployment was made from.
+	DraftSHA string `json:"draft_sha,omitempty"`
 }
 
 // ServiceSpec is safe revision metadata, not raw user YAML or secret values.

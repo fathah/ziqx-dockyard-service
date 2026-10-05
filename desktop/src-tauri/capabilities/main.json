@@ -46,6 +46,7 @@
     "allow-preview-route-setup",
     "allow-reconcile-job",
     "allow-resolve-pending",
-    "allow-read-env"
+    "allow-read-env",
+    "allow-save-draft"
   ]
 }
