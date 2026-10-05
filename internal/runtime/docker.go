@@ -476,7 +476,7 @@ func (d Docker) secrets(p model.Project) ([]string, error) {
 				return nil, model.Fail("LOGS_UNAVAILABLE")
 			}
 			for _, v := range values {
-				if v != "" && !unique[v] {
+				if secretLike(v) && !unique[v] {
 					unique[v] = true
 					secrets = append(secrets, v)
 					secretBytes += len(v)
@@ -489,7 +489,7 @@ func (d Docker) secrets(p model.Project) ([]string, error) {
 		}
 		for _, line := range strings.Split(string(b), "\n") {
 			_, v, ok := strings.Cut(line, "=")
-			if ok && v != "" && !unique[v] {
+			if ok && secretLike(v) && !unique[v] {
 				unique[v] = true
 				secretBytes += len(v)
 				if len(unique) > 5000 || secretBytes > 1<<20 {
@@ -522,4 +522,21 @@ func (d Docker) failure(p model.Project, code string, res process.Result) error 
 	}
 	detail := string(Redact([]byte(strings.Join(lines, "\n")), secrets, 4096, false))
 	return model.FailDetail(code, detail)
+}
+
+// secretLike skips short values, numbers and booleans: redacting "5" or "true"
+// would mangle every log line (timestamps, ports) without protecting anything.
+func secretLike(v string) bool {
+	v = strings.Trim(strings.TrimSpace(v), "'\"")
+	if len(v) < 6 {
+		return false
+	}
+	if _, err := strconv.ParseFloat(v, 64); err == nil {
+		return false
+	}
+	switch strings.ToLower(v) {
+	case "true", "false", "production", "development", "staging":
+		return false
+	}
+	return true
 }

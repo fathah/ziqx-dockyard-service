@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Copy, RefreshCw, X } from "lucide-react";
 import toast from "react-hot-toast";
 import Button from "./Button";
+import CopyButton from "./CopyButton";
 import * as api from "./api";
 import type { Job, Service } from "./types";
 
@@ -213,7 +214,10 @@ export default function JobDetails({
 
       {deployLog ? (
         <section className="job-deploy-log">
-          <h3>Deployment log</h3>
+          <div className="job-section-heading">
+            <h3>Deployment log</h3>
+            <CopyButton text={deployLog} />
+          </div>
           <pre>
             {deployLog.split("\n").map((line, i) => (
               <span
@@ -239,7 +243,10 @@ export default function JobDetails({
       ) : (
         diagnostic && (
           <section className="job-diagnostic">
-            <h3>Docker output</h3>
+            <div className="job-section-heading">
+              <h3>Docker output</h3>
+              <CopyButton text={diagnostic} />
+            </div>
             <pre>{diagnostic}</pre>
           </section>
         )
@@ -264,6 +271,7 @@ export default function JobDetails({
               >
                 <RefreshCw size={15} />
               </Button>
+              <CopyButton text={logs && !/^No output/.test(logs) ? logs : ""} />
             </div>
           )}
         </div>

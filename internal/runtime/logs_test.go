@@ -66,3 +66,16 @@ func TestFailureKeepsRedactedDockerTail(t *testing.T) {
 		t.Fatal("empty output should not add detail")
 	}
 }
+
+func TestSecretLikeSkipsTrivialValues(t *testing.T) {
+	for _, v := range []string{"5", "3016", "true", "'false'", "10.5", "abc", "production"} {
+		if secretLike(v) {
+			t.Errorf("%q should not be redacted", v)
+		}
+	}
+	for _, v := range []string{"hunter2hunter2", "mah_office", "'s3cr3t-pass'", "18f7279960bd99aa"} {
+		if !secretLike(v) {
+			t.Errorf("%q should be redacted", v)
+		}
+	}
+}

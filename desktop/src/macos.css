@@ -1498,3 +1498,13 @@ label small,
   gap: 8px;
   flex-shrink: 0;
 }
+
+.job-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.job-section-heading h3 {
+  margin: 0;
+}

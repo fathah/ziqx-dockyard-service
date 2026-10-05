@@ -55,6 +55,7 @@ import ProjectConfiguration, {
 import ProjectHeader, { ProjectSummary } from "./ProjectHeader";
 import ServiceUpdate from "./ServiceUpdate";
 import JobsTable from "./JobsTable";
+import CopyButton from "./CopyButton";
 import RouteSetup from "./RouteSetup";
 import TerminalPage from "./TerminalPage";
 import { ProviderDomains } from "./DomainProviders";
@@ -2182,7 +2183,10 @@ export function ProjectDetail({
               <Terminal size={18} />
               Container logs
             </h2>
-            <Tag>Bounded · 200 lines</Tag>
+            <div className="heading-actions">
+              <Tag>Bounded · 200 lines</Tag>
+              <CopyButton text={logs} />
+            </div>
           </div>
           <div className="log-filters">
             <Select
