@@ -8,7 +8,36 @@ import "@xterm/xterm/css/xterm.css";
 import Help from "./Help";
 import Select from "./Select";
 
-type Container = { id: string; name: string; image: string; status: string };
+type Container = {
+  id: string;
+  name: string;
+  image: string;
+  status: string;
+  project?: string;
+  compose_project?: string;
+  service?: string;
+};
+export type ShellRequest = {
+  project: string;
+  composeProject?: string;
+  slot?: string;
+  service: string;
+  nonce: number;
+};
+// Prefers the active slot's container when an old slot is still running.
+function serviceContainer(containers: Container[], request: ShellRequest) {
+  const matches = containers.filter(
+    (c) =>
+      c.service === request.service &&
+      (request.composeProject
+        ? c.compose_project === request.composeProject
+        : c.project === request.project),
+  );
+  return (
+    matches.find((c) => c.compose_project?.endsWith(`-${request.slot}`)) ??
+    matches[0]
+  );
+}
 type Connection = {
   id: string;
   containers: Container[];
@@ -25,11 +54,13 @@ export default function TerminalPage({
   visible,
   native,
   server,
+  request,
   report,
 }: {
   visible: boolean;
   native: boolean;
   server?: string | null;
+  request?: ShellRequest | null;
   report: (e: unknown) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
@@ -187,13 +218,16 @@ export default function TerminalPage({
         if (active) term.current?.focus();
       });
   }, [visible, active]);
-  const start = async (current: Connection) => {
-    if (mode === "container" && !container) return;
+  const start = async (
+    current: Connection,
+    target = mode === "container" ? container : null,
+  ) => {
+    if (mode === "container" && !target) return;
     fit.current?.fit();
     const terminal = term.current!;
     await invoke("terminal_start", {
       id: current.id,
-      container: mode === "container" ? container : null,
+      container: target,
       shell,
       cols: Math.max(10, Math.min(500, terminal.cols)),
       rows: Math.max(5, Math.min(240, terminal.rows)),
@@ -202,12 +236,23 @@ export default function TerminalPage({
     started.current = true;
     terminal.options.disableStdin = false;
     setActive(true);
-    setMessage(
-      mode === "root" ? "Root shell · full server access" : "Container shell",
-    );
+    setMessage(target ? "Container shell" : "Root shell · full server access");
     terminal.focus();
   };
-  const connect = async () => {
+  const handled = useRef(0);
+  useEffect(() => {
+    if (!request || request.nonce === handled.current || !native || !server)
+      return;
+    handled.current = request.nonce;
+    void (async () => {
+      if (id.current || connection) await disconnect();
+      setMode("container");
+      await connect(request);
+    })();
+    // Only a new request opens a shell; connect/disconnect read refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request, native, server]);
+  const connect = async (shellRequest?: ShellRequest) => {
     const turn = ++epoch.current;
     setBusy(true);
     setError("");
@@ -224,7 +269,16 @@ export default function TerminalPage({
       id.current = result.id;
       setConnection(result);
       setContainer("");
-      if (mode === "root") await start(result);
+      if (shellRequest) {
+        const match = serviceContainer(result.containers, shellRequest);
+        if (match) {
+          setContainer(match.id);
+          await start(result, match.id);
+        } else
+          setError(
+            `No running container found for ${shellRequest.service}. Choose one from the list.`,
+          );
+      } else if (mode === "root") await start(result);
       else
         setMessage(
           "Connected. Choose a running container, then open its shell.",

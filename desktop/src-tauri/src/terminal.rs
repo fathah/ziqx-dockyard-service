@@ -41,6 +41,23 @@ pub struct Container {
     pub name: String,
     pub image: String,
     pub status: String,
+    #[serde(default)]
+    pub project: String,
+    #[serde(default)]
+    pub compose_project: String,
+    #[serde(default)]
+    pub service: String,
+}
+/// Reads one key from Docker's `k=v,k=v` label summary.
+fn label(labels: &str, key: &str) -> String {
+    labels
+        .split(',')
+        .find_map(|pair| pair.strip_prefix(key)?.strip_prefix('='))
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(256)
+        .collect()
 }
 fn container_id(id: &str) -> bool {
     id.len() == 64
@@ -219,11 +236,15 @@ fn containers(session: &Session, lease: &Lease) -> Result<Vec<Container>, String
         if !container_id(&id) || out.len() >= 1000 {
             return Err("Docker returned invalid container information".into());
         }
+        let labels = row.get("Labels").and_then(|v| v.as_str()).unwrap_or("");
         out.push(Container {
             id,
             name: field("Names"),
             image: field("Image"),
             status: field("Status"),
+            project: label(labels, "io.ziqx.dockyard.project"),
+            compose_project: label(labels, "com.docker.compose.project"),
+            service: label(labels, "com.docker.compose.service"),
         });
     }
     Ok(out)
@@ -392,6 +413,15 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn labels_identify_compose_service() {
+        let labels = "com.docker.compose.project=dy-s-p-blue,com.docker.compose.service=web,io.ziqx.dockyard.project=p";
+        assert_eq!(label(labels, "com.docker.compose.service"), "web");
+        assert_eq!(label(labels, "com.docker.compose.project"), "dy-s-p-blue");
+        assert_eq!(label(labels, "io.ziqx.dockyard.project"), "p");
+        assert_eq!(label(labels, "com.docker.compose"), "");
+        assert_eq!(label("", "com.docker.compose.service"), "");
+    }
     #[test]
     fn commands_reject_injection_and_invalid_dimensions() {
         for id in ["abc", "$(id)", "--privileged", &"a".repeat(65)] {

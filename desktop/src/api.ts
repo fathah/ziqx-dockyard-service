@@ -2,7 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { Read, Session, Pending, SetupPreview } from "./types";
 export const native = isTauri();
 export const sessionInfo = () => invoke<Session>("session_info");
-export const unlock = () => invoke<Session>("unlock");
+export const unlock = (stay = false) => invoke<Session>("unlock", { stay });
 export const enroll = () => invoke<Session>("enroll");
 export const lock = () => invoke<void>("lock_session");
 export const forget = () => invoke<void>("forget_device");

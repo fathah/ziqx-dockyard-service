@@ -169,6 +169,70 @@ pre {
   margin-top: 30px;
   font-size: 14px;
 }
+/* Lock over the open workspace; blurred so nothing behind stays legible. */
+.lock-overlay {
+  width: 100vw;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
+  margin: 0;
+  border: 0;
+  background: #f6f7f4d9;
+  backdrop-filter: blur(24px) saturate(0.8);
+  -webkit-backdrop-filter: blur(24px) saturate(0.8);
+}
+.lock-overlay::backdrop {
+  background: transparent;
+}
+.lock-stay {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+  color: #5d6a62;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.lock-stay input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.lock-stay-track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  flex: none;
+  border-radius: 999px;
+  background: #d5ddd6;
+  transition: background 160ms ease;
+}
+.lock-stay-track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px #173b3133;
+  transition: transform 160ms ease;
+}
+.lock-stay input:checked + .lock-stay-track {
+  background: #244e39;
+}
+.lock-stay input:checked + .lock-stay-track::after {
+  transform: translateX(14px);
+}
+.lock-stay input:focus-visible + .lock-stay-track {
+  outline: 2px solid #68994d;
+  outline-offset: 2px;
+}
+.lock-stay input:disabled + .lock-stay-track {
+  opacity: 0.5;
+}
 .lock-error {
   margin-top: 18px;
   padding: 12px;
@@ -1326,7 +1390,7 @@ pre {
   width: 18%;
 }
 .services-column-action {
-  width: 196px;
+  width: 252px;
 }
 .services-table thead th {
   padding: 10px 24px;
@@ -1425,6 +1489,11 @@ pre {
 .services-action .ziqx-button {
   min-width: 148px;
   border-color: #dfe5df;
+}
+.services-action .ziqx-button.services-shell {
+  min-width: 0;
+  margin-right: 8px;
+  padding-inline: 12px;
 }
 .services-sr-only {
   position: absolute;

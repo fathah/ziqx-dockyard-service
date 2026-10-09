@@ -117,6 +117,8 @@ export type Session = {
   profile: Profile | null;
   jobs: string[];
   enrolled?: boolean;
+  /** Epoch ms until which the away lock is skipped. */
+  stay_until?: number | null;
 };
 export type Pending = {
   project: string;

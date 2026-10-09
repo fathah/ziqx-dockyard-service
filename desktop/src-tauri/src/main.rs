@@ -60,6 +60,7 @@ struct Session {
     _tunnel: Option<setup::Tunnel>,
 }
 const AWAY_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const STAY_UNLOCKED: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Default)]
 struct AwayTimer {
@@ -67,6 +68,8 @@ struct AwayTimer {
     last_sample: Option<(Instant, SystemTime)>,
     deadline: Option<(Instant, SystemTime)>,
     locked: bool,
+    /// Chosen on the lock screen: skip the away lock until this time.
+    hold: Option<(Instant, SystemTime)>,
 }
 impl AwayTimer {
     fn sample(
@@ -80,6 +83,7 @@ impl AwayTimer {
         if prompt_active || self.prompt_epoch != epoch {
             *self = Self {
                 prompt_epoch: epoch,
+                hold: self.hold,
                 ..Self::default()
             };
         }
@@ -89,6 +93,17 @@ impl AwayTimer {
         self.observe(active, now, wall)
     }
     fn observe(&mut self, focused: bool, now: Instant, wall: SystemTime) -> bool {
+        if self
+            .hold
+            .is_some_and(|(mono, real)| now < mono && wall < real)
+        {
+            // Held unlocked: away time starts counting when the hour ends.
+            self.last_sample = Some((now, wall));
+            self.deadline = None;
+            self.locked = false;
+            return false;
+        }
+        self.hold = None;
         // A long polling gap means the Mac slept or the app was suspended.
         let suspended = self.last_sample.is_some_and(|(mono, real)| {
             now.saturating_duration_since(mono) >= AWAY_TIMEOUT
@@ -161,6 +176,7 @@ impl Control {
         }
     }
     async fn clear(&self) {
+        self.away.lock().expect("focus timer poisoned").hold = None;
         native::clear_authentication();
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.terminal.lock().expect("terminal poisoned").take();
@@ -609,7 +625,7 @@ async fn enroll(c: State<'_, Control>) -> Result<Value, String> {
     Ok(json!({"unlocked":true,"profile":p,"jobs":[]}))
 }
 #[tauri::command]
-async fn unlock(c: State<'_, Control>) -> Result<Value, String> {
+async fn unlock(c: State<'_, Control>, stay: Option<bool>) -> Result<Value, String> {
     c.clear().await;
     let generation = c.generation.load(Ordering::SeqCst);
     let saved: Saved = native_task(&c, move || {
@@ -642,7 +658,13 @@ async fn unlock(c: State<'_, Control>) -> Result<Value, String> {
     }
     inner.profile = Some(p.clone());
     inner.session = Some(s);
-    Ok(json!({"unlocked":true,"profile":p,"jobs":jobs}))
+    let stay_until = stay.unwrap_or(false).then(|| {
+        let (now, wall) = (Instant::now(), SystemTime::now());
+        c.away.lock().expect("focus timer poisoned").hold =
+            Some((now + STAY_UNLOCKED, wall + STAY_UNLOCKED));
+        epoch_ms(wall + STAY_UNLOCKED)
+    });
+    Ok(json!({"unlocked":true,"profile":p,"jobs":jobs,"stay_until":stay_until}))
 }
 fn validate_pending(op: &Operation) -> Result<(), String> {
     let body: Value = serde_json::from_str(&op.body).map_err(|_| "Invalid saved operation")?;
@@ -1025,6 +1047,9 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         return Err(e);
     }
     execute_pending(s).await
+}
+fn epoch_ms(t: SystemTime) -> u64 {
+    t.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 fn unix_now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -1623,6 +1648,24 @@ mod transport_tests {
         let legacy: Pending =
             serde_json::from_value(json!({"operation":op,"job_id":null})).unwrap();
         assert!(legacy.attempted);
+    }
+    #[test]
+    fn hold_skips_away_lock_for_an_hour() {
+        let (now, wall) = (Instant::now(), SystemTime::now());
+        let mut timer = AwayTimer {
+            hold: Some((now + STAY_UNLOCKED, wall + STAY_UNLOCKED)),
+            ..AwayTimer::default()
+        };
+        for minute in 0..60 {
+            let d = Duration::from_secs(minute * 60);
+            assert!(!timer.observe(false, now + d, wall + d));
+        }
+        // After the hour the normal five-minute grace applies.
+        let end = STAY_UNLOCKED;
+        assert!(!timer.observe(false, now + end, wall + end));
+        assert!(timer.hold.is_none());
+        let late = end + AWAY_TIMEOUT;
+        assert!(timer.observe(false, now + late, wall + late));
     }
     #[test]
     fn active_app_stays_unlocked_for_a_full_workday() {
