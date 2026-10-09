@@ -19,7 +19,7 @@ func (explainRunner) Run(_ context.Context, _, _ string, args []string) (process
 		return process.Result{Output: []byte("aaa\nbbb\n")}, nil
 	case "inspect":
 		return process.Result{Output: []byte(`[
-{"Id":"aaa","Config":{"Labels":{"com.docker.compose.service":"api"}},"State":{"Status":"running","Running":true,"Health":{"Status":"unhealthy","Log":[{"ExitCode":1,"Output":"curl: (7) Failed to connect to localhost port 3016"}]}}},
+{"Id":"aaa","Config":{"Labels":{"com.docker.compose.service":"api"},"Healthcheck":{"Test":["CMD-SHELL","curl -f http://localhost:3016/health"]}},"State":{"Status":"running","Running":true,"Health":{"Status":"unhealthy","Log":[{"ExitCode":1,"Output":"curl: (7) Failed to connect to localhost port 3016"}]}}},
 {"Id":"bbb","Config":{"Labels":{"com.docker.compose.service":"database"}},"State":{"Status":"running","Running":true,"Health":{"Status":"healthy"}}}]`)}, nil
 	case "logs":
 		return process.Result{Output: []byte("Error: password authentication failed for user \"api\"\n")}, nil
@@ -33,7 +33,7 @@ func TestExplainStartLogsUnhealthyContainers(t *testing.T) {
 	d := Docker{Config: config.Config{ServerID: "vps", ProjectsRoot: t.TempDir()}, Runner: explainRunner{}}
 	d.explainStart(ctx, model.Project{ID: "demo", Mode: "compose"}, "blue")
 	log := buf.String()
-	for _, want := range []string{"── api: running, unhealthy", "Healthcheck (exit 1): curl: (7) Failed to connect", "password authentication failed"} {
+	for _, want := range []string{"── api: running, unhealthy", "Healthcheck command: curl -f http://localhost:3016/health", "Healthcheck (exit 1): curl: (7) Failed to connect", "password authentication failed"} {
 		if !strings.Contains(log, want) {
 			t.Fatalf("missing %q in:\n%s", want, log)
 		}

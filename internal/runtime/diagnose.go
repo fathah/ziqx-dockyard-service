@@ -33,7 +33,10 @@ func (d Docker) explainStart(ctx context.Context, p model.Project, slot string) 
 	var containers []struct {
 		ID     string `json:"Id"`
 		Config struct {
-			Labels map[string]string `json:"Labels"`
+			Labels      map[string]string `json:"Labels"`
+			Healthcheck *struct {
+				Test []string `json:"Test"`
+			} `json:"Healthcheck"`
 		} `json:"Config"`
 		State struct {
 			Status   string `json:"Status"`
@@ -69,9 +72,17 @@ func (d Docker) explainStart(ctx context.Context, p model.Project, slot string) 
 		if c.State.Error != "" {
 			fmt.Fprintf(w, "Docker: %s\n", c.State.Error)
 		}
+		if hc := c.Config.Healthcheck; hc != nil && len(hc.Test) > 1 {
+			// Test is ["CMD-SHELL", "cmd"] or ["CMD", "arg", ...].
+			fmt.Fprintf(w, "Healthcheck command: %s\n", strings.Join(hc.Test[1:], " "))
+		}
 		if h := c.State.Health; h != nil && len(h.Log) > 0 {
 			last := h.Log[len(h.Log)-1]
-			fmt.Fprintf(w, "Healthcheck (exit %d): %s\n", last.ExitCode, strings.TrimSpace(last.Output))
+			output := strings.TrimSpace(last.Output)
+			if output == "" {
+				output = "(no output — the command failed silently; check its host, port and path)"
+			}
+			fmt.Fprintf(w, "Healthcheck (exit %d): %s\n", last.ExitCode, output)
 		}
 		logs, _ := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"logs", "--tail", "40", c.ID})
 		if out := strings.TrimSpace(string(logs.Output) + string(logs.Stderr)); out != "" {
