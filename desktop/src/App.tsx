@@ -3522,6 +3522,8 @@ function composeError(error: unknown): string {
       "Docker Compose could not validate the resolved configuration. Check the Compose file and referenced files on the VPS.",
     COMPOSE_ROUTE_SERVICE_MISSING:
       "The web service chosen for Caddy is missing from this Compose file.",
+    COMPOSE_ROUTE_NOT_CONFIGURED:
+      "Choose which Compose service receives this domain's traffic.",
     COMPOSE_ROUTE_INVALID:
       "Choose a web service and its container port when assigning domains.",
     COMPOSE_BLUE_GREEN_INCOMPATIBLE:
@@ -3581,6 +3583,37 @@ function OperationModal({
       );
   const [routeService, setRouteService] = useState("web");
   const [routePort, setRoutePort] = useState("80");
+  // A Compose project without a web service: connecting a domain picks the
+  // service and redeploys, because the port binding is part of the release.
+  const connecting =
+    m.kind === "routes" &&
+    p?.mode === "compose" &&
+    !p.route_service &&
+    !p.published_route &&
+    !(p.adoption && !p.domains.length);
+  const [routeServices, setRouteServices] = useState<Service[]>([]);
+  useEffect(() => {
+    if (!connecting || preview || !p) return;
+    void api
+      .read<{ services: Service[] }>({
+        kind: "project",
+        project: p.id,
+        view: "services",
+      })
+      .then((d) => {
+        const items = (d.services ?? []).filter(
+          (s, i, all) => all.findIndex((x) => x.name === s.name) === i,
+        );
+        setRouteServices(items);
+        const web =
+          items.find((s) => s.container_ports?.length) ?? items[0];
+        if (web) {
+          setRouteService(web.name);
+          setRoutePort(String(web.container_ports?.[0] ?? ""));
+        }
+      })
+      .catch(() => setRouteServices([]));
+  }, [connecting, preview, p?.id]);
   const [domains, setDomains] = useState(p?.domains.join("\n") ?? "");
   const [blue, setBlue] = useState("");
   const [green, setGreen] = useState("");
@@ -3686,6 +3719,34 @@ function OperationModal({
               : vars !== undefined
                 ? { variables: vars }
                 : {}),
+          },
+        };
+      } else if (connecting) {
+        const list = domains
+          .split(/[\n,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (!list.length) throw new Error("Enter a domain to connect.");
+        const config = await api.read<{
+          release_id: string;
+          compose_yaml: string;
+        }>({ kind: "configuration", project: p!.id });
+        if (!config.compose_yaml.trim())
+          throw new Error(
+            "Add this project's Compose file in Configuration first.",
+          );
+        const env = await api.readEnv(p!.id);
+        mutation = {
+          action: "deploy",
+          project: p!.id,
+          data: {
+            environment: p!.environment,
+            compose_yaml: config.compose_yaml,
+            env_file: env.env_file,
+            expected_release_id: config.release_id,
+            domains: list,
+            route_service: routeService,
+            route_port: Number(routePort),
           },
         };
       } else if (m.kind === "routes")
@@ -3981,17 +4042,35 @@ function OperationModal({
                       onChange={(e) => setDomains(e.target.value)}
                     />
                   </label>
-                  {domains.trim() && m.kind === "create" && (
+                  {domains.trim() && (m.kind === "create" || connecting) && (
                     <div className="form-grid">
-                      <label>
-                        Web service
-                        <input
-                          required
+                      {connecting && routeServices.length > 0 ? (
+                        <Select
+                          label="Web service"
                           value={routeService}
-                          onChange={(e) => setRouteService(e.target.value)}
-                          placeholder="web"
+                          options={routeServices.map((s) => ({
+                            value: s.name,
+                            label: s.name,
+                          }))}
+                          onValueChange={(name) => {
+                            setRouteService(name);
+                            const port = routeServices.find(
+                              (s) => s.name === name,
+                            )?.container_ports?.[0];
+                            if (port) setRoutePort(String(port));
+                          }}
                         />
-                      </label>
+                      ) : (
+                        <label>
+                          Web service
+                          <input
+                            required
+                            value={routeService}
+                            onChange={(e) => setRouteService(e.target.value)}
+                            placeholder="web"
+                          />
+                        </label>
+                      )}
                       <label>
                         Container port
                         <input
@@ -4005,7 +4084,14 @@ function OperationModal({
                       </label>
                     </div>
                   )}
-                  {domains.trim() && (
+                  {connecting && domains.trim() && (
+                    <p className="configuration-note">
+                      Connecting a domain redeploys {p?.app_id} so the web
+                      service&apos;s port is published for Caddy. A host port
+                      is chosen automatically.
+                    </p>
+                  )}
+                  {domains.trim() && !connecting && (
                     <>
                       {" "}
                       <div className="form-grid">
@@ -4265,7 +4351,9 @@ function OperationModal({
                     ? "Submitting…"
                     : m.kind === "stop"
                       ? "Review stop"
-                      : "Review & submit"}
+                      : connecting
+                        ? "Connect & deploy"
+                        : "Review & submit"}
                 <ArrowRight size={15} />
               </Button>
             </div>

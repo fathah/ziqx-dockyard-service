@@ -278,3 +278,36 @@ func TestDraftSaveReadAndDeployKeepsFiles(t *testing.T) {
 		t.Fatal(w.Body.String())
 	}
 }
+
+func TestNativeDeployConnectsDomains(t *testing.T) {
+	a, d, _, send := apiFixture(t)
+	a.Engine.Config.Keys[0].Projects = []string{"*"}
+	a.Engine.Config.Keys[0].Scopes = append(a.Engine.Config.Keys[0].Scopes, "compose.admin")
+	a.Engine.Config.Templates = nil
+	a.Auth, _ = auth.New(a.Engine.Config)
+	a.Engine.Docker = nativePreparer{d, a.Engine.Config}
+	w := send("POST", "/v1/projects", `{"id":"demo","app_id":"demo","environment":"production"}`, "projects.write", "create-plain")
+	var created model.Job
+	json.Unmarshal(w.Body.Bytes(), &created)
+	job, _ := a.Engine.Store.Job(created.ID)
+	p, _ := a.Engine.Store.Project("demo")
+	p.State, job.Status = "awaiting_release", "succeeded"
+	if err := a.Engine.Store.Update(job, &p); err != nil {
+		t.Fatal(err)
+	}
+	compose := `"environment":"production","compose_yaml":"services:\n  web:\n    image: nginx:alpine\n","env_file":"","expected_release_id":""`
+	if w := send("POST", "/v1/projects/demo/deploy", `{`+compose+`,"domains":["app.example.com"]}`, "deploy.environment deploy.execute", "domain-no-service"); w.Code != 400 || !strings.Contains(w.Body.String(), "COMPOSE_ROUTE_INVALID") {
+		t.Fatal("a domain needs a web service", w.Code, w.Body.String())
+	}
+	w = send("POST", "/v1/projects/demo/deploy", `{`+compose+`,"domains":["app.example.com"],"route_service":"web","route_port":80}`, "deploy.environment deploy.execute", "domain-connect")
+	if w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var deployed model.Job
+	json.Unmarshal(w.Body.Bytes(), &deployed)
+	job, _ = a.Engine.Store.Job(deployed.ID)
+	next := job.Input.Project
+	if next == nil || len(next.Domains) != 1 || next.RouteService != "web" || next.RoutePort != 80 || next.BluePort < a.Engine.Config.PortMin {
+		t.Fatal("domain connection not carried by the job", next)
+	}
+}

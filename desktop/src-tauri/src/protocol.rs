@@ -198,7 +198,9 @@ pub struct Deploy {
     pub variables: Option<std::collections::BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
-    /// Compose projects with domains: re-point traffic for this release.
+    /// Compose projects: connect domains / re-point traffic for this release.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domains: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_service: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -413,6 +415,7 @@ impl Mutation {
                         v.len() > 100 || v.iter().any(|(k, val)| k.len() > 64 || val.len() > 8192)
                     })
                     || data.route_service.is_some() != data.route_port.is_some()
+                    || data.domains.as_ref().is_some_and(|d| !domains_ok(d))
                     || data.route_service.as_ref().is_some_and(|s| !service_name(s))
                     || data.route_port == Some(0)
                 {

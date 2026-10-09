@@ -648,9 +648,11 @@ type deployRequest struct {
 	Compose         string            `json:"compose_yaml"`
 	Variables       map[string]string `json:"variables,omitempty"`
 	EnvFile         *string           `json:"env_file,omitempty"`
-	// Compose projects with domains may re-point their web service per release.
-	RouteService *string `json:"route_service,omitempty"`
-	RoutePort    *int    `json:"route_port,omitempty"`
+	// Compose projects may connect domains or re-point their web service per
+	// release; the port binding is compiled into the release, so this deploys.
+	Domains      *[]string `json:"domains,omitempty"`
+	RouteService *string   `json:"route_service,omitempty"`
+	RoutePort    *int      `json:"route_port,omitempty"`
 }
 
 // Full Compose can mount the host or run privileged services. It is only
@@ -1009,14 +1011,42 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					return
 				}
 				j.Input.DraftSHA = draftSHA
-				// A deploy may correct which service receives the domains' traffic.
+				// A deploy may connect domains or correct which service receives
+				// their traffic.
 				target := p
-				if input.RouteService != nil || input.RoutePort != nil {
-					if input.RouteService == nil || input.RoutePort == nil || len(p.Domains) == 0 || p.ZeroDowntime || p.PublishedRoute != nil || !config.ServiceName.MatchString(*input.RouteService) || *input.RoutePort < 1 || *input.RoutePort > 65535 {
+				if input.Domains != nil || input.RouteService != nil || input.RoutePort != nil {
+					if p.Adoption != nil && len(p.Domains) == 0 {
+						problem(w, 409, "ADOPTED_ROUTES_PRESERVED", request)
+						return
+					}
+					if input.Domains != nil {
+						if err = a.nativeDomains(*input.Domains, id); err != nil {
+							fail(w, err, request)
+							return
+						}
+						if err = e.Routes.DomainsAvailable(r.Context(), *input.Domains, p.Domains); err != nil {
+							fail(w, err, request)
+							return
+						}
+						target.Domains = append([]string{}, *input.Domains...)
+					}
+					if input.RouteService != nil || input.RoutePort != nil {
+						if input.RouteService == nil || input.RoutePort == nil || !config.ServiceName.MatchString(*input.RouteService) || *input.RoutePort < 1 || *input.RoutePort > 65535 {
+							problem(w, 400, "COMPOSE_ROUTE_INVALID", request)
+							return
+						}
+						target.RouteService, target.RoutePort = *input.RouteService, *input.RoutePort
+					}
+					if len(target.Domains) == 0 || target.RouteService == "" || target.ZeroDowntime || target.PublishedRoute != nil {
 						problem(w, 400, "COMPOSE_ROUTE_INVALID", request)
 						return
 					}
-					target.RouteService, target.RoutePort = *input.RouteService, *input.RoutePort
+					if target.BluePort == 0 {
+						if target.BluePort, err = a.port(r.Context(), 0, id, map[int]bool{}); err != nil {
+							fail(w, err, request)
+							return
+						}
+					}
 					j.Input.Project = &target
 				}
 				preparer, ok := e.Docker.(interface {

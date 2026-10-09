@@ -405,12 +405,15 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 		return model.Fail("RELEASE_INVALID")
 	}
 	r := *j.Input.Release
-	// The release was prepared for a corrected web service and port.
-	if j.Action == "deploy" && j.Input.Project != nil && p.NativeCompose() {
-		p.RouteService, p.RoutePort = j.Input.Project.RouteService, j.Input.Project.RoutePort
-	}
 	if err := e.Routes.Ensure(ctx, *p); err != nil {
 		return err
+	}
+	// The release was prepared for these domains, web service and host port;
+	// the final route step writes the matching Caddy site.
+	if j.Action == "deploy" && j.Input.Project != nil && p.NativeCompose() {
+		next := j.Input.Project
+		p.RouteService, p.RoutePort = next.RouteService, next.RoutePort
+		p.Domains, p.BluePort = next.Domains, next.BluePort
 	}
 	if _, err := os.Stat(filepath.Join(e.Config.ProjectsRoot, p.ID, "env", r.Environment+".env")); err != nil {
 		return model.Fail("ENVIRONMENT_UNAVAILABLE")

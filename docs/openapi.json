@@ -3516,6 +3516,12 @@
             "type": "string",
             "description": "Optional optimistic concurrency check against the current release. An empty string requires an undeployed project. A mismatch returns CONFIGURATION_CHANGED before any files are prepared."
           },
+          "domains": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 10,
+            "description": "Compose projects: connect these domains with this release (requires a web service via route_service/route_port unless one is set). A host port is reserved if the project has none."
+          },
           "route_service": {
             "type": "string",
             "description": "Compose projects with domains: the service that receives the domains' traffic for this release. Requires route_port."
