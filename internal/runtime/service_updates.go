@@ -383,8 +383,15 @@ func (d Docker) PullServiceUpdate(ctx context.Context, p model.Project, plan *mo
 	image, _ := svc["image"].(string)
 	image = strings.ReplaceAll(image, "$$", "$")
 	base := model.ServiceInstance{Name: plan.Service, Release: r}
-	if _, err = d.serviceCommand(ctx, p, base, "pull", plan.Service); err != nil {
-		return false, model.Fail("IMAGE_PULL_FAILED")
+	if plan.PreparedImage != "" {
+		if !imageDigest(plan.PreparedImage) || plan.SourceRelease != nil {
+			return false, model.Fail("IMAGE_IDENTITY_UNKNOWN")
+		}
+		image = plan.PreparedImage
+	} else {
+		if _, err = d.serviceCommand(ctx, p, base, "pull", plan.Service); err != nil {
+			return false, model.Fail("IMAGE_PULL_FAILED")
+		}
 	}
 	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"image", "inspect", image})
 	var images []struct {
@@ -394,6 +401,9 @@ func (d Docker) PullServiceUpdate(ctx context.Context, p model.Project, plan *mo
 		} `json:"Config"`
 	}
 	if err != nil || result.Truncated || json.Unmarshal(result.Output, &images) != nil || len(images) != 1 || len(images[0].ID) != 71 || !strings.HasPrefix(images[0].ID, "sha256:") || strings.Trim(images[0].ID[7:], "0123456789abcdef") != "" {
+		return false, model.Fail("IMAGE_IDENTITY_UNKNOWN")
+	}
+	if plan.PreparedImage != "" && images[0].ID != plan.PreparedImage {
 		return false, model.Fail("IMAGE_IDENTITY_UNKNOWN")
 	}
 	if images[0].ID == plan.Previous.Release.Image && plan.SourceRelease == nil {

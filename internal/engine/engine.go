@@ -163,6 +163,7 @@ func (e *Engine) Run(ctx context.Context) error {
 }
 
 var phaseLabels = map[string]string{
+	"preparing_image":               "Preparing downloaded image",
 	"configuration_route_intent":    "Switching app traffic",
 	"configuration_rollback_intent": "Restoring previous app traffic",
 	"configuration_retire_intent":   "Retiring drained apps",

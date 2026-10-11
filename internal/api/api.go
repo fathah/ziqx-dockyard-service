@@ -36,10 +36,11 @@ type API struct {
 	at               time.Time
 	authRejected     uint64
 	lastRejectionLog time.Time
+	images           imageTasks
 }
 
 func New(e *engine.Engine, v *auth.Verifier, fp []byte) *API {
-	return &API{Engine: e, Auth: v, FingerprintKey: fp, slots: make(chan struct{}, 32), logSlots: make(chan struct{}, 2), tokens: 100, at: time.Now()}
+	return &API{Engine: e, Auth: v, FingerprintKey: fp, slots: make(chan struct{}, 32), logSlots: make(chan struct{}, 2), tokens: 100, at: time.Now(), images: imageTasks{tasks: map[string]imageTask{}, slots: make(chan struct{}, 2)}}
 }
 func write(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -169,6 +170,10 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/"), "/")
+	if r.Method == "POST" && len(parts) == 3 && parts[0] == "projects" && (parts[2] == "image-status" || parts[2] == "image-prepare") {
+		a.serviceImages(w, r, p, body, parts[1], parts[2] == "image-prepare")
+		return
+	}
 	if r.Method == "POST" && len(parts) == 3 && parts[0] == "projects" && parts[2] == "draft" {
 		a.saveDraft(w, p, body, parts[1])
 		return

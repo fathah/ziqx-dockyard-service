@@ -29,6 +29,9 @@ var mutating = map[string]bool{"up": true, "pull": true, "stop": true, "start": 
 
 // pulls reports whether a command may pull images and so needs registry logins.
 func pulls(args []string) bool {
+	if len(args) >= 2 && args[0] == "manifest" && args[1] == "inspect" {
+		return true // Registry metadata also needs private registry authentication.
+	}
 	for _, a := range args {
 		if a == "up" || a == "pull" || a == "build" || a == "create" {
 			return true

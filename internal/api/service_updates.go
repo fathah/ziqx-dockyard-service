@@ -173,12 +173,13 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 		return
 	}
 	approved := input.Review
+	plan.PreparedImage = a.preparedImage(p, input.Service)
 	input.Review = ""
-	b, _ := json.Marshal([]any{input, p, next.ServicePorts, hostPort, plan.Previous, plan.NetworkAliases, plan.NetworkIDs, edits})
+	b, _ := json.Marshal([]any{input, p, next.ServicePorts, hostPort, plan.Previous, plan.NetworkAliases, plan.NetworkIDs, edits, plan.PreparedImage})
 	sum := sha256.Sum256(b)
 	review := hex.EncodeToString(sum[:])
 	if preview {
-		write(w, 200, map[string]any{"review_sha256": review, "service": input.Service, "mode": input.Mode, "domains": domains, "container_port": input.ContainerPort, "host_port": hostPort, "imports_routes": len(edits) > 0, "dependencies_unchanged": true})
+		write(w, 200, map[string]any{"review_sha256": review, "service": input.Service, "mode": input.Mode, "domains": domains, "container_port": input.ContainerPort, "host_port": hostPort, "imports_routes": len(edits) > 0, "dependencies_unchanged": true, "prepared_image": plan.PreparedImage})
 		return
 	}
 	if approved != review {

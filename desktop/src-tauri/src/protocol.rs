@@ -248,6 +248,27 @@ pub struct ServiceUpdate {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub review_sha256: String,
 }
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceImages {
+    pub expected_release_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub service: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub retry: bool,
+}
+impl ServiceImages {
+    pub fn valid(&self) -> bool {
+        token(&self.expected_release_id) && (self.service.is_empty() || service_name(&self.service))
+        && (!self.retry || !self.service.is_empty())
+    }
+    pub fn action(&self) -> &'static str {
+        if self.service.is_empty() { "image-status" } else { "image-prepare" }
+    }
+    pub fn scopes(&self) -> &'static str {
+        if self.service.is_empty() { "deploy.read" } else { "deploy.execute" }
+    }
+}
 impl ServiceUpdate {
     pub fn valid(&self) -> bool {
         token(&self.expected_release_id) && service_name(&self.service)
@@ -773,6 +794,23 @@ mod tests {
             let mut unknown=base.clone();unknown["data"][field]=serde_json::json!("unreviewed");
             assert!(serde_json::from_value::<Mutation>(unknown).is_err());
         }
+    }
+    #[test]
+    fn image_checks_and_preparation_have_bounded_distinct_authority() {
+        let check: ServiceImages = serde_json::from_value(serde_json::json!({"expected_release_id":"rel-current"})).unwrap();
+        assert!(check.valid());
+        assert_eq!(check.action(), "image-status");
+        assert_eq!(check.scopes(), "deploy.read");
+        let prepare: ServiceImages = serde_json::from_value(serde_json::json!({"expected_release_id":"rel-current", "service":"web", "retry":true})).unwrap();
+        assert!(prepare.valid());
+        assert_eq!(prepare.action(), "image-prepare");
+        assert_eq!(prepare.scopes(), "deploy.execute");
+        for bad in [serde_json::json!({"expected_release_id":"../release"}), serde_json::json!({"expected_release_id":"rel-current", "service":"../web"}), serde_json::json!({"expected_release_id":"rel-current", "retry":true})] {
+            assert!(!serde_json::from_value::<ServiceImages>(bad).unwrap().valid());
+        }
+        assert!(serde_json::from_value::<ServiceImages>(serde_json::json!({"expected_release_id":"rel-current", "image":"ghcr.io/attacker/app"})).is_err());
+        let capability = include_str!("../capabilities/main.json");
+        assert!(capability.contains("allow-service-images"));
     }
     #[test]
     fn service_update_requires_review_and_only_selected_service_authority() {

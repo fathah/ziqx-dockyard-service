@@ -46,7 +46,11 @@ func (e *Engine) updateService(ctx context.Context, j *model.Job, p *model.Proje
 	if err := d.VerifyServiceUpdate(ctx, old, *plan); err != nil {
 		return err
 	}
-	if err := e.phase(j, "pulling"); err != nil {
+	phase := "pulling"
+	if plan.PreparedImage != "" {
+		phase = "preparing_image"
+	}
+	if err := e.phase(j, phase); err != nil {
 		return err
 	}
 	changed, err := d.PullServiceUpdate(ctx, next, plan)

@@ -221,6 +221,8 @@ type ServiceInstance struct {
 	NetworkAliases map[string][]string `json:"network_aliases,omitempty"`
 }
 type ServiceUpdate struct {
+	// PreparedImage pins a completed background pull; execution never repulls a mutable tag.
+	PreparedImage string `json:"prepared_image,omitempty"`
 	// Configuration deployments use this submitted full release, even if the image is unchanged.
 	SourceRelease  *Release            `json:"source_release,omitempty"`
 	Service        string              `json:"service"`

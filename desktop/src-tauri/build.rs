@@ -12,6 +12,7 @@ fn main() {
             "check_domain_https",
             "preview_blue_green",
             "preview_service_update",
+            "service_images",
             "preview_route_setup",
             "mutate",
             "reconcile_job",

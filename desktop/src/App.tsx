@@ -57,6 +57,7 @@ import ProjectConfiguration, {
 import ProjectLogo, { ProjectLogoScope } from "./ProjectLogo";
 import ProjectHeader, { ProjectSummary } from "./ProjectHeader";
 import ServiceUpdate from "./ServiceUpdate";
+import useServiceImages from "./useServiceImages";
 import JobsTable from "./JobsTable";
 import CopyButton from "./CopyButton";
 import DomainConnection from "./DomainConnection";
@@ -1609,6 +1610,15 @@ export function ProjectDetail({
       .filter((job) => job.project_id === p.id)
       .map((job) => [job.job_id, job.status, job.finished_at]),
   );
+  const imageCheck = useServiceImages(
+    p.id,
+    p.slots[p.active_slot ?? "blue"]?.id ?? "",
+    !preview && p.mode === "compose" && p.state === "running",
+    undefined,
+    JSON.stringify([servicesRefresh, serviceRevision, operationRevision]),
+  );
+  const imageUpdates =
+    imageCheck?.services?.filter((s) => s.status === "available") ?? [];
   const recoveryJob = jobs.find((job) => job.status === "recovery_required");
   const projectOperation = jobs.find(
     (job) =>
@@ -1876,6 +1886,17 @@ export function ProjectDetail({
       )}
       {tab === "overview" && (
         <>
+          {imageUpdates.length > 0 && (
+            <div className="alert pending" role="status">
+              <span>
+                A new image version is available for{" "}
+                {imageUpdates.map((s) => s.service).join(", ")}.
+              </span>
+              <Button type="button" onClick={() => setTab("services")}>
+                View updates
+              </Button>
+            </div>
+          )}
           <ProjectSummary
             project={p}
             onConfigure={() => setTab("services")}
@@ -2137,6 +2158,27 @@ export function ProjectDetail({
                 <tbody>
                   {services.map((s) => {
                     const active = s.slot === p.active_slot;
+                    const imageState = active
+                      ? imageCheck?.services?.find(
+                          (item) => item.service === s.name,
+                        )?.status
+                      : undefined;
+                    const ghcrImage = active && s.image?.startsWith("ghcr.io/");
+                    const imageNote =
+                      imageState === "available"
+                        ? "New image available"
+                        : imageState === "current"
+                          ? "Image is up to date"
+                          : imageState === "pinned"
+                            ? "Image pinned to a digest"
+                            : imageState === "unknown" ||
+                                (ghcrImage && imageCheck?.status === "failed")
+                              ? "Image update check unavailable"
+                              : ghcrImage &&
+                                  (!imageCheck ||
+                                    imageCheck.status === "checking")
+                                ? "Checking GHCR for updates…"
+                                : "Image recorded at deploy";
                     const serviceDomains = active
                       ? (p.service_routes?.find(
                           (route) => route.service === s.name,
@@ -2186,6 +2228,9 @@ export function ProjectDetail({
                                 ) : (
                                   <Tag>No host port</Tag>
                                 )}
+                                {imageState === "available" && (
+                                  <Tag>New image available</Tag>
+                                )}
                               </div>
                               <code title={s.image}>
                                 {s.image || "Built from Compose"}
@@ -2226,7 +2271,7 @@ export function ProjectDetail({
                           <p
                             className={`services-status-note ${showReason ? "blocked" : ""}`}
                           >
-                            {showReason ? blocked : "Image recorded at deploy"}
+                            {showReason ? blocked : imageNote}
                           </p>
                         </td>
                         <td className="services-action">

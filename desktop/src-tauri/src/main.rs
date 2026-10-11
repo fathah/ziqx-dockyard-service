@@ -901,6 +901,16 @@ async fn preview_service_update(c: State<'_, Control>, project: String, data: pr
     Ok(result)
 }
 #[tauri::command]
+async fn service_images(c: State<'_, Control>, project: String, data: protocol::ServiceImages) -> Result<Value,String> {
+    if !protocol::id(&project) || !data.valid() { return Err("Invalid image check".into()); }
+    let action = data.action();
+    let op=Operation {method:"POST".into(),target:format!("/v1/projects/{project}/{action}"),scopes:data.scopes().into(),project,action:action.into(),body:serde_json::to_string(&data).map_err(|_|"Invalid request")?,idempotency:format!("images-{}",uuid::Uuid::new_v4()),request_id:format!("req-{}",uuid::Uuid::new_v4())};
+    let mut inner=c.inner.lock().await;let s=session(&mut inner)?;
+    let result=send(s,&op).await?;
+    if s.generation!=c.generation.load(Ordering::SeqCst){return Err("SESSION_LOCKED".into());}
+    Ok(result)
+}
+#[tauri::command]
 async fn preview_route_setup(c: State<'_, Control>, project: String, data: protocol::RouteSetup) -> Result<Value,String> {
     if !protocol::id(&project) || !data.valid() { return Err("Invalid route setup".into()); }
     let op=Operation {method:"POST".into(),target:format!("/v1/projects/{project}/route-setup-preview"),scopes:"deploy.execute projects.write sites.write".into(),project,action:"route-setup-preview".into(),body:serde_json::to_string(&data).map_err(|_|"Invalid request")?,idempotency:format!("preview-{}",uuid::Uuid::new_v4()),request_id:format!("req-{}",uuid::Uuid::new_v4())};
@@ -1465,6 +1475,7 @@ fn main() {
             check_domain_https,
             preview_blue_green,
             preview_service_update,
+            service_images,
             preview_route_setup,
             mutate,
             reconcile_job,

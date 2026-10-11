@@ -16,6 +16,7 @@ import Select from "./Select";
 import * as api from "./api";
 import { ConnectionHealth } from "./ServerRepair";
 import type { Project, Service } from "./types";
+import useServiceImages from "./useServiceImages";
 
 function explain(error: unknown) {
   const text = String(error);
@@ -23,7 +24,11 @@ function explain(error: unknown) {
     HTTP_404:
       "Update the Dockyard service on your VPS, then open this service again.",
     SERVICE_REVIEW_CHANGED:
-      "The service, routes or available ports changed. Review again.",
+      "The service, routes or downloaded image changed or expired. Review again.",
+    IMAGE_PULL_FAILED:
+      "The image download failed. Check the server's registry login and connection, then retry.",
+    IMAGE_PREPARATION_TIMEOUT:
+      "The image download took too long. Retry to check its progress.",
     CONFIGURATION_CHANGED:
       "The project changed. Close this dialog and refresh the project.",
     SERVICE_NETWORK_CHANGED: "The service's network changed. Review again.",
@@ -108,6 +113,16 @@ export default function ServiceUpdate({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const release = project.slots[project.active_slot ?? "blue"]?.id ?? "";
+  const [pullRefresh, setPullRefresh] = useState(0);
+  const pull = useServiceImages(
+    project.id,
+    release,
+    !preview && service.updatable === true,
+    service.name,
+    pullRefresh,
+    JSON.stringify(project),
+  );
+  const imageReady = preview || pull?.status === "ready";
   const data: api.ServiceUpdateInput = {
     expected_release_id: release,
     service: service.name,
@@ -143,6 +158,7 @@ export default function ServiceUpdate({
   }, [key]);
 
   async function check() {
+    if (!imageReady) return;
     const current = ++sequence.current;
     setBusy(true);
     setError("");
@@ -160,6 +176,10 @@ export default function ServiceUpdate({
             dependencies_unchanged: true,
           }
         : await api.previewServiceUpdate(project.id, data);
+      if (!preview && !result.prepared_image)
+        throw new Error(
+          "The prepared image expired. Close and reopen this dialog to download it again.",
+        );
       if (current === sequence.current) setChecked({ key, review: result });
     } catch (e) {
       if (current === sequence.current) setError(String(e));
@@ -217,6 +237,27 @@ export default function ServiceUpdate({
           Pull the latest image for this service. Your other services, database
           and data volumes stay in place.
         </p>
+        {!preview && (
+          <div
+            className={`alert ${pull?.status === "failed" ? "error" : "pending"}`}
+            role="status"
+          >
+            {pull?.status === "ready"
+              ? "Image downloaded. Ready to review and update."
+              : pull?.status === "failed"
+                ? explain(pull.error)
+                : "Pulling the image in the background. The running service keeps serving traffic."}
+            {pull?.status === "failed" && (
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => setPullRefresh((n) => n + 1)}
+              >
+                Retry image download
+              </Button>
+            )}
+          </div>
+        )}
         {!review && (
           <fieldset className="deployment-strategy" disabled={busy}>
             <legend>How to update</legend>
@@ -349,7 +390,7 @@ export default function ServiceUpdate({
             </h3>
             <ol>
               <li>
-                Pull this service's image. Skip deployment if it is already
+                Use the downloaded image. Skip deployment if it is already
                 current.
               </li>
               {mode === "seamless" ? (
@@ -417,11 +458,15 @@ export default function ServiceUpdate({
           <Button
             type="button"
             className="button primary"
-            disabled={busy || !valid}
+            disabled={busy || !valid || !imageReady}
             onClick={() => void check()}
           >
             <ShieldCheck size={17} />
-            {busy ? "Reviewing…" : "Review update"}
+            {busy
+              ? "Reviewing…"
+              : !imageReady && pull?.status !== "failed"
+                ? "Downloading image…"
+                : "Review update"}
           </Button>
         )}
       </div>

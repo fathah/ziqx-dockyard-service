@@ -77,6 +77,23 @@ const services: Service[] = [
   },
 ];
 mockIPC((command, payload: any) => {
+  if (command === "service_images") {
+    if (
+      payload.project !== project.id ||
+      payload.data.expected_release_id !== release.id ||
+      !services.some((s) => s.name === payload.data.service)
+    )
+      throw new Error("Invalid image preparation");
+    const params = new URLSearchParams(location.search);
+    if (params.has("pull_failure") && !payload.data.retry)
+      return { status: "failed", error: "IMAGE_PULL_FAILED" };
+    return new Promise((resolve) =>
+      setTimeout(
+        () => resolve({ status: "ready", image: "sha256:" + "2".repeat(64) }),
+        params.has("slow_pull") ? 5000 : 100,
+      ),
+    );
+  }
   if (command === "check_domain_https") {
     if (
       payload.project !== project.id ||
@@ -114,6 +131,7 @@ mockIPC((command, payload: any) => {
   )
     throw new Error("HTTP_503: CADDY_CONFIG_WRITE_REQUIRED");
   return {
+    prepared_image: "sha256:" + "2".repeat(64),
     review_sha256: "a".repeat(64),
     service: data.service,
     mode: data.mode,

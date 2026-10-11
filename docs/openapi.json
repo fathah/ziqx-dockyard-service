@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Ziqx Dockyard Service API",
-    "version": "0.7.24",
+    "version": "0.7.25",
     "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
     "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Native service update eligibility additionally verifies the current immutable Compose manifest. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved.\n\nIndividual service updates preserve the complete Compose project and its dependencies. Seamless service updates are production-only and switch only the routed stateless app; stateful services use restart."
   },
@@ -2076,6 +2076,142 @@
             "scopes": ["deploy.environment"]
           }
         ]
+      }
+    },
+    "/v1/projects/{id}/image-status": {
+      "post": {
+        "operationId": "checkServiceImages",
+        "summary": "Start or poll background GHCR metadata checks",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Bounded background task for the expected current release. Returns a task snapshot, not a deployment job. Does not start or stop containers or change routes. Poll while checking or pulling. Preparation needs server-wide compose.admin; downloads are pinned and reused by service update reviews.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "x-required-scopes": [
+          "deploy.read"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImageCheckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing task snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageTask"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Background task started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageTask"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/projects/{id}/image-prepare": {
+      "post": {
+        "operationId": "prepareServiceImage",
+        "summary": "Start or poll a selected-service image download",
+        "tags": [
+          "Deployments"
+        ],
+        "description": "Bounded background task for the expected current release. Returns a task snapshot, not a deployment job. Does not start or stop containers or change routes. Poll while checking or pulling. Preparation needs server-wide compose.admin; downloads are pinned and reused by service update reviews.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/KeyID"
+          },
+          {
+            "$ref": "#/components/parameters/Timestamp"
+          },
+          {
+            "$ref": "#/components/parameters/Scopes"
+          },
+          {
+            "$ref": "#/components/parameters/Idempotency"
+          },
+          {
+            "$ref": "#/components/parameters/Actor"
+          },
+          {
+            "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "$ref": "#/components/parameters/ProjectID"
+          }
+        ],
+        "x-required-scopes": [
+          "deploy.execute"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImagePrepareRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Existing task snapshot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageTask"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Background task started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageTask"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/v1/projects/{id}/service-update-preview": {
@@ -4198,9 +4334,97 @@
           }
         }
       },
+      "ImageCheckRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_release_id"
+        ],
+        "properties": {
+          "expected_release_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ImagePrepareRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_release_id",
+          "service"
+        ],
+        "properties": {
+          "expected_release_id": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "retry": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "ServiceImageStatus": {
+        "type": "object",
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "available",
+              "current",
+              "pinned",
+              "unknown"
+            ]
+          },
+          "current_image": {
+            "type": "string"
+          },
+          "latest_image": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "ImageTask": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "checking",
+              "pulling",
+              "ready",
+              "failed"
+            ]
+          },
+          "image": {
+            "type": "string"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceImageStatus"
+            }
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
       "ServiceUpdateReview": {
         "type": "object",
         "properties": {
+          "prepared_image": { "type": "string", "description": "Completed background pull pinned into this review; empty when no preparation exists." },
           "review_sha256": {
             "type": "string"
           },

@@ -167,6 +167,7 @@ export type ServiceUpdateInput = {
   review_sha256?: string;
 };
 export type ServiceUpdateReview = {
+  prepared_image?: string;
   review_sha256: string;
   service: string;
   mode: "seamless" | "restart";
@@ -180,6 +181,35 @@ export const previewServiceUpdate = (
   project: string,
   data: ServiceUpdateInput,
 ) => invoke<ServiceUpdateReview>("preview_service_update", { project, data });
+
+export type ServiceImageStatus = {
+  service: string;
+  image: string;
+  status: "available" | "current" | "pinned" | "unknown";
+  current_image?: string;
+  latest_image?: string;
+  error?: string;
+};
+export type ImageTask = {
+  status: "checking" | "pulling" | "ready" | "failed";
+  image?: string;
+  services?: ServiceImageStatus[];
+  error?: string;
+};
+export const serviceImages = (
+  project: string,
+  release: string,
+  service?: string,
+  retry = false,
+) =>
+  invoke<ImageTask>("service_images", {
+    project,
+    data: {
+      expected_release_id: release,
+      ...(service ? { service } : {}),
+      ...(retry ? { retry: true } : {}),
+    },
+  });
 
 export type RouteSetupInput = {
   replace_existing_rules?: boolean;

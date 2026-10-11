@@ -48,6 +48,7 @@
     "allow-provider-write",
     "allow-preview-blue-green",
     "allow-preview-service-update",
+    "allow-service-images",
     "allow-preview-route-setup",
     "allow-reconcile-job",
     "allow-resolve-pending",
