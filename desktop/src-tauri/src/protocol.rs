@@ -359,7 +359,7 @@ impl Mutation {
                 if !data.valid() || data.review_sha256.len() != 64 || !data.review_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
                     return Err("Review the route first".into());
                 }
-                ("POST", project, "route-setup", "projects.write sites.write", serde_json::to_string(&data))
+                ("POST", project, "route-setup", "deploy.execute projects.write sites.write", serde_json::to_string(&data))
             }
             Self::ServiceUpdate { project, data } => {
                 if !data.valid() || data.review_sha256.len()!=64 || !data.review_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
@@ -738,7 +738,7 @@ mod tests {
         let base=serde_json::json!({"action":"route_setup","project":"demo","data":{"expected_release_id":"rel-original","domains":["tasks.example.com"],"service":"app","container_port":3000,"review_sha256":"a".repeat(64)}});
         let op=serde_json::from_value::<Mutation>(base.clone()).unwrap().plan().unwrap();
         assert_eq!(op.target,"/v1/projects/demo/route-setup");
-        assert_eq!(op.scopes,"projects.write sites.write");
+        assert_eq!(op.scopes,"deploy.execute projects.write sites.write");
         for (field,value) in [("service",serde_json::json!("../app")),("container_port",serde_json::json!(0)),("domains",serde_json::json!([])),("review_sha256",serde_json::json!(""))] {
             let mut bad=base.clone();bad["data"][field]=value;
             assert!(serde_json::from_value::<Mutation>(bad).unwrap().plan().is_err());

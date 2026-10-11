@@ -116,6 +116,7 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 		ports = append(ports, map[string]any{"target": p.RoutePort, "published": "${DOCKYARD_PORT}", "host_ip": "127.0.0.1", "protocol": "tcp"})
 		svc["ports"] = ports
 	}
+	addServiceRouteBindings(p, services)
 	if p.ZeroDowntime {
 		for name, raw := range object(doc["networks"]) {
 			network := raw.(map[string]any)
@@ -158,6 +159,11 @@ func compileNative(c config.Config, p model.Project, doc map[string]any) error {
 	if p.RouteService != "" && object(services[p.RouteService]) == nil {
 		return model.Fail("COMPOSE_ROUTE_SERVICE_MISSING")
 	}
+	for _, route := range p.ServiceRoutes {
+		if object(services[route.Service]) == nil {
+			return model.Fail("COMPOSE_ROUTE_SERVICE_MISSING")
+		}
+	}
 	if p.ZeroDowntime && (p.RouteService == "" || len(p.Domains) == 0) {
 		return model.Fail("COMPOSE_BLUE_GREEN_ROUTE_REQUIRED")
 	}
@@ -179,6 +185,15 @@ func compileNative(c config.Config, p model.Project, doc map[string]any) error {
 		for _, port := range ports {
 			mapping := object(port)
 			if name == p.RouteService && fmt.Sprint(mapping["target"]) == strconv.Itoa(p.RoutePort) && (mapping["protocol"] == nil || mapping["protocol"] == "tcp") {
+				continue
+			}
+			managed := false
+			for _, route := range p.ServiceRoutes {
+				if route.Managed && name == route.Service && fmt.Sprint(mapping["target"]) == strconv.Itoa(route.ContainerPort) && (mapping["protocol"] == nil || mapping["protocol"] == "tcp") {
+					managed = true
+				}
+			}
+			if managed {
 				continue
 			}
 			retained = append(retained, port)
@@ -339,6 +354,10 @@ func EditableConfiguration(c config.Config, p model.Project, r model.Release) (s
 // Older adopted releases predate Dockyard's managed website port. Rebind only
 // that port when explicitly rolling back the full stack; never reevaluate env.
 func RebindNativeRoute(c config.Config, p model.Project, r model.Release) (model.Release, error) {
+	return rebindNativeRoute(c, p, r, false)
+}
+
+func rebindNativeRoute(c config.Config, p model.Project, r model.Release, preserveServiceImages bool) (model.Release, error) {
 	_, b, err := nativeRelease(c, p, r)
 	if err != nil {
 		return r, err
@@ -351,6 +370,27 @@ func RebindNativeRoute(c config.Config, p model.Project, r model.Release) (model
 	if json.Unmarshal(b, &doc) != nil {
 		return r, model.Fail("COMPOSE_CONFIG_DIVERGED")
 	}
+	if preserveServiceImages {
+		// Individual updates may be newer than the last full-stack release.
+		// Preserve their immutable images without importing candidate-only names,
+		// networks or ports into the full-stack configuration.
+		for name, instance := range p.ServiceInstances {
+			_, activeBytes, err := nativeRelease(c, p, instance.Release)
+			if err != nil {
+				return r, err
+			}
+			var active map[string]any
+			if json.Unmarshal(activeBytes, &active) != nil {
+				return r, model.Fail("COMPOSE_CONFIG_DIVERGED")
+			}
+			service := object(object(doc["services"])[name])
+			updated := object(object(active["services"])[instance.Name])
+			if service == nil || updated == nil || instance.Release.Environment != r.Environment || instance.Release.Image == "" || updated["image"] != instance.Release.Image {
+				return r, model.Fail("SERVICE_CONFIGURATION_CHANGED")
+			}
+			service["image"] = instance.Release.Image
+		}
+	}
 	if err = compileNative(c, p, doc); err != nil {
 		return r, err
 	}
@@ -358,6 +398,7 @@ func RebindNativeRoute(c config.Config, p model.Project, r model.Release) (model
 		svc := object(object(doc["services"])[p.RouteService])
 		svc["ports"] = append(array(svc["ports"]), map[string]any{"target": p.RoutePort, "published": "${DOCKYARD_PORT}", "host_ip": "127.0.0.1", "protocol": "tcp"})
 	}
+	addServiceRouteBindings(p, object(doc["services"]))
 	b, err = json.MarshalIndent(doc, "", "  ")
 	if err != nil || len(b) > 2<<20 {
 		return r, model.Fail("COMPOSE_LIMIT")
@@ -372,4 +413,19 @@ func RebindNativeRoute(c config.Config, p model.Project, r model.Release) (model
 	}
 	r.Compose = revision
 	return r, nil
+}
+
+func addServiceRouteBindings(p model.Project, services map[string]any) {
+	for _, route := range p.ServiceRoutes {
+		if !route.Managed {
+			continue
+		}
+		svc := object(services[route.Service])
+		svc["ports"] = append(array(svc["ports"]), map[string]any{"target": route.ContainerPort, "published": strconv.Itoa(route.HostPort), "host_ip": "127.0.0.1", "protocol": "tcp"})
+	}
+}
+
+// Reuse resolved inputs and image references; no environment secrets leave the VPS.
+func (d Docker) PrepareServiceRoutes(ctx context.Context, p model.Project, r model.Release) (model.Release, error) {
+	return rebindNativeRoute(d.Config, p, r, true)
 }

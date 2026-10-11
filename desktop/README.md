@@ -4,10 +4,10 @@ A Tauri 2 desktop control room with a Rust API client and a bundled React interf
 
 ## Run on this Mac
 
-The latest local Apple Silicon app is in `releases/dockyard-migration-plan/Dockyard.app`, with `releases/Dockyard-migration-plan-macos-arm64.zip` (SHA-256 `ec5457f539693d95a8c4ce824b123a203239cb244aed354321b30da558860a7f`). Its app icon and in-app wordmark use the same Dockyard logo. When an enrolled Mac is locked, the app shows only the Touch ID unlock screen. This build includes a fixed, non-scrolling sidebar, server-shaped loading placeholders, updater access checks, the corrected executable upload, a migration plan review, and the linked Caddy route layout fix. From the repository root:
+The latest local Apple Silicon app is in `releases/dockyard-service-domains/Dockyard.app`. It includes per-service domain connections, automatic container-port detection, Cloudflare subdomains with the enrolled server IP, and reviewed Caddy/Docker repairs. Its bundled VPS service is **0.7.20**; install it through **Server details → Updates**. From the repository root:
 
 ```sh
-open desktop/releases/dockyard-migration-plan/Dockyard.app
+open desktop/releases/dockyard-service-domains/Dockyard.app
 ```
 
 Quit any previously opened Dockyard instance first so the single-instance guard does not bring an older build to the foreground. This local artifact uses an ad-hoc signature; it is not notarized for distribution.
@@ -29,6 +29,14 @@ Requirements: macOS 12+, Node 22.12+ or 24+, Rust 1.88+, and Xcode Command Line 
 
 For development: `npm run desktop:dev`. For a browser-only visual preview: `npm run build && npm run preview`, then open `http://127.0.0.1:1420/`. A browser preview cannot enroll, read your API, or submit writes. Frontend assets and icons are bundled; no CDN, remote fonts, analytics, or desktop auto-update service is used.
 
+## Connect service domains and repair readiness checks
+
+Use **Services → Connect domain** on a running Compose service. Dockyard fills the detected container port and keeps sibling services' domains. Choose **Use a domain**, or **Cloudflare subdomain** to select an account, domain and subdomain. The DNS review fills the record value from the enrolled VPS IP, creates an A/AAAA record, or reviews an existing record update. Matching records are reused on retries. An account can be connected from the same form; its token is entered through the secure native prompt.
+
+The connection review reuses an existing published binding where possible. A missing binding is published privately through a reviewed controlled deployment, preserving resolved inputs and images from individual service updates. These service routes require VPS Dockyard **0.7.20** or later; use **Server details → Updates** to install the bundled update. Whole-stack blue/green projects retain their existing route workflow.
+
+If review reports a Caddy problem, **Check & repair connection** shows the same repair buttons as **Server details → Access & health**. Review and approve the required repair with Touch ID, then review the domain again. Buttons cover the private admin connection/runtime directory, generated-route import and directory, saved/live route synchronization, folder/socket access, starting Caddy or Docker, and installing the Compose plugin. Repairs bind approval to the observed state, keep private backups, pause Dockyard admissions, validate Caddy, and verify the result. Missing-socket repair reviews a brief Caddy restart; permission repairs restart only Dockyard. Detached server workers finish even if the Mac disconnects.
+
 ## Built-in terminal
 
 Choose **Terminal** in the sidebar, select **VPS root** or **Container**, then **Connect with Touch ID**. A separate root SSH connection checks the server IP, port and host fingerprint saved during enrollment before sending credentials. Password entry uses a native macOS secure field; passwords never enter the webview, enrollment JSON, SQLite or app logs. This requires an SSH enrollment and root password login already permitted by the server; the app does not change SSH policy.
@@ -49,7 +57,7 @@ Open **Server details → Updates → Check version**. The desktop reads the ins
 
 **Server details** has Connection, Access & health, Security, and Updates tabs. **Access & health → Check access** checks this Mac's Compose grant, Docker/Compose, Caddy service, the configured top-level generated-route import, route files, configuration validation, private admin socket, and saved/live route consistency. It checks folder write access inside Dockyard's running mount namespace using `nsenter`, plus the daemon's effective private-socket capability. An empty generated directory is normal; a missing import is flagged before you start a seamless update. The import check recognizes directory globs in the main Caddyfile or recursively imported files; custom snippet/environment-based imports need manual review.
 
-The same report includes root SSH, updater directory, installed binaries, and database/service access. It shows the latest five failed or recovery operations, with job IDs, phases and error codes, using Python's built-in read-only SQLite connection (no `sqlite3` CLI required). Journal checks summarize recognized inventory, certificate and upstream errors from up to 300 entries in the last two hours. Raw configuration, job inputs and journal messages are excluded from the response; review commands are available for flagged checks. These server-wide diagnostics supplement each deployment's service and route review.
+The same report includes root SSH, updater directory, installed binaries, and database/service access. It shows the latest five failed or recovery operations, with job IDs, phases and error codes, using Python's built-in read-only SQLite connection (no `sqlite3` CLI required). Journal checks summarize recognized inventory, certificate and upstream errors from up to 300 entries in the last two hours. Raw configuration, job inputs and journal messages are excluded from the response; repair and recheck buttons are available for flagged checks. These server-wide diagnostics supplement each deployment's service and route review.
 
 If the updater directory is missing or its root-owned permissions need tightening, **Prepare updater access** creates or restricts only `/var/lib/dockyard-desktop-updates` after Touch ID. Unsafe paths and problems with binaries, database, or service are reported for VPS review; the app does not broadly grant system permissions. Update uploads place binaries in that private directory with owner-execute permission before validating and installing them. The diagnostics ship with the Mac client and work over its existing pinned root SSH connection; they do not require a new VPS API endpoint.
 

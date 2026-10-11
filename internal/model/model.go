@@ -26,6 +26,7 @@ type PublishedRoute struct {
 }
 
 type Project struct {
+	ServiceRoutes    []ServiceRoute             `json:"service_routes,omitempty"`
 	PublishedRoute   *PublishedRoute            `json:"published_route,omitempty"`
 	ServiceInstances map[string]ServiceInstance `json:"service_instances,omitempty"`
 	ServicePorts     []int                      `json:"service_ports,omitempty"`
@@ -53,6 +54,16 @@ type Project struct {
 	RecoveryDrain    bool                       `json:"recovery_drain_pending,omitempty"`
 }
 
+// ServiceRoute assigns a group of hosts to a service's verified local binding.
+// Managed bindings are compiled into every future full-stack release.
+type ServiceRoute struct {
+	Service       string   `json:"service"`
+	ContainerPort int      `json:"container_port"`
+	HostPort      int      `json:"host_port"`
+	Domains       []string `json:"domains"`
+	Managed       bool     `json:"managed,omitempty"`
+}
+
 func (p Project) NativeCompose() bool { return p.Mode == "compose" }
 
 const (
@@ -66,10 +77,33 @@ func ValidEnvironment(value string) bool {
 }
 
 func (p Project) ValidateTarget() error {
+	seen := map[string]bool{}
+	for _, route := range p.ServiceRoutes {
+		if !p.NativeCompose() || p.ZeroDowntime || route.Service == "" || route.ContainerPort < 1 || route.ContainerPort > 65535 || route.HostPort < 1 || route.HostPort > 65535 || len(route.Domains) == 0 {
+			return Uncertain("SERVICE_ROUTE_INVALID")
+		}
+		for _, domain := range route.Domains {
+			found := false
+			for _, owned := range p.Domains {
+				found = found || owned == domain
+			}
+			if !found || seen[domain] {
+				return Uncertain("SERVICE_ROUTE_INVALID")
+			}
+			seen[domain] = true
+		}
+	}
+	if p.Port(p.Active) == 0 {
+		for _, domain := range p.Domains {
+			if !seen[domain] {
+				return Uncertain("SERVICE_ROUTE_INVALID")
+			}
+		}
+	}
 	if pin := p.PublishedRoute; pin != nil && (!p.NativeCompose() || p.Adoption == nil || p.ZeroDowntime || p.ServiceMode || p.RouteService != "" || pin.Service == "" || pin.ContainerPort < 1 || pin.ContainerPort > 65535 || pin.HostPort < 1 || pin.HostPort > 65535 || pin.HostPort != p.BluePort || p.GreenPort != 0 || len(p.Domains) == 0) {
 		return Uncertain("PUBLISHED_ROUTE_INVALID")
 	}
-	if p.Adoption != nil && (!p.NativeCompose() || p.ZeroDowntime || !p.ServiceMode && p.PublishedRoute == nil && (len(p.Domains) != 0 || p.RouteService != "" || p.BluePort != 0 || p.GreenPort != 0)) {
+	if p.Adoption != nil && (!p.NativeCompose() || p.ZeroDowntime || !p.ServiceMode && p.PublishedRoute == nil && len(p.ServiceRoutes) == 0 && (len(p.Domains) != 0 || p.RouteService != "" || p.BluePort != 0 || p.GreenPort != 0)) {
 		return Uncertain("ADOPTED_ROUTES_PRESERVED")
 	}
 	if p.AppID == "" || !ValidEnvironment(p.Environment) {
@@ -111,13 +145,14 @@ type RouteEdit struct {
 }
 
 type Input struct {
-	ServiceUpdate *ServiceUpdate `json:"service_update,omitempty"`
-	Previous      *Project       `json:"previous,omitempty"`
-	RouteEdits    []RouteEdit    `json:"route_edits,omitempty"`
-	Project       *Project       `json:"project,omitempty"`
-	Release       *Release       `json:"release,omitempty"`
-	Hostname      string         `json:"hostname,omitempty"`
-	DNSRecordID   string         `json:"dns_record_id,omitempty"`
+	RouteTarget   *PublishedRoute `json:"route_target,omitempty"`
+	ServiceUpdate *ServiceUpdate  `json:"service_update,omitempty"`
+	Previous      *Project        `json:"previous,omitempty"`
+	RouteEdits    []RouteEdit     `json:"route_edits,omitempty"`
+	Project       *Project        `json:"project,omitempty"`
+	Release       *Release        `json:"release,omitempty"`
+	Hostname      string          `json:"hostname,omitempty"`
+	DNSRecordID   string          `json:"dns_record_id,omitempty"`
 	// DraftSHA identifies the saved draft this deployment was made from.
 	DraftSHA string `json:"draft_sha,omitempty"`
 }

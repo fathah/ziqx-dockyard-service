@@ -102,6 +102,12 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 	var edits []model.RouteEdit
 	hostPort := 0
 	if input.Mode == "seamless" {
+		for _, route := range p.ServiceRoutes {
+			if route.Service == input.Service {
+				problem(w, 409, "SERVICE_ROUTE_RESTART_REQUIRED", request)
+				return
+			}
+		}
 		next.PublishedRoute = nil
 		if p.Environment != model.Production || input.ContainerPort < 1 || input.ContainerPort > 65535 {
 			problem(w, 409, "SERVICE_UPDATE_INVALID", request)

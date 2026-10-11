@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +46,41 @@ func (d Docker) nativeContainers(ctx context.Context, p model.Project, slot stri
 		delete(expected, c.ID)
 	}
 	return containers, nil
+}
+
+func (d Docker) DetectedServicePorts(ctx context.Context, p model.Project) (map[string][]int, error) {
+	containers, err := d.nativeContainers(ctx, p, p.Active)
+	if err != nil {
+		return nil, err
+	}
+	ports := map[string][]int{}
+	for _, container := range containers {
+		name := container.Config.Labels["com.docker.compose.service"]
+		seen := map[int]bool{}
+		for key := range container.Config.ExposedPorts {
+			if !strings.HasSuffix(key, "/tcp") {
+				continue
+			}
+			n, _ := strconv.Atoi(strings.TrimSuffix(key, "/tcp"))
+			if n > 0 && n <= 65535 {
+				seen[n] = true
+			}
+		}
+		for key := range container.NetworkSettings.Ports {
+			if !strings.HasSuffix(key, "/tcp") {
+				continue
+			}
+			n, _ := strconv.Atoi(strings.TrimSuffix(key, "/tcp"))
+			if n > 0 && n <= 65535 {
+				seen[n] = true
+			}
+		}
+		for n := range seen {
+			ports[name] = append(ports[name], n)
+		}
+		sort.Ints(ports[name])
+	}
+	return ports, nil
 }
 
 func (d Docker) nativeHealthy(ctx context.Context, p model.Project, slot string, r model.Release) error {
@@ -106,6 +142,20 @@ func (d Docker) nativeHealthy(ctx context.Context, p model.Project, slot string,
 				}
 			}
 			if !ipv4 || !c.State.Running {
+				return model.Uncertain("CONTAINER_BINDING_DIVERGED")
+			}
+		}
+		for _, route := range p.ServiceRoutes {
+			if route.Service != name {
+				continue
+			}
+			found := false
+			for _, binding := range c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", route.ContainerPort)] {
+				if (binding.HostIP == "127.0.0.1" || binding.HostIP == "0.0.0.0") && binding.HostPort == strconv.Itoa(route.HostPort) {
+					found = true
+				}
+			}
+			if !found || !c.State.Running {
 				return model.Uncertain("CONTAINER_BINDING_DIVERGED")
 			}
 		}

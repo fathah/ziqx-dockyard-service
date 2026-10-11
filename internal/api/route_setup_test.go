@@ -2,7 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +21,91 @@ type routeSetupDocker struct {
 	observeErr error
 }
 
+func (d *routeSetupDocker) PrepareServiceRoutes(ctx context.Context, p model.Project, r model.Release) (model.Release, error) {
+	// A verified immutable manifest for the admission test, not a Docker call.
+	return r, nil
+}
+
+func TestServiceDomainsPreserveSiblingRoutesAndRecheckReview(t *testing.T) {
+	for _, mode := range []string{"published", "publish-new-port", "adopted-unpublished"} {
+		t.Run(mode, func(t *testing.T) {
+			a, base, routes, send := apiFixture(t)
+			checked := &checkedRouteSetup{routesStub: routes}
+			a.Engine.Routes = checked
+			a.Engine.Config.Keys[0].Projects = []string{"*"}
+			a.Engine.Config.Keys[0].Scopes = append(a.Engine.Config.Keys[0].Scopes, "compose.admin")
+			a.Auth, _ = auth.New(a.Engine.Config)
+			d := &routeSetupDocker{dockerStub: base, upstream: "127.0.0.1:3032"}
+			a.Engine.Docker = d
+			release := model.Release{ID: "rel-original", Compose: "cmp-original", Environment: "env-" + strings.Repeat("a", 32)}
+			if mode != "published" {
+				d.observeErr = model.Fail("BLUE_GREEN_ROUTE_TARGET_MISMATCH")
+				dir := filepath.Join(a.Engine.Config.ProjectsRoot, "demo")
+				os.MkdirAll(filepath.Join(dir, "compose"), 0700)
+				os.MkdirAll(filepath.Join(dir, "env"), 0700)
+				envHash := sha256.Sum256(nil)
+				doc, _ := json.Marshal(map[string]any{"services": map[string]any{"web": map[string]any{"image": "web:stable"}, "api": map[string]any{"image": "api:stable"}}, "x-dockyard-env-sha256": hex.EncodeToString(envHash[:])})
+				hash := sha256.Sum256(doc)
+				release.Compose = "cmp-" + hex.EncodeToString(hash[:])
+				os.WriteFile(filepath.Join(dir, "compose", release.Compose+".yml"), doc, 0600)
+				os.WriteFile(filepath.Join(dir, "env", release.Environment+".env"), nil, 0600)
+			}
+			p := model.Project{ID: "demo", AppID: "tasks", Mode: "compose", Environment: model.Production, State: "running", Active: "blue", RouteService: "web", RoutePort: 3000, BluePort: 3031, Domains: []string{"app.example.com"}, Slots: map[string]model.Release{"blue": release}, Releases: []model.Release{release}}
+			if mode == "adopted-unpublished" {
+				p.Adoption = &model.Adoption{SourceName: "tasks", ComposeProject: "tasks"}
+				p.Domains, p.RouteService, p.RoutePort, p.BluePort = nil, "", 0, 0
+			}
+			job := model.Job{ID: "original", ProjectID: p.ID, Status: "succeeded", Created: time.Now(), Input: model.Input{Project: &p}}
+			if err := a.Engine.Store.Accept(job, &p, "original", "original", 10, 10); err != nil {
+				t.Fatal(err)
+			}
+			input := routeSetupRequest{ExpectedRelease: release.ID, Domains: []string{"api.example.com"}, Service: "api", ContainerPort: 3040}
+			raw, _ := json.Marshal(input)
+			scopes := "deploy.execute projects.write sites.write"
+			w := send("POST", "/v1/projects/demo/route-setup-preview", string(raw), scopes, "preview")
+			if w.Code != 200 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			var review struct {
+				Hash      string `json:"review_sha256"`
+				Preserved bool   `json:"containers_unchanged"`
+			}
+			json.Unmarshal(w.Body.Bytes(), &review)
+			if review.Preserved != (mode == "published") {
+				t.Fatal("deployment impact hidden", w.Body.String())
+			}
+			input.Review = review.Hash
+			raw, _ = json.Marshal(input)
+			checked.err = model.Uncertain("STATE_DIVERGED")
+			w = send("POST", "/v1/projects/demo/route-setup", string(raw), scopes, "diverged")
+			if w.Code != 409 {
+				t.Fatal("divergence accepted", w.Code)
+			}
+			checked.err = nil
+			w = send("POST", "/v1/projects/demo/route-setup", string(raw), scopes, "connect")
+			if w.Code != 202 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			var accepted model.Job
+			json.Unmarshal(w.Body.Bytes(), &accepted)
+			accepted, _ = a.Engine.Store.Job(accepted.ID)
+			next := accepted.Input.Project
+			wantDomains := append(append([]string{}, p.Domains...), "api.example.com")
+			if strings.Join(next.Domains, ",") != strings.Join(wantDomains, ",") || next.BluePort != p.BluePort || next.RouteService != p.RouteService || len(next.ServiceRoutes) != 1 || next.ServiceRoutes[0].Service != "api" || next.ServiceRoutes[0].ContainerPort != 3040 {
+				t.Fatal("sibling route replaced", next)
+			}
+			if (accepted.Input.Release == nil) != review.Preserved {
+				t.Fatal("wrong deployment plan", accepted)
+			}
+			before := base.calls + routes.calls
+			retry := send("POST", "/v1/projects/demo/route-setup", string(raw), scopes, "connect")
+			if retry.Code != 202 || retry.Body.String() != w.Body.String() || base.calls+routes.calls != before {
+				t.Fatal("retry repeated planning")
+			}
+		})
+	}
+}
+
 func (d *routeSetupDocker) PublishedUpstream(context.Context, model.Project, string, int) (string, error) {
 	return d.upstream, d.observeErr
 }
@@ -24,6 +113,17 @@ func (d *routeSetupDocker) PublishedUpstream(context.Context, model.Project, str
 type routeSetupRoutes struct {
 	*routesStub
 	source string
+}
+type checkedRouteSetup struct {
+	*routesStub
+	err error
+}
+
+func (r *checkedRouteSetup) Ensure(ctx context.Context, p model.Project) error {
+	if r.err != nil {
+		return r.err
+	}
+	return r.routesStub.Ensure(ctx, p)
 }
 
 func (r *routeSetupRoutes) PlanRouteImport(context.Context, model.Project, string) ([]model.RouteEdit, error) {

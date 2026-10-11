@@ -14,6 +14,7 @@ import {
 import Accordion from "./Accordion";
 import Select from "./Select";
 import * as api from "./api";
+import { ConnectionHealth } from "./ServerRepair";
 import type { Project, Service } from "./types";
 
 function explain(error: unknown) {
@@ -319,38 +320,16 @@ export default function ServiceUpdate({
             {explain(error)}
           </p>
         )}
-        {error.includes("CADDY_UNAVAILABLE") && (
-          <Accordion
-            title="Check Caddy on the server"
-            icon={Terminal}
-            className="caddy-connection-help"
-          >
-            <p>Run these checks in the VPS terminal:</p>
-            <pre>
-              <code>{`systemctl is-active caddy
-systemctl show dockyard -p User -p CapabilityBoundingSet
-test -S /run/caddy/admin.sock && echo socket-present || echo socket-missing
-curl --max-time 5 --unix-socket /run/caddy/admin.sock -sS -o /dev/null -w 'Caddy HTTP %{http_code}\\n' http://127.0.0.1/config/`}</code>
-            </pre>
-            <p>
-              Expect HTTP 200. A socket file can exist without Caddy listening
-              on it. If the connection fails, check Caddy’s active admin endpoint
-              and the private socket setting in its Caddyfile.
-            </p>
-            <p>
-              If Caddy is active and the socket exists, older root installations
-              with an empty capability bounding set need{" "}
-              <code>CAP_DAC_OVERRIDE</code>
-              restored in Dockyard’s systemd service. Updating the binaries
-              alone does not update those service settings.
-            </p>
-            <p>
-              If Caddy is inactive or its socket is missing, check its service
-              log and private admin configuration. Keep the admin connection
-              private. Seamless updates require a verified Caddy connection.
-            </p>
-          </Accordion>
-        )}
+        {/STATE_DIVERGED|CADDY_|COMPOSE_ACCESS_REQUIRED/.test(error) &&
+          !preview && (
+            <ConnectionHealth
+              onReady={() => {
+                setError("");
+                setChecked(undefined);
+              }}
+              disabled={busy}
+            />
+          )}
         {review && (
           <div className="service-update-plan">
             <h3>

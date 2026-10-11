@@ -1,9 +1,12 @@
 import importlib.util
 from contextlib import closing
+from http.server import BaseHTTPRequestHandler
 import json
 from pathlib import Path
+import socketserver
 import sqlite3
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock, patch
 
@@ -134,6 +137,8 @@ class AccessCheckTests(unittest.TestCase):
         checks, _, _ = self.checks(live={'apps': {'changed': True}}, writable=False)
         self.assertEqual(checks['caddy_admin']['status'], 'ready')
         self.assertEqual(checks['caddy_coherence']['status'], 'failed')
+        self.assertIn('configurations differ', checks['caddy_coherence']['detail'])
+        self.assertIn(' reload ', checks['caddy_coherence']['repair'])
         self.assertEqual(checks['caddy_write']['status'], 'failed')
 
     def test_socket_failure_keeps_other_checks(self):
@@ -141,12 +146,25 @@ class AccessCheckTests(unittest.TestCase):
             checks, _ = m.diagnostics(self.config, 'mac')
         checks = {check['id']: check for check in checks}
         self.assertEqual(checks['caddy_admin']['status'], 'failed')
+        self.assertIn('could not be compared', checks['caddy_coherence']['detail'])
+        self.assertNotIn('configurations differ', checks['caddy_coherence']['detail'])
+        self.assertNotIn(' reload ', checks['caddy_coherence']['repair'])
         self.assertEqual(checks['database_read']['status'], 'ready')
+
+    def test_unreadable_live_routes_do_not_suggest_reload(self):
+        with patch.object(m, 'run', return_value=(True, b'{"apps":{}}')), patch.object(m, 'live_config', side_effect=OSError()):
+            checks, _ = m.diagnostics(self.config, 'mac')
+        checks = {check['id']: check for check in checks}
+        self.assertIn('live Caddy configuration could not be read', checks['caddy_coherence']['detail'])
+        self.assertIn('--unix-socket', checks['caddy_coherence']['repair'])
+        self.assertNotIn(' reload ', checks['caddy_coherence']['repair'])
 
     def test_invalid_configuration_and_validation_fail(self):
         checks, _, _ = self.checks(missing=('adapt', 'validate'))
         self.assertEqual(checks['caddy_validation']['status'], 'failed')
         self.assertEqual(checks['caddy_coherence']['status'], 'failed')
+        self.assertIn('could not be adapted', checks['caddy_coherence']['detail'])
+        self.assertNotIn(' reload ', checks['caddy_coherence']['repair'])
 
     def test_secrets_stay_out_of_report_and_logs_are_summarized(self):
         journal = b'PROJECT_METADATA_INCOMPLETE SECRET_HEADER\n' + json.dumps({'level': 'warn', 'logger': 'tls', 'msg': 'certificate error', 'error': 'SECRET_KEY'}).encode() + b'\n{"msg":"dial tcp [::1]:3025: connection refused", "headers":{"Authorization":"SECRET_TOKEN"}}'
@@ -196,6 +214,34 @@ class AccessCheckTests(unittest.TestCase):
                             m.live_config('/run/caddy/admin.sock')
                 connection.request.assert_called_once_with('GET', '/config/')
                 connection.close.assert_called_once()
+
+    def test_private_socket_sends_valid_http_host(self):
+        requests = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append((self.command, self.path, self.headers['Host']))
+                # A socket filename in Host is malformed for Caddy's Go HTTP server.
+                valid = self.headers['Host'] == 'localhost'
+                body = b'{"apps":{}}' if valid else b'malformed Host header'
+                self.send_response(200 if valid else 400)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        with socketserver.UnixStreamServer(str(self.root / 'admin.sock'), Handler) as server:
+            thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.01}, daemon=True)
+            thread.start()
+            try:
+                self.assertEqual(m.live_config(str(self.root / 'admin.sock')), {'apps': {}})
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(requests, [('GET', '/config/', 'localhost')])
 
     def test_missing_policy_keeps_updater_checks_available(self):
         with patch.object(m, 'CONFIG', self.root / 'missing.json'), patch.object(m, 'run', return_value=(False, b'')):

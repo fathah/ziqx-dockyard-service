@@ -304,3 +304,77 @@
 .provider-field textarea {
   margin: 0;
 }
+
+.modal.domain-connection-modal {
+  width: min(860px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.domain-connection-modal .modal-body {
+  padding: 0 28px 28px;
+  overflow: auto;
+  min-height: 0;
+}
+.domain-connection-modal .modal-heading {
+  flex: none;
+}
+.domain-connection-modal .modal-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.service-domain-picker {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.service-domain-picker .segments {
+  width: fit-content;
+}
+.service-domain-picker .route-fields {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+}
+.service-domain-picker .provider-field {
+  margin: 0;
+}
+.server-repair {
+  margin-top: 12px;
+}
+.repair-review {
+  border: 1px solid var(--border, #dbe3da);
+  border-radius: 10px;
+  padding: 16px;
+  background: var(--surface, #fff);
+}
+.repair-review ul {
+  margin: 12px 0;
+  padding-left: 20px;
+}
+.repair-review li {
+  margin: 6px 0;
+}
+.connection-health {
+  margin: 16px 0;
+}
+.connection-health-issue {
+  margin: 12px 0;
+  padding: 14px;
+  border: 1px solid var(--border, #dbe3da);
+  border-radius: 10px;
+}
+.route-setup > .route-fields {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 140px auto;
+}
+@media (max-width: 700px) {
+  .service-domain-picker .route-fields,
+  .route-setup > .route-fields {
+    grid-template-columns: 1fr;
+  }
+}

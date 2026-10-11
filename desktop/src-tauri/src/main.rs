@@ -867,7 +867,7 @@ async fn preview_service_update(c: State<'_, Control>, project: String, data: pr
 #[tauri::command]
 async fn preview_route_setup(c: State<'_, Control>, project: String, data: protocol::RouteSetup) -> Result<Value,String> {
     if !protocol::id(&project) || !data.valid() { return Err("Invalid route setup".into()); }
-    let op=Operation {method:"POST".into(),target:format!("/v1/projects/{project}/route-setup-preview"),scopes:"projects.write sites.write".into(),project,action:"route-setup-preview".into(),body:serde_json::to_string(&data).map_err(|_|"Invalid request")?,idempotency:format!("preview-{}",uuid::Uuid::new_v4()),request_id:format!("req-{}",uuid::Uuid::new_v4())};
+    let op=Operation {method:"POST".into(),target:format!("/v1/projects/{project}/route-setup-preview"),scopes:"deploy.execute projects.write sites.write".into(),project,action:"route-setup-preview".into(),body:serde_json::to_string(&data).map_err(|_|"Invalid request")?,idempotency:format!("preview-{}",uuid::Uuid::new_v4()),request_id:format!("req-{}",uuid::Uuid::new_v4())};
     let mut inner=c.inner.lock().await; let s=session(&mut inner)?;
     let result=send(s,&op).await?;
     if s.generation!=c.generation.load(Ordering::SeqCst){return Err("SESSION_LOCKED".into());}
@@ -1011,7 +1011,7 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         review.push_str(&format!("\nService: {}\nUpdate: {}\nOther services and their data volumes remain running.", body.get("service").and_then(Value::as_str).unwrap_or(""), if body.get("mode").and_then(Value::as_str)==Some("seamless") { "Seamless traffic switch after health checks" } else { "Controlled restart of this service" }));
     }
     if op.action == "migrate" { review.push_str("\nAdopt the reviewed existing Compose stack into Dockyard. Containers, ports and Caddy routes stay in place. Future deployments use a single instance."); }
-    if op.action == "route-setup" { review.push_str("\nConfigure Caddy for the reviewed existing Compose service and published port. Import only the reviewed plain site routes. Containers, volumes and Compose files stay in place."); }
+    if op.action == "route-setup" { review.push_str("\nConnect the reviewed domains to this service. Reuse its published port when available; otherwise add a private local binding through a controlled deployment. Existing service domains are preserved."); }
     let sensitive = op.action != "create";
     let approved = native_task(&c, move || {
         let approved = native::with_prompt(|| {
@@ -1266,6 +1266,25 @@ async fn server_access_prepare(
     .await
 }
 #[tauri::command]
+async fn server_repair_preview(app: tauri::AppHandle, c: State<'_, Control>, action: String) -> Result<updater::RepairPreview, String> {
+    let (ssh, lease) = terminal_authority(&c).await?;
+    native_task(&c, move || {
+        lease.check()?;
+        let preview = updater::preview_repair(&app, &ssh, &action)?;
+        lease.check()?;
+        Ok(preview)
+    }).await
+}
+#[tauri::command]
+async fn server_repair_apply(app: tauri::AppHandle, c: State<'_, Control>, action: String, expected: String) -> Result<updater::AccessReport, String> {
+    let (ssh, lease) = terminal_authority(&c).await?;
+    let key_id = { let mut inner = c.inner.lock().await; session(&mut inner)?.saved.enrollment.key_id.clone() };
+    native_task(&c, move || {
+        lease.check()?;
+        updater::repair_access(&app, &ssh, &key_id, &action, &expected, || lease.check())
+    }).await
+}
+#[tauri::command]
 async fn terminal_connect(
     app: tauri::AppHandle,
     c: State<'_, Control>,
@@ -1418,6 +1437,8 @@ fn main() {
             server_update_apply,
             server_access_check,
             server_access_prepare,
+            server_repair_preview,
+            server_repair_apply,
             server_compose_enable,
             providers::provider_list,
             providers::provider_connect,
@@ -1425,6 +1446,8 @@ fn main() {
             providers::provider_token_page,
             providers::provider_zones,
             providers::provider_records,
+            providers::provider_service_dns_preview,
+            providers::provider_service_dns_apply,
             providers::provider_write
         ])
         .setup(move |app| {

@@ -371,7 +371,7 @@ function DomainProvidersPanel({
     </>
   );
 }
-function ConnectProvider({
+export function ConnectProvider({
   provider,
   close,
   done,

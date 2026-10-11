@@ -7,6 +7,13 @@ export type Release = {
   created_at: string;
 };
 export type Project = {
+  service_routes?: {
+    service: string;
+    container_port: number;
+    host_port: number;
+    domains: string[];
+    managed?: boolean;
+  }[];
   published_route?: {
     service: string;
     container_port: number;

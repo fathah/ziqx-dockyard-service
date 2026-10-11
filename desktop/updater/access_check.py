@@ -119,10 +119,15 @@ def managed_import(path, sites, seen=None):
 
 
 class UnixHTTP(http.client.HTTPConnection):
+    def __init__(self, path, timeout):
+        # The socket path selects the transport, not the HTTP Host header.
+        super().__init__('localhost', timeout=timeout)
+        self.socket_path = path
+
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
-        self.sock.connect(self.host)
+        self.sock.connect(self.socket_path)
 
 
 def live_config(path):
@@ -216,21 +221,29 @@ def diagnostics(config, key_id):
     validate_command = 'sudo ' + quote(caddy) + ' validate --config ' + quote(caddyfile) + ' --adapter caddyfile'
     add('caddy_validation', 'Caddy configuration', valid and adapted_ok,
         'The saved Caddy configuration is valid.' if valid and adapted_ok else
-        'Caddy could not validate the saved configuration. Run the command below for details.', validate_command)
+        'Caddy could not validate the saved configuration. Review the generated route repair, then run checks again.', validate_command)
     try:
         live = live_config(admin)
         live_ok = isinstance(live, dict)
     except (OSError, ValueError, http.client.HTTPException):
         live, live_ok = None, False
+    admin_command = 'sudo curl --max-time 5 --silent --show-error --unix-socket ' + quote(admin) + ' -o /dev/null -w "%{http_code}\\n" http://localhost/config/'
     add('caddy_admin', 'Private Caddy connection', live_ok,
         'The private admin socket responds with live configuration.' if live_ok else
         'The configured private Caddy admin socket is missing, unreachable, or returned an invalid response.',
-        'sudo curl --unix-socket ' + quote(admin) + ' -o /dev/null -w "%{http_code}\\n" http://localhost/config/')
+        admin_command)
     coherent = adapted_ok and live_ok and adapted == live
+    if not adapted_ok:
+        coherence_detail = 'The saved Caddy configuration could not be adapted, so saved and live routes could not be compared. Resolve the Caddy configuration failure, then run checks again.'
+        coherence_repair = validate_command
+    elif not live_ok:
+        coherence_detail = 'The live Caddy configuration could not be read, so saved and live routes could not be compared. Resolve the private Caddy connection failure, then run checks again.'
+        coherence_repair = admin_command
+    else:
+        coherence_detail = 'Saved routes match the running Caddy configuration.' if coherent else 'Saved and live Caddy configurations differ. Review the saved configuration before validating and reloading it.'
+        coherence_repair = validate_command + ' &&\n  sudo ' + quote(caddy) + ' reload --config ' + quote(caddyfile) + ' --adapter caddyfile --address ' + quote('unix/' + admin)
     add('caddy_coherence', 'Saved and live routes', coherent,
-        'Saved routes match the running Caddy configuration.' if coherent else
-        'Saved and live configurations differ or could not be compared. Resolve validation/admin failures first, then review and reload the saved configuration.',
-        validate_command + ' &&\n  sudo ' + quote(caddy) + ' reload --config ' + quote(caddyfile) + ' --adapter caddyfile --address ' + quote('unix/' + admin))
+        coherence_detail, coherence_repair)
     # Check the actual systemd mount namespace, rather than root SSH permissions.
     pid_ok, pid_bytes = run(['systemctl', 'show', 'dockyard', '--property=MainPID', '--value'])
     pid = pid_bytes.decode().strip()

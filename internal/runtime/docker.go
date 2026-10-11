@@ -30,6 +30,7 @@ type Container struct {
 	Name   string `json:"Name"`
 	Image  string `json:"Image"`
 	Config struct {
+		ExposedPorts map[string]json.RawMessage `json:"ExposedPorts"`
 		Image       string            `json:"Image"`
 		Env         []string          `json:"Env"`
 		Labels      map[string]string `json:"Labels"`

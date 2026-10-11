@@ -599,6 +599,16 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 				fail(w, err, p.RequestID)
 				return
 			}
+			detected := map[string][]int{}
+			if project.State == "running" {
+				if detector, ok := e.Docker.(interface {
+					DetectedServicePorts(context.Context, model.Project) (map[string][]int, error)
+				}); ok {
+					if values, err := detector.DetectedServicePorts(r.Context(), project); err == nil {
+						detected = values
+					}
+				}
+			}
 			for i := range services {
 				item := &services[i]
 				option := options[item.Name]
@@ -608,6 +618,9 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 					item.Seamless = option.Seamless
 					item.UpdateReason = option.Reason
 					item.ContainerPorts = option.Ports
+					if len(item.ContainerPorts) == 0 {
+						item.ContainerPorts = detected[item.Name]
+					}
 					if instance, ok := project.ServiceInstances[item.Name]; ok {
 						item.Image = instance.Release.Image
 						item.Compose = instance.Release.Compose
@@ -1181,7 +1194,7 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					}
 				}
 			}
-			if action == "rollback" && p.NativeCompose() && p.ServiceMode {
+			if p.NativeCompose() && (action == "rollback" && p.ServiceMode || len(p.ServiceRoutes) > 0) {
 				release, err = runtime.RebindNativeRoute(e.Config, p, release)
 				if err != nil {
 					fail(w, err, request)

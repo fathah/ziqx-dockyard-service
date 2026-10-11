@@ -107,6 +107,10 @@ func (a *API) blueGreen(w http.ResponseWriter, r *http.Request, principal auth.P
 	next.Adoption = nil
 	next.ExternalDomains = nil
 	next.ZeroDowntime = true
+	if len(p.ServiceRoutes) > 0 {
+		problem(w, 409, "SERVICE_ROUTES_REQUIRE_SINGLE_SLOT", principal.RequestID)
+		return
+	}
 	next.RouteService = input.Service
 	next.RoutePort = input.Port
 	next.ReadinessPath = input.Readiness

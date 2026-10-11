@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-provider-service-dns-preview"
+description = "Enables the provider_service_dns_preview command without any pre-configured scope."
+commands.allow = ["provider_service_dns_preview"]
+
+[[permission]]
+identifier = "deny-provider-service-dns-preview"
+description = "Denies the provider_service_dns_preview command without any pre-configured scope."
+commands.deny = ["provider_service_dns_preview"]

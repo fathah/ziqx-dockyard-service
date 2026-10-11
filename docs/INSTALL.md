@@ -40,6 +40,8 @@ The root systemd service retains `CAP_DAC_OVERRIDE` so it can traverse Caddy's p
 
 ### Repair `CADDY_UNAVAILABLE` on an older installation
 
+In the current Mac app, open **Server details → Access & health → Check access** and use the repair button for the flagged check. **Repair private connection** configures the private socket and its standard runtime directory; **Repair socket access** fixes the Dockyard service capability; **Sync saved routes** reviews the saved configuration before activation. The domain connection form exposes the same checks and repairs. Review each change, approve with Touch ID, and run checks again. The manual procedures below remain available for server administrators.
+
 This error means the agent could not read Caddy's live configuration. It does not by itself mean the website is down. Check the actual VPS before changing configuration:
 
 ```sh

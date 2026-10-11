@@ -3,6 +3,7 @@ use crate::{native, native_task, session, terminal::Lease, Control};
 use reqwest::{Client, Method};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tauri::State;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -321,6 +322,93 @@ pub async fn provider_records(
     listing(request(&client()?, &p.token, Method::GET, &format!("/zones/{zone}/dns_records?per_page=100&page={page_number}&order=name&direction=asc"), None, &lease).await?, page_number)
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ServiceDNS {
+    provider: String,
+    zone: String,
+    name: String,
+    proxied: bool,
+}
+#[derive(Clone, Serialize)]
+pub struct DNSReview {
+    name: String,
+    record_type: String,
+    server_ip: String,
+    proxied: bool,
+    action: String,
+    previous: Option<String>,
+    review_sha256: String,
+}
+fn address_record(records: &Value, kind: &str, content: &str, proxied: bool) -> Result<(String, Option<Value>), String> {
+    let records = records.as_array().ok_or("Cloudflare returned invalid DNS records")?;
+    let addresses: Vec<_> = records.iter().filter(|r| matches!(r["type"].as_str(), Some("A" | "AAAA" | "CNAME" | "NS"))).collect();
+    if addresses.len() > 1 || addresses.first().is_some_and(|r| r["type"] != kind) {
+        return Err("This name has conflicting address records. Choose another subdomain or review its records in Domains → DNS.".into());
+    }
+    match addresses.first() {
+        Some(record) => Ok((if record["content"] == content && record["proxied"].as_bool().unwrap_or(false) == proxied { "reuse" } else { "update" }.into(), Some((*record).clone()))),
+        None => Ok(("create".into(), None)),
+    }
+}
+async fn dns_review(http: &Client, token: &str, input: &ServiceDNS, ip: &str, lease: &Lease) -> Result<(DNSReview, Option<Value>, Value), String> {
+    id(&input.zone)?;
+    let ip: std::net::IpAddr = ip.parse().map_err(|_| "The enrolled VPS has an invalid IP")?;
+    let kind = if ip.is_ipv4() { "A" } else { "AAAA" };
+    let ip = ip.to_string();
+    let zone = request(http, token, Method::GET, &format!("/zones/{}", input.zone), None, lease).await?;
+    let zone_name = zone["result"]["name"].as_str().ok_or("Cloudflare returned an invalid domain")?;
+    let body = record_body(&RecordInput { kind: kind.into(), name: input.name.clone(), content: ip.clone(), ttl: 1, proxied: input.proxied, priority: None, data: None }, zone_name)?;
+    let name = body["name"].as_str().ok_or("Invalid DNS name")?;
+    if name.contains('*') || name.split('.').any(|label| label.is_empty() || label.len() > 63 || label.starts_with('-') || label.ends_with('-') || label.contains('_')) {
+        return Err("Enter a valid service hostname".into());
+    }
+    let value = request(http, token, Method::GET, &format!("/zones/{}/dns_records?name={name}&match=all&per_page=100", input.zone), None, lease).await?;
+    if value["result_info"]["total_count"].as_u64().unwrap_or(0) > 100 { return Err("Too many records use this name. Review them in Domains → DNS.".into()); }
+    let (action, existing) = address_record(&value["result"], kind, &ip, input.proxied)?;
+    let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&json!([input.provider, input.zone, body, value["result"]])).map_err(|_| "Invalid DNS review")?));
+    Ok((DNSReview { name: name.into(), record_type: kind.into(), server_ip: ip, proxied: input.proxied, action, previous: existing.as_ref().and_then(|v| v["content"].as_str()).map(str::to_owned), review_sha256: digest }, existing, body))
+}
+async fn dns_authority(c: &Control) -> Result<(Lease, String), String> {
+    let mut inner = c.inner.lock().await;
+    let s = session(&mut inner)?;
+    let ip = s.saved.enrollment.ssh.as_ref().ok_or("Enroll the server's SSH identity before creating its DNS record")?.server_ip.clone();
+    Ok((Lease { generation: c.generation.clone(), expected: s.generation }, ip))
+}
+#[tauri::command]
+pub async fn provider_service_dns_preview(c: State<'_, Control>, input: ServiceDNS) -> Result<DNSReview, String> {
+    let (lease, ip) = dns_authority(&c).await?;
+    let _gate = c.provider_gate.lock().await;
+    let p = credential(&input.provider)?;
+    Ok(dns_review(&client()?, &p.token, &input, &ip, &lease).await?.0)
+}
+#[tauri::command]
+pub async fn provider_service_dns_apply(c: State<'_, Control>, input: ServiceDNS, expected: String) -> Result<DNSReview, String> {
+    let (lease, ip) = dns_authority(&c).await?;
+    let _gate = c.provider_gate.lock().await;
+    let p = credential(&input.provider)?;
+    let http = client()?;
+    let (review, _, _) = dns_review(&http, &p.token, &input, &ip, &lease).await?;
+    // Reuse makes a retry after an interrupted create/update safe.
+    if review.action == "reuse" { return Ok(review); }
+    if review.review_sha256 != expected { return Err("DNS changed. Review the domain again.".into()); }
+    let reason = format!("{} {} DNS record {} → {}{}", review.action, review.record_type, review.name, review.server_ip, if review.proxied { " (Cloudflare proxy)" } else { " (DNS only)" });
+    let check = lease.clone();
+    native_task(&c, move || { check.check()?; native::authenticate_reason(&reason)?; check.check() }).await?;
+    let (current, record, body) = dns_review(&http, &p.token, &input, &ip, &lease).await?;
+    if current.review_sha256 != expected { return Err("DNS changed during confirmation. Review again.".into()); }
+    let (method, path) = if let Some(record) = record {
+        let record_id = record["id"].as_str().ok_or("Invalid DNS record")?;
+        id(record_id)?;
+        (Method::PATCH, format!("/zones/{}/dns_records/{record_id}", input.zone))
+    } else { (Method::POST, format!("/zones/{}/dns_records", input.zone)) };
+    let result = request(&http, &p.token, method, &path, Some(&body), &lease).await;
+    let observed = dns_review(&http, &p.token, &input, &ip, &lease).await?.0;
+    if observed.action == "reuse" { return Ok(observed); }
+    result?;
+    Err("The DNS change could not be verified. Review again before retrying.".into())
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecordInput {
@@ -556,6 +644,16 @@ pub async fn provider_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn service_dns_reuses_matching_records_and_requires_review_for_changes() {
+        let record = json!([{"id":"a".repeat(32),"type":"A","name":"api.example.com","content":"203.0.113.10","proxied":false,"modified_on":"now"}]);
+        assert_eq!(address_record(&record,"A","203.0.113.10",false).unwrap().0,"reuse");
+        assert_eq!(address_record(&record,"A","203.0.113.11",false).unwrap().0,"update");
+        assert_eq!(address_record(&record,"A","203.0.113.10",true).unwrap().0,"update");
+        assert_eq!(address_record(&json!([]),"A","203.0.113.10",false).unwrap().0,"create");
+        assert!(address_record(&json!([{"type":"CNAME"}]),"A","203.0.113.10",false).is_err());
+        assert!(address_record(&json!([{"type":"A"},{"type":"AAAA"}]),"A","203.0.113.10",false).is_err());
+    }
     fn record(kind: &str, content: &str) -> RecordInput {
         RecordInput {
             kind: kind.into(),

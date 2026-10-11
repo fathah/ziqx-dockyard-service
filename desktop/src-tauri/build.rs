@@ -34,6 +34,8 @@ fn main() {
             "server_update_apply",
             "server_access_check",
             "server_access_prepare",
+            "server_repair_preview",
+            "server_repair_apply",
             "server_compose_enable",
             "provider_list",
             "provider_connect",
@@ -41,6 +43,8 @@ fn main() {
             "provider_token_page",
             "provider_zones",
             "provider_records",
+            "provider_service_dns_preview",
+            "provider_service_dns_apply",
             "provider_write",
         ]),
     ))

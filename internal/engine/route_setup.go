@@ -17,7 +17,10 @@ func (e *Engine) setupRoute(ctx context.Context, j *model.Job, p *model.Project)
 		return err
 	}
 	pin := next.PublishedRoute
-	if pin == nil || p.State != "running" || p.Adoption == nil || len(p.Domains) != 0 {
+	if j.Input.RouteTarget != nil {
+		pin = j.Input.RouteTarget
+	}
+	if pin == nil || p.State != "running" {
 		return model.Fail("ROUTE_SETUP_UNAVAILABLE")
 	}
 	r, ok := p.Current()
@@ -27,13 +30,27 @@ func (e *Engine) setupRoute(ctx context.Context, j *model.Job, p *model.Project)
 	if err := e.Docker.Healthy(ctx, *p, p.Active, r); err != nil {
 		return err
 	}
+	if j.Input.Release != nil {
+		if err := e.Routes.Ensure(ctx, *p); err != nil {
+			return err
+		}
+		if err := e.Routes.DomainsAvailable(ctx, next.Domains, p.Domains); err != nil {
+			return err
+		}
+		return e.deploy(ctx, j, p)
+	}
 	d, ok := e.Docker.(interface {
 		PublishedUpstream(context.Context, model.Project, string, int) (string, error)
 	})
 	if !ok {
 		return model.Fail("ROUTE_SETUP_UNAVAILABLE")
 	}
-	upstream, err := d.PublishedUpstream(ctx, *p, pin.Service, pin.ContainerPort)
+	upstream, err := "", error(nil)
+	if pin.Service == p.RouteService && pin.ContainerPort == p.RoutePort {
+		upstream = fmt.Sprintf("127.0.0.1:%d", p.Port(p.Active))
+	} else {
+		upstream, err = d.PublishedUpstream(ctx, *p, pin.Service, pin.ContainerPort)
+	}
 	if err != nil {
 		return err
 	}
@@ -44,7 +61,7 @@ func (e *Engine) setupRoute(ctx context.Context, j *model.Job, p *model.Project)
 		return err
 	}
 	if len(j.Input.RouteEdits) == 0 {
-		if err = e.Routes.DomainsAvailable(ctx, next.Domains, nil); err != nil {
+		if err = e.Routes.DomainsAvailable(ctx, next.Domains, p.Domains); err != nil {
 			return err
 		}
 	}

@@ -2,12 +2,89 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
 )
+
+type publishingRouteDocker struct {
+	*fakeDocker
+	ports    []int
+	occupied int
+}
+
+func (d *publishingRouteDocker) PortFree(_ context.Context, port int) (bool, error) {
+	d.ports = append(d.ports, port)
+	return port != d.occupied, nil
+}
+
+func TestServiceDomainDeploymentDrainsAndChecksNewBindingBeforeStart(t *testing.T) {
+	for _, occupied := range []int{0, 3010} {
+		t.Run(map[int]string{0: "success", 3010: "port-taken"}[occupied], func(t *testing.T) {
+			e, j, docker, _, events := engineFixture(t, "blue")
+			e.Config.DrainSeconds = 0
+			previous, _ := e.Store.Project(j.ProjectID)
+			previous.Mode, previous.ZeroDowntime, previous.GreenPort = "compose", false, 0
+			previous.RouteService, previous.RoutePort = "web", 3000
+			next := previous
+			next.Domains = []string{"app.example.com", "api.example.com"}
+			next.ServiceRoutes = []model.ServiceRoute{{Service: "api", ContainerPort: 3040, HostPort: 3010, Domains: []string{"api.example.com"}, Managed: true}}
+			env := j.Input.Release.Environment
+			envBytes, err := os.ReadFile(filepath.Join(e.Config.ProjectsRoot, previous.ID, "env", env+".env"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			envHash := sha256.Sum256(envBytes)
+			doc, _ := json.Marshal(map[string]any{"services": map[string]any{"web": map[string]any{"image": "web:stable"}, "api": map[string]any{"image": "api:stable"}}, "x-dockyard-env-sha256": hex.EncodeToString(envHash[:])})
+			hash := sha256.Sum256(doc)
+			release := *j.Input.Release
+			release.Compose = "cmp-" + hex.EncodeToString(hash[:])
+			folder := filepath.Join(e.Config.ProjectsRoot, previous.ID, "compose")
+			if err = os.MkdirAll(folder, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(folder, release.Compose+".yml"), doc, 0600); err != nil {
+				t.Fatal(err)
+			}
+			j.Action, j.Input = "route_setup", model.Input{Previous: &previous, Project: &next, Release: &release, RouteTarget: &model.PublishedRoute{Service: "api", ContainerPort: 3040, HostPort: 3010}}
+			if err = e.Store.Update(j, &previous); err != nil {
+				t.Fatal(err)
+			}
+			d := &publishingRouteDocker{fakeDocker: docker, occupied: occupied}
+			e.Docker = d
+			e.execute(context.Background(), j)
+			done, _ := e.Store.Job(j.ID)
+			current, _ := e.Store.Project(j.ProjectID)
+			order := strings.Join(*events, ",")
+			if !strings.Contains(order, "route:,stop:blue") || strings.Contains(order, "pull") || !containsPort(d.ports, 3010) || occupied == 0 && !containsPort(d.ports, previous.BluePort) {
+				t.Fatal("unsafe binding deployment", done, order, d.ports)
+			}
+			if occupied != 0 {
+				if done.Status != "failed" || done.Error != "PORT_IN_USE" || strings.Contains(order, "start:") {
+					t.Fatal(done, order)
+				}
+			} else if done.Status != "succeeded" || !strings.Contains(order, "stop:blue,start:blue") || current.State != "running" || len(current.ServiceRoutes) != 1 || current.Domains[0] != "app.example.com" {
+				t.Fatal(done, current, order)
+			}
+		})
+	}
+}
+
+func containsPort(ports []int, port int) bool {
+	for _, candidate := range ports {
+		if candidate == port {
+			return true
+		}
+	}
+	return false
+}
 
 type routeDocker struct {
 	*fakeDocker

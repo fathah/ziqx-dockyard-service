@@ -90,6 +90,11 @@ func ServiceUpdateOptions(c config.Config, p model.Project) (map[string]ServiceO
 		}
 		sort.Ints(ports)
 		image, _ := svc["image"].(string)
+		for _, route := range p.ServiceRoutes {
+			if route.Service == name {
+				reason = "This service's domains use a fixed local binding. Use a controlled restart."
+			}
+		}
 		updatable := p.State == "running" && !p.ZeroDowntime && image != ""
 		if image == "" {
 			reason = "This service is built locally. Use Edit & deploy to rebuild it."

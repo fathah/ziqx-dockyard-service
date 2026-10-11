@@ -57,6 +57,8 @@ import ServiceUpdate from "./ServiceUpdate";
 import JobsTable from "./JobsTable";
 import CopyButton from "./CopyButton";
 import RouteSetup from "./RouteSetup";
+import DomainConnection from "./DomainConnection";
+import { ConnectionHealth } from "./ServerRepair";
 import TerminalPage, { type ShellRequest } from "./TerminalPage";
 import { ProviderDomains } from "./DomainProviders";
 import Help from "./Help";
@@ -88,7 +90,8 @@ type Page =
   | "terminal";
 type Modal =
   | { kind: "create"; appID?: string }
-  | { kind: "deploy" | "routes" | "stop" | "rollback"; project: Project }
+  | { kind: "routes"; project: Project; service?: string; domains?: string[] }
+  | { kind: "deploy" | "stop" | "rollback"; project: Project }
   | null;
 type Audit = { event_id: number; event: Record<string, unknown> };
 const nav = [
@@ -898,6 +901,10 @@ function App() {
                   setSelected(null);
                   setPage("deployments");
                 }}
+                openDomains={() => {
+                  setSelected(null);
+                  setPage("domains");
+                }}
                 forget={async () => {
                   loseSession();
                   setPreview(false);
@@ -1557,6 +1564,7 @@ export function ProjectDetail({
     useState<HealthcheckRequest>();
   const [services, setServices] = useState<Service[]>([]);
   const [updatingService, setUpdatingService] = useState<Service>();
+  const [connectingService, setConnectingService] = useState<Service>();
   const [servicesLoading, setServicesLoading] = useState(!preview);
   const [servicesError, setServicesError] = useState(false);
   const [servicesRefresh, setServicesRefresh] = useState(0);
@@ -2097,6 +2105,20 @@ export function ProjectDetail({
                 <tbody>
                   {services.map((s) => {
                     const active = s.slot === p.active_slot;
+                    const serviceDomains = active
+                      ? (p.service_routes?.find(
+                          (route) => route.service === s.name,
+                        )?.domains ??
+                        (s.name ===
+                        (p.route_service || p.published_route?.service)
+                          ? p.domains.filter(
+                              (name) =>
+                                !p.service_routes?.some((route) =>
+                                  route.domains.includes(name),
+                                ),
+                            )
+                          : []))
+                      : [];
                     const blocked =
                       p.mode === "compose" && active
                         ? updateBlockedReason(s)
@@ -2119,6 +2141,9 @@ export function ProjectDetail({
                               <code title={s.image}>
                                 {s.image || "Built from Compose"}
                               </code>
+                              {serviceDomains.length > 0 && (
+                                <small>{serviceDomains.join(", ")}</small>
+                              )}
                             </div>
                           </div>
                         </th>
@@ -2156,6 +2181,20 @@ export function ProjectDetail({
                           </p>
                         </td>
                         <td className="services-action">
+                          {p.mode === "compose" && active && (
+                            <Button
+                              type="button"
+                              className="button"
+                              variant="outline"
+                              disabled={Boolean(
+                                recoveryJob || projectOperation || status?.busy,
+                              )}
+                              onClick={() => setConnectingService(s)}
+                              aria-label={`Connect domain to ${s.name}`}
+                            >
+                              <Globe2 size={16} /> Connect domain
+                            </Button>
+                          )}
                           {openShell && active && (
                             <Button
                               type="button"
@@ -2221,6 +2260,16 @@ export function ProjectDetail({
                 setUpdatingService(undefined);
                 setTab("configuration");
               }}
+            />
+          )}
+          {connectingService && (
+            <DomainConnection
+              project={p}
+              service={connectingService}
+              preview={preview}
+              execute={execute}
+              close={() => setConnectingService(undefined)}
+              blocked={Boolean(recoveryJob || projectOperation || status?.busy)}
             />
           )}
         </section>
@@ -2343,7 +2392,7 @@ export function ProjectDetail({
         <section className="panel">
           <div className="section-heading">
             <h2>Domains</h2>
-            {!(p.adoption && !p.domains.length) && (
+            {(p.mode !== "compose" || p.zerodowntime) && (
               <Button
                 type="button"
                 className="button small"
@@ -2356,7 +2405,7 @@ export function ProjectDetail({
           {dnsLoading && (
             <SkeletonRows count={3} label="Loading project domains" />
           )}
-          {p.adoption && !p.domains.length && (
+          {p.mode === "compose" && !p.zerodowntime && (
             <RouteSetup
               project={p}
               services={services}
@@ -2385,9 +2434,11 @@ export function ProjectDetail({
               <div>
                 <strong>{d.hostname}</strong>
                 <p>
-                  {d.dns_record_id
-                    ? "Cloudflare record tracked"
-                    : "DNS record not tracked"}{" "}
+                  {p.mode === "compose" && !p.zerodowntime
+                    ? "Service domain"
+                    : d.dns_record_id
+                      ? "Cloudflare record tracked"
+                      : "DNS record not tracked"}{" "}
                   · Public TLS unverified
                 </p>
               </div>
@@ -2395,10 +2446,28 @@ export function ProjectDetail({
               <Button
                 type="button"
                 className="button small"
-                disabled={Boolean(d.dns_record_id)}
+                disabled={
+                  p.mode === "compose" && !p.zerodowntime
+                    ? Boolean(recoveryJob || projectOperation || status?.busy)
+                    : Boolean(d.dns_record_id)
+                }
                 onClick={() => {
                   if (preview) {
                     report("Preview is read-only.");
+                    return;
+                  }
+                  if (p.mode === "compose" && !p.zerodowntime) {
+                    open({
+                      kind: "routes",
+                      project: p,
+                      service:
+                        p.service_routes?.find((route) =>
+                          route.domains.includes(d.hostname),
+                        )?.service ||
+                        p.route_service ||
+                        p.published_route?.service,
+                      domains: [d.hostname],
+                    });
                     return;
                   }
                   void execute({
@@ -2409,7 +2478,9 @@ export function ProjectDetail({
                 }}
               >
                 <Cloud size={14} />
-                Create DNS
+                {p.mode === "compose" && !p.zerodowntime
+                  ? "Connect / DNS"
+                  : "Create DNS"}
               </Button>
             </div>
           ))}
@@ -3194,6 +3265,7 @@ function Security({
   explore,
   forget,
   openOperations,
+  openDomains,
 }: {
   profile: Profile | null;
   unlocked: boolean;
@@ -3204,6 +3276,7 @@ function Security({
   explore: () => void;
   forget: () => void;
   openOperations: () => void;
+  openDomains: () => void;
 }) {
   return (
     <>
@@ -3373,7 +3446,10 @@ function Security({
         }
         access={
           p?.server_ip && native && unlocked ? (
-            <ServerAccess />
+            <ServerAccess
+              openDomains={openDomains}
+              openDeployments={openOperations}
+            />
           ) : (
             <section className="panel">
               <h2>Required server access</h2>
@@ -3407,7 +3483,13 @@ function Security({
     </>
   );
 }
-function ServerAccess() {
+function ServerAccess({
+  openDomains,
+  openDeployments,
+}: {
+  openDomains: () => void;
+  openDeployments: () => void;
+}) {
   const [report, setReport] = useState<api.ServerAccessReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -3539,7 +3621,17 @@ function ServerAccess() {
       </div>
       {report && (
         <>
-          <ServerDiagnostics report={report} />
+          <ServerDiagnostics
+            report={report}
+            onRepaired={(next) => {
+              setReport(next);
+              setCheckedAt(new Date());
+              toast.success("Server repair verified.");
+            }}
+            recheck={() => void check()}
+            openDomains={openDomains}
+            openDeployments={openDeployments}
+          />
           <h3 className="server-access-updater-heading">Updater access</h3>
           <div className="server-access-grid">
             {rows.map(([label, allowed, detail]) => (
@@ -3596,6 +3688,10 @@ function ServerAccess() {
 function composeError(error: unknown): string {
   const message = String(error);
   const explanations: Record<string, string> = {
+    STATE_DIVERGED:
+      "Dockyard could not reconcile the saved and live route state. Open Server details → Access & health and check Saved and live routes before retrying.",
+    CADDY_UNAVAILABLE:
+      "Dockyard could not read Caddy’s live configuration. Open Server details → Access & health and check the Private Caddy connection.",
     ADOPTED_ROUTES_PRESERVED:
       "This project keeps its existing Caddy routes. Update those routes in the server Caddyfile.",
     SCOPE_REQUIRED:
@@ -3893,9 +3989,21 @@ function OperationModal({
     function key(e: KeyboardEvent) {
       if (e.key === "Escape" && !e.defaultPrevented && !busy) close();
     }
+    if (m.kind === "routes" && p?.mode === "compose" && !p.zerodowntime) return;
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
   }, [busy, close]);
+  if (m.kind === "routes" && p?.mode === "compose" && !p.zerodowntime)
+    return (
+      <DomainConnection
+        project={p}
+        initialService={m.kind === "routes" ? m.service : undefined}
+        domains={m.kind === "routes" ? m.domains : undefined}
+        preview={preview}
+        execute={perform}
+        close={close}
+      />
+    );
   return (
     <div className="modal-backdrop">
       <section

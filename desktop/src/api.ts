@@ -108,6 +108,21 @@ export type ServerAccessJob = {
 };
 export const checkServerAccess = () =>
   invoke<ServerAccessReport>("server_access_check");
+export type RepairReview = {
+  action: string;
+  review_sha256: string;
+  changes: string[];
+  saved_domains: string[];
+  live_domains: string[];
+  changed_sections: string[];
+  reloads_caddy: boolean;
+  saved_available: boolean;
+  live_available: boolean;
+};
+export const previewServerRepair = (action: string) =>
+  invoke<RepairReview>("server_repair_preview", { action });
+export const applyServerRepair = (action: string, expected: string) =>
+  invoke<ServerAccessReport>("server_repair_apply", { action, expected });
 export const prepareServerAccess = () =>
   invoke<ServerAccessReport>("server_access_prepare");
 

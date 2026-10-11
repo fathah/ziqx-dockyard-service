@@ -3,12 +3,21 @@ import { Fingerprint, ShieldCheck } from "lucide-react";
 import Button from "./Button";
 import Select from "./Select";
 import * as api from "./api";
+import { invoke } from "@tauri-apps/api/core";
+import ServiceDomainPicker, {
+  type ServiceDNSInput,
+  type ServiceDNSReview,
+} from "./ServiceDomainPicker";
+import { ConnectionHealth } from "./ServerRepair";
+import ServerUpdater from "./ServerUpdater";
 import type { Project, Service } from "./types";
 
 function explain(error: unknown) {
   const message = String(error);
   const explanations: Record<string, string> = {
     HTTP_404: "Update the Dockyard service on the VPS to enable route setup.",
+    ROUTE_SETUP_UNAVAILABLE:
+      "Update the Dockyard service to connect domains to individual services.",
     ROUTE_REVIEW_CHANGED:
       "The project, Caddy route or upstream changed. Review again.",
     CONFIGURATION_CHANGED:
@@ -28,13 +37,17 @@ function explain(error: unknown) {
     BLUE_GREEN_ROUTE_TARGET_MISMATCH:
       "The selected service and container port do not match the existing Caddy upstream.",
     CADDY_CONFIG_WRITE_REQUIRED:
-      "Check Caddy folder write access in Server details → Access & health.",
+      "Dockyard needs access to its Caddy folders. Use the repair below, then review again.",
+    CADDY_UNAVAILABLE:
+      "The private Caddy connection is unavailable. Check and repair it below.",
     COMPOSE_ACCESS_REQUIRED:
-      "Enable Compose management in Server details → Access & health first.",
+      "Enable Compose management using the connection check below.",
     PUBLISHED_ROUTE_FIXED:
       "This route uses the existing published port. Change the Compose configuration through a reviewed deployment to move it.",
     STATE_DIVERGED:
-      "The saved and live Caddy configurations differ. Check them in Server details → Access & health.",
+      "Saved and live Caddy routes differ. Review the repair below, then retry the connection.",
+    DOMAIN_IN_USE:
+      "This domain is already assigned to another service. Choose another hostname.",
   };
   return (
     Object.entries(explanations).find(([code]) =>
@@ -54,6 +67,9 @@ export default function RouteSetup({
   onClose,
   openDeployments,
   refresh,
+  initialService,
+  initialDomains,
+  onBusyChange,
 }: {
   project: Project;
   services: Service[];
@@ -65,17 +81,60 @@ export default function RouteSetup({
   onClose: () => void;
   openDeployments?: () => void;
   refresh: () => void;
+  initialService?: string;
+  initialDomains?: string[];
+  onBusyChange?: (busy: boolean) => void;
 }) {
   const candidates = services.filter(
     (service) => service.slot === project.active_slot,
   );
-  const [service, setService] = useState("");
-  const [port, setPort] = useState("");
+  const savedRoute = project.service_routes?.find(
+    (route) => route.service === initialService,
+  );
+  const primaryService =
+    project.route_service || project.published_route?.service;
+  const siblingDomains = new Set(
+    project.service_routes?.flatMap((route) => route.domains) ?? [],
+  );
+  const [service, setService] = useState(initialService ?? "");
+  const [portEdited, setPortEdited] = useState(false);
+  const preferredPort = (name: string) =>
+    project.service_routes?.find((route) => route.service === name)
+      ?.container_port ??
+    (name === primaryService
+      ? project.route_port || project.published_route?.container_port
+      : undefined) ??
+    candidates.find((item) => item.name === name)?.container_ports?.[0];
+  const [port, setPort] = useState(
+    String(
+      savedRoute?.container_port ??
+        (initialService === primaryService
+          ? project.route_port || project.published_route?.container_port
+          : undefined) ??
+        candidates.find((s) => s.name === initialService)
+          ?.container_ports?.[0] ??
+        "",
+    ),
+  );
   const [domains, setDomains] = useState(
-    (project.external_domains ?? []).join(", "),
+    (
+      initialDomains ??
+      savedRoute?.domains ??
+      (initialService && initialService === primaryService
+        ? project.domains.filter((name) => !siblingDomains.has(name))
+        : project.domains.length
+          ? []
+          : (project.external_domains ?? []))
+    ).join(", "),
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [dns, setDNS] = useState<ServiceDNSInput>();
+  const [dnsReview, setDNSReview] = useState<ServiceDNSReview>();
+  const [dnsDone, setDNSDone] = useState("");
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
   const [checked, setChecked] = useState<{
     key: string;
     review: api.RouteSetupReview;
@@ -85,31 +144,36 @@ export default function RouteSetup({
   useEffect(() => {
     if (!selected && candidates.length) {
       const first =
+        candidates.find((item) => item.name === primaryService) ??
         candidates.find((item) => item.container_ports?.length) ??
         candidates[0];
       setService(first.name);
-      setPort(String(first.container_ports?.[0] ?? ""));
+      setPort(String(preferredPort(first.name) ?? ""));
+    } else if (selected && !port && !portEdited) {
+      setPort(String(preferredPort(selected.name) ?? ""));
     }
-  }, [JSON.stringify(candidates), selected]);
+  }, [JSON.stringify(candidates), selected, port, portEdited]);
   const data: api.RouteSetupInput = {
     expected_release_id: project.slots[project.active_slot ?? "blue"]?.id ?? "",
     domains: domains.split(/[\s,]+/).filter(Boolean),
     service,
     container_port: Number(port),
   };
-  const key = JSON.stringify([project, data]);
+  const key = JSON.stringify([project, data, dns]);
   const review = checked?.key === key ? checked.review : undefined;
   const valid =
     !!selected &&
     !!data.expected_release_id &&
     data.domains.length > 0 &&
     data.domains.length <= 10 &&
+    (!dns || (!!dns.name && !!dns.provider && !!dns.zone)) &&
     Number.isInteger(data.container_port) &&
     data.container_port > 0 &&
     data.container_port <= 65535;
   useEffect(() => {
     sequence.current++;
     setChecked(undefined);
+    setDNSReview(undefined);
     setError("");
     setBusy(false);
   }, [key, blocked]);
@@ -140,9 +204,17 @@ export default function RouteSetup({
             containers_unchanged: true,
           }
         : await api.previewRouteSetup(project.id, data);
-      if (sequence.current === current) setChecked({ key, review: result });
+      const dnsResult = dns
+        ? await invoke<ServiceDNSReview>("provider_service_dns_preview", {
+            input: dns,
+          })
+        : undefined;
+      if (sequence.current === current) {
+        setChecked({ key, review: result });
+        setDNSReview(dnsResult);
+      }
     } catch (error) {
-      if (sequence.current === current) setError(explain(error));
+      if (sequence.current === current) setError(String(error));
     } finally {
       if (sequence.current === current) setBusy(false);
     }
@@ -153,6 +225,14 @@ export default function RouteSetup({
     setBusy(true);
     setError("");
     try {
+      if (dns && dnsReview) {
+        await invoke("provider_service_dns_apply", {
+          input: dns,
+          expected: dnsReview.review_sha256,
+        });
+        if (sequence.current !== current) return;
+        setDNSDone(`${dnsReview.name} → ${dnsReview.server_ip}`);
+      }
       await execute({
         action: "route_setup",
         project: project.id,
@@ -162,7 +242,7 @@ export default function RouteSetup({
     } catch (error) {
       if (sequence.current === current) {
         setChecked(undefined);
-        setError(explain(error));
+        setError(String(error));
       }
     } finally {
       if (sequence.current === current) setBusy(false);
@@ -176,7 +256,11 @@ export default function RouteSetup({
       <div className="route-setup route-blocked">
         <span>Another operation is in progress for this project.</span>
         {openDeployments && (
-          <Button type="button" className="button small" onClick={openDeployments}>
+          <Button
+            type="button"
+            className="button small"
+            onClick={openDeployments}
+          >
             View deployments
           </Button>
         )}
@@ -208,6 +292,14 @@ export default function RouteSetup({
     );
   return (
     <div className="route-setup">
+      <ServiceDomainPicker
+        service={service}
+        domains={domains}
+        setDomains={setDomains}
+        onDNS={setDNS}
+        disabled={busy || disabled}
+        preview={preview}
+      />
       {unavailable && (
         <p className="alert error" role="alert">
           Couldn't read services.{" "}
@@ -217,16 +309,6 @@ export default function RouteSetup({
         </p>
       )}
       <div className="route-fields">
-        <label className="route-domain">
-          <span>Domain</span>
-          <input
-            value={domains}
-            placeholder="app.example.com"
-            readOnly={!!project.external_domains?.length}
-            disabled={busy}
-            onChange={(event) => setDomains(event.target.value)}
-          />
-        </label>
         <div className="route-service">
           <Select
             label="Service"
@@ -238,12 +320,8 @@ export default function RouteSetup({
             }))}
             onValueChange={(value) => {
               setService(value);
-              setPort(
-                String(
-                  candidates.find((item) => item.name === value)
-                    ?.container_ports?.[0] ?? "",
-                ),
-              );
+              setPortEdited(false);
+              setPort(String(preferredPort(value) ?? ""));
             }}
           />
         </div>
@@ -256,7 +334,10 @@ export default function RouteSetup({
             value={port}
             disabled={busy}
             title="The port the app listens on inside its container"
-            onChange={(event) => setPort(event.target.value)}
+            onChange={(event) => {
+              setPortEdited(true);
+              setPort(event.target.value);
+            }}
           />
         </label>
         {review ? (
@@ -280,15 +361,69 @@ export default function RouteSetup({
           </Button>
         )}
       </div>
-      {error && <p className="route-error">{error}</p>}
+      {selected?.container_ports?.length ? (
+        <p className="muted">
+          Detected container ports: {selected.container_ports.join(", ")}.
+          Dockyard chooses the host port.
+        </p>
+      ) : (
+        <p className="muted">
+          Enter the port this service listens on inside its container.
+        </p>
+      )}
+      {error && (
+        <>
+          <p className="route-error" role="alert">
+            {explain(error)}
+          </p>
+          {/STATE_DIVERGED|CADDY_|COMPOSE_ACCESS_REQUIRED|SCOPE_REQUIRED/.test(
+            error,
+          ) &&
+            !preview && (
+              <ConnectionHealth
+                onReady={() => {
+                  setChecked(undefined);
+                  setError("");
+                }}
+                disabled={busy}
+              />
+            )}
+          {/HTTP_404|ROUTE_SETUP_UNAVAILABLE/.test(error) && !preview && (
+            <ServerUpdater openOperations={openDeployments} />
+          )}
+        </>
+      )}
+      {dnsDone && (
+        <p className="muted" role="status">
+          DNS verified: {dnsDone}.{" "}
+          {error ? "Review and retry the Caddy connection." : ""}
+        </p>
+      )}
       {review && (
         <p className="route-review">
           <ShieldCheck size={14} />
           {review.domains.join(", ")} → {review.service}:{review.container_port}
           <span>
-            {review.imports_routes ? "Moves the existing Caddy site" : "New Caddy route"} ·
-            containers unchanged
+            {review.imports_routes
+              ? "Moves the existing Caddy site"
+              : "New Caddy route"}{" "}
+            ·
+            {review.containers_unchanged
+              ? "containers unchanged"
+              : "controlled deployment to publish the service port"}
           </span>
+        </p>
+      )}
+      {review && dnsReview && (
+        <p className="route-review">
+          <ShieldCheck size={14} />
+          {dnsReview.action === "reuse"
+            ? "DNS already points to this VPS"
+            : dnsReview.action === "update"
+              ? `Update DNS from ${dnsReview.previous}`
+              : "Create Cloudflare DNS"}
+          : {dnsReview.record_type} {dnsReview.name} → {dnsReview.server_ip} ·{" "}
+          {dnsReview.proxied ? "Proxied" : "DNS only"}
         </p>
       )}
     </div>

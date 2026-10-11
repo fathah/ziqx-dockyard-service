@@ -1,12 +1,20 @@
-import { CheckCircle2, CircleAlert, Copy, History } from "lucide-react";
-import toast from "react-hot-toast";
+import { CheckCircle2, CircleAlert, History } from "lucide-react";
 import Button from "./Button";
+import ServerRepair, { repairLabels } from "./ServerRepair";
 import type { ServerAccessReport } from "./api";
 
 export default function ServerDiagnostics({
   report,
+  onRepaired,
+  recheck,
+  openDomains,
+  openDeployments,
 }: {
   report: ServerAccessReport;
+  onRepaired?: (report: ServerAccessReport) => void;
+  recheck?: () => void;
+  openDomains?: () => void;
+  openDeployments?: () => void;
 }) {
   if (!report.checks?.length) {
     return (
@@ -21,7 +29,9 @@ export default function ServerDiagnostics({
       const order = { failed: 0, warning: 1, ready: 2 };
       return order[a.status] - order[b.status];
     });
-  const flagged = report.checks.filter((check) => check.status !== "ready").length;
+  const flagged = report.checks.filter(
+    (check) => check.status !== "ready",
+  ).length;
   return (
     <div className="server-diagnostics">
       <div className="section-heading">
@@ -56,28 +66,31 @@ export default function ServerDiagnostics({
                 </span>
               </div>
               <p>{check.detail}</p>
-              {check.repair && (
-                <details className="connection-details">
-                  <summary>Review on the server</summary>
-                  <pre>{check.repair}</pre>
+              {check.status !== "ready" && repairLabels[check.id] && (
+                <ServerRepair action={check.id} onRepaired={onRepaired} />
+              )}
+              {check.status !== "ready" &&
+                !repairLabels[check.id] &&
+                recheck && (
                   <Button
                     type="button"
                     className="button small"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(check.repair!);
-                        toast.success("Review commands copied.");
-                      } catch {
-                        toast.error(
-                          "Could not copy. Select the commands above.",
-                        );
-                      }
-                    }}
+                    onClick={recheck}
                   >
-                    <Copy size={14} /> Copy commands
+                    Run checks again
                   </Button>
-                </details>
-              )}
+                )}
+              {check.id === "recent_logs" &&
+                check.status !== "ready" &&
+                openDomains && (
+                  <Button
+                    type="button"
+                    className="button small"
+                    onClick={openDomains}
+                  >
+                    Review domain DNS
+                  </Button>
+                )}
             </div>
           </div>
         ))}
@@ -120,6 +133,15 @@ export default function ServerDiagnostics({
               </p>
             )}
             <small className="muted mono">{job.job_id}</small>
+            {job.status === "recovery_required" && openDeployments && (
+              <Button
+                type="button"
+                className="button small"
+                onClick={openDeployments}
+              >
+                Review & recover operation
+              </Button>
+            )}
             {Number.isFinite(Date.parse(job.finished_at)) && (
               <time dateTime={job.finished_at}>
                 {new Date(job.finished_at).toLocaleString()}

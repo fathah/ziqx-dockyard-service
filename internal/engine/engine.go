@@ -410,10 +410,11 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 	}
 	// The release was prepared for these domains, web service and host port;
 	// the final route step writes the matching Caddy site.
-	if j.Action == "deploy" && j.Input.Project != nil && p.NativeCompose() {
+	if (j.Action == "deploy" || j.Action == "route_setup") && j.Input.Project != nil && p.NativeCompose() {
 		next := j.Input.Project
 		p.RouteService, p.RoutePort = next.RouteService, next.RoutePort
 		p.Domains, p.BluePort = next.Domains, next.BluePort
+		p.ServiceRoutes = next.ServiceRoutes
 	}
 	if _, err := os.Stat(filepath.Join(e.Config.ProjectsRoot, p.ID, "env", r.Environment+".env")); err != nil {
 		return model.Fail("ENVIRONMENT_UNAVAILABLE")
@@ -454,8 +455,10 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 	if err := e.phase(j, "pulling"); err != nil {
 		return err
 	}
-	if err := e.Docker.Pull(ctx, *p, r); err != nil {
-		return err
+	if j.Action != "route_setup" {
+		if err := e.Docker.Pull(ctx, *p, r); err != nil {
+			return err
+		}
 	}
 	slot := "blue"
 	if p.ZeroDowntime && old == "blue" {
@@ -483,12 +486,21 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 	}
 	// A full-stack deployment is an explicit maintenance operation. All active
 	// service versions were stopped above; the new full manifest becomes primary.
-	if j.Action == "deploy" || j.Action == "rollback" {
+	if j.Action == "deploy" || j.Action == "rollback" || j.Action == "route_setup" {
 		p.ServiceInstances = nil
 	}
 	var err error
+	ports := map[int]bool{}
 	if p.Port(slot) > 0 {
-		free, checkErr := e.Docker.PortFree(ctx, p.Port(slot))
+		ports[p.Port(slot)] = true
+	}
+	for _, route := range p.ServiceRoutes {
+		if route.Managed {
+			ports[route.HostPort] = true
+		}
+	}
+	for port := range ports {
+		free, checkErr := e.Docker.PortFree(ctx, port)
 		if checkErr != nil {
 			return checkErr
 		}
@@ -664,6 +676,10 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 		observed, err := observer.Observe(ctx, p)
 		if j.Input.Project != nil {
 			candidate := *j.Input.Project
+			if j.Action == "route_setup" && j.Input.Release != nil {
+				candidate.Slots = map[string]model.Release{"blue": *j.Input.Release}
+				candidate.ServiceInstances = nil
+			}
 			if slot, candidateErr := observer.Observe(ctx, candidate); candidateErr == nil {
 				p = candidate
 				observed = slot

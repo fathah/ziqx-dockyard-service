@@ -16,6 +16,7 @@ const JOB_CHECK: &str = include_str!("../../updater/update_jobs.py");
 const UNIT: &[u8] = include_bytes!("../../../deploy/dockyard.service");
 const INSPECT: &str = "set -eu; . /etc/os-release; test \"$ID\" = ubuntu; test \"$(uname -m)\" = x86_64; test \"$(id -u)\" = 0; test -f /usr/local/bin/dockyard; test -f /usr/local/bin/dockyardctl; sha256sum /usr/local/bin/dockyard /usr/local/bin/dockyardctl; systemctl is-active dockyard; /usr/local/bin/dockyard -version-json 2>/dev/null || echo legacy";
 const ACCESS_CHECK: &str = include_str!("../../updater/access_check.py");
+const REPAIR: &str = include_str!("../../updater/repair.py");
 const ACCESS_PREPARE: &str = "set -eu; test \"$(id -u)\" = 0; test \"$(stat -c %u /var/lib)\" = 0; test ! -L /var/lib/dockyard-desktop-updates; if test -e /var/lib/dockyard-desktop-updates; then test -d /var/lib/dockyard-desktop-updates; test \"$(stat -c %u /var/lib/dockyard-desktop-updates)\" = 0; fi; install -d -o root -g root -m 0700 /var/lib/dockyard-desktop-updates";
 const BINARY_UPLOAD_MODE: i32 = 0o700;
 const DATA_UPLOAD_MODE: i32 = 0o600;
@@ -420,6 +421,61 @@ fn inspect_access(session: &Session, key_id: &str) -> Result<AccessReport, Strin
 }
 pub fn check_access(app: &AppHandle, identity: &SshIdentity, key_id: &str) -> Result<AccessReport, String> {
     let session = ssh(app, identity, None)?;
+    inspect_access(&session, key_id)
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RepairPreview {
+    pub action: String,
+    pub review_sha256: String,
+    pub changes: Vec<String>,
+    pub saved_domains: Vec<String>,
+    pub live_domains: Vec<String>,
+    pub changed_sections: Vec<String>,
+    pub reloads_caddy: bool,
+    pub saved_available: bool,
+    pub live_available: bool,
+}
+fn repair_command(session: &Session, action: &str, expected: &str) -> Result<serde_json::Value, String> {
+    if !matches!(action, "caddy_admin" | "caddy_import" | "caddy_sites" | "caddy_coherence" | "caddy_write" | "caddy_capability" | "caddy_service" | "docker" | "docker_compose") || (!expected.is_empty() && !valid_hash(expected)) {
+        return Err("Invalid server repair".into());
+    }
+    let script = REPAIR.replace('\'', "'\"'\"'");
+    let output = command_limited(session, &format!("python3 -c '{}' '{}' '{}'", script, action, expected), 240000, 32768)?;
+    let result: serde_json::Value = serde_json::from_str(output.trim()).map_err(|_| "Server returned an invalid repair result")?;
+    if let Some(error) = result["error"].as_str() { return Err(error.to_owned()); }
+    Ok(result)
+}
+fn repair_worker(session: &Session, mode: &str, action: &str, expected: &str) -> Result<serde_json::Value, String> {
+    if !matches!(mode, "launch" | "status") || !valid_hash(expected) { return Err("Invalid repair worker".into()); }
+    let source = format!("SOURCE = {}\n{}", serde_json::to_string(REPAIR).map_err(|_| "Invalid repair script")?, REPAIR).replace('\'', "'\"'\"'");
+    let args = if mode == "launch" { format!("launch '{}' '{}'", action, expected) } else { format!("status '{}'", expected) };
+    let output = command_limited(session, &format!("python3 -c '{}' {}", source, args), 90000, 32768)?;
+    let result: serde_json::Value = serde_json::from_str(output.trim()).map_err(|_| "Server returned an invalid repair result")?;
+    if let Some(error) = result["error"].as_str() { return Err(error.into()); }
+    Ok(result)
+}
+pub fn preview_repair(app: &AppHandle, identity: &SshIdentity, action: &str) -> Result<RepairPreview, String> {
+    let session = ssh(app, identity, None)?;
+    serde_json::from_value(repair_command(&session, action, "")?).map_err(|_| "Server returned an invalid repair review".into())
+}
+pub fn repair_access(app: &AppHandle, identity: &SshIdentity, key_id: &str, action: &str, expected: &str, check: impl Fn() -> Result<(), String>) -> Result<AccessReport, String> {
+    let session = ssh(app, identity, None)?;
+    let review: RepairPreview = serde_json::from_value(repair_command(&session, action, "")?).map_err(|_| "Server returned an invalid repair review")?;
+    if review.review_sha256 != expected { return Err("Server settings changed. Review the repair again.".into()); }
+    check()?;
+    native::authenticate_reason(&format!("Repair {} on {}. {}", action.replace('_', " "), identity.server_ip, review.changes.join(" ")))?;
+    check()?;
+    repair_worker(&session, "launch", action, expected)?;
+    let mut complete = false;
+    for _ in 0..120 {
+        check()?;
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let result = repair_worker(&session, "status", action, expected)?;
+        if result["repaired"] == true { complete = true; break; }
+    }
+    if !complete { return Err("The repair is still running on the server. Run checks again shortly.".into()); }
+    check()?;
     inspect_access(&session, key_id)
 }
 pub fn prepare_access(app: &AppHandle, identity: &SshIdentity, key_id: &str) -> Result<AccessReport, String> {

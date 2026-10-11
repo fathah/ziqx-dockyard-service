@@ -135,7 +135,15 @@ func Snippet(p model.Project, slot string) []byte {
 		if slot == "" {
 			b.WriteString("\theader Retry-After 30\n\trespond \"Application unavailable\" 503\n")
 		} else {
-			fmt.Fprintf(&b, "\treverse_proxy 127.0.0.1:%d\n", p.Port(slot))
+			port := p.Port(slot)
+			for _, route := range p.ServiceRoutes {
+				for _, host := range route.Domains {
+					if host == d {
+						port = route.HostPort
+					}
+				}
+			}
+			fmt.Fprintf(&b, "\treverse_proxy 127.0.0.1:%d\n", port)
 		}
 		b.WriteString("}\n")
 	}
