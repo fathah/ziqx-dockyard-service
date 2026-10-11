@@ -211,13 +211,27 @@ func (d Docker) nativeHealthy(ctx context.Context, p model.Project, slot string,
 
 // Resolve a reviewed legacy route against positively identified running containers.
 func (d Docker) PublishedUpstream(ctx context.Context, p model.Project, service string, port int) (string, error) {
-	containers, err := d.nativeContainers(ctx, p, p.Active)
+	var containers []Container
+	var err error
+	if instance, ok := p.ServiceInstances[service]; ok {
+		// A service replacement is the active domain backend. Its original
+		// full-stack container may already be drained and stopped.
+		c, inspectErr := d.inspectServiceInstance(ctx, p, instance)
+		err = inspectErr
+		containers = []Container{c}
+	} else {
+		containers, err = d.nativeContainers(ctx, p, p.Active)
+	}
 	if err != nil {
 		return "", err
 	}
 	result := ""
 	for _, c := range containers {
-		if c.Config.Labels["com.docker.compose.service"] != service {
+		name := service
+		if instance, ok := p.ServiceInstances[service]; ok {
+			name = instance.Name
+		}
+		if c.Config.Labels["com.docker.compose.service"] != name {
 			continue
 		}
 		if !c.State.Running {

@@ -1,4 +1,5 @@
 import Button from "./Button";
+import useRecentProjects from "./useRecentProjects";
 import DomainHTTPS from "./DomainHTTPS";
 import ServerDetailsTabs from "./ServerDetailsTabs";
 import ServerDiagnostics from "./ServerDiagnostics";
@@ -391,6 +392,10 @@ function App() {
   const [pending, setPending] = useState<Pending>(null);
   const [audit, setAudit] = useState<Audit[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const recentProjects = useRecentProjects(
+    preview ? "preview" : `server:${session.profile?.server_ip ?? ""}`,
+    selected,
+  );
   const [projectSection, setProjectSection] = useState("overview");
   const [modal, setModal] = useState<Modal>(null);
   const [error, setError] = useState("");
@@ -982,6 +987,7 @@ function App() {
             ) : page === "projects" ? (
               <Projects
                 projects={shownProjects}
+                recentProjects={recentProjects}
                 inventory={shownInventory}
                 updated={updated}
                 loading={loading}
@@ -1184,6 +1190,7 @@ function Connect({
 }
 function Projects({
   projects,
+  recentProjects,
   inventory,
   updated,
   loading,
@@ -1194,6 +1201,7 @@ function Projects({
   refresh,
 }: {
   projects: Project[];
+  recentProjects: string[];
   inventory: Inventory | null;
   updated?: string;
   loading: boolean;
@@ -1211,6 +1219,17 @@ function Projects({
     ...projects.map((project) => ({ kind: "managed" as const, project })),
     ...observed.map((project) => ({ kind: "observed" as const, project })),
   ];
+  const recentOrder = new Map(recentProjects.map((id, index) => [id, index]));
+  entries.sort((a, b) => {
+    const key = (entry: (typeof entries)[number]) =>
+      entry.kind === "observed"
+        ? `observed:${entry.project.id}`
+        : entry.project.id;
+    return (
+      (recentOrder.get(key(a)) ?? Infinity) -
+      (recentOrder.get(key(b)) ?? Infinity)
+    );
+  });
   const filtered = entries.filter(({ kind, project }) => {
     const domains =
       kind === "managed"
@@ -3819,8 +3838,6 @@ function OperationModal({
       .catch(() => setRouteServices([]));
   }, [connecting, preview, p?.id]);
   const [domains, setDomains] = useState(p?.domains.join("\n") ?? "");
-  const [blue, setBlue] = useState("");
-  const [green, setGreen] = useState("");
   const zero = false;
   const [compose, setCompose] = useState("");
   const [variables, setVariables] = useState("");
@@ -3829,7 +3846,6 @@ function OperationModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [accessRequired, setAccessRequired] = useState(false);
-  const [suggestion, setSuggestion] = useState<number>();
   const name =
     m.kind === "create"
       ? existingApp
@@ -3886,10 +3902,6 @@ function OperationModal({
               .map((s) => s.trim())
               .filter(Boolean),
             zerodowntime: env === "production" && zero && !!domains.trim(),
-            ...(blue && domains.trim() ? { port: Number(blue) } : {}),
-            ...(env === "production" && zero && domains.trim() && green
-              ? { secondary_port: Number(green) }
-              : {}),
           },
         };
       } else if (m.kind === "deploy") {
@@ -3962,8 +3974,6 @@ function OperationModal({
               .split(/[\n,]+/)
               .map((s) => s.trim())
               .filter(Boolean),
-            ...(blue && domains.trim() ? { port: Number(blue) } : {}),
-            ...(green ? { secondary_port: Number(green) } : {}),
           },
         };
       else if (m.kind === "stop")
@@ -4306,78 +4316,11 @@ function OperationModal({
                     </p>
                   )}
                   {domains.trim() && !connecting && (
-                    <>
-                      {" "}
-                      <div className="form-grid">
-                        <label>
-                          Primary port <small>(optional)</small>
-                          <input
-                            type="number"
-                            disabled={
-                              m.kind === "routes" &&
-                              (!!p?.published_route ||
-                                (!!p?.route_service &&
-                                  !!p.service_instances?.[p.route_service]
-                                    ?.port))
-                            }
-                            min={1024}
-                            max={65535}
-                            placeholder={
-                              p ? String(p.blue_port) : "Allocate automatically"
-                            }
-                            value={blue}
-                            onChange={(e) => setBlue(e.target.value)}
-                          />
-                        </label>
-                        {((m.kind === "routes" && p?.zerodowntime) ||
-                          (m.kind === "create" &&
-                            env === "production" &&
-                            zero)) && (
-                          <label>
-                            Secondary port <small>(optional)</small>
-                            <input
-                              type="number"
-                              min={1024}
-                              max={65535}
-                              placeholder={
-                                p
-                                  ? String(p.green_port)
-                                  : "Allocate automatically"
-                              }
-                              value={green}
-                              onChange={(e) => setGreen(e.target.value)}
-                            />
-                          </label>
-                        )}
-                      </div>
-                      <Button
-                        type="button"
-                        className="text-button"
-                        disabled={preview || busy}
-                        onClick={async () => {
-                          try {
-                            const d = await api.read<{ port: number }>({
-                              kind: "port",
-                            });
-                            setSuggestion(d.port);
-                          } catch (e) {
-                            setError(String(e));
-                          }
-                        }}
-                      >
-                        <Search size={14} />
-                        Check next available port
-                      </Button>
-                      {suggestion && (
-                        <p className="muted">
-                          Available port: {suggestion}
-                          <Help label="port availability">
-                            This is a suggestion. The agent reserves the port
-                            when accepting the job.
-                          </Help>
-                        </p>
-                      )}
-                    </>
+                    <p className="configuration-note">
+                      Host ports are managed automatically. Choose the service
+                      and its container port; Dockyard keeps domain routing in
+                      sync.
+                    </p>
                   )}
                 </>
               )}

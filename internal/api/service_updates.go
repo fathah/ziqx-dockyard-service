@@ -139,48 +139,8 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 			fail(w, err, request)
 			return
 		}
-		if len(next.ServicePorts) == 0 {
-			first, err := e.AvailablePort(r.Context(), nil)
-			if err != nil {
-				fail(w, err, request)
-				return
-			}
-			second, err := e.AvailablePort(r.Context(), map[int]bool{first: true})
-			if err != nil {
-				fail(w, err, request)
-				return
-			}
-			next.ServicePorts = []int{first, second}
-		}
-		for _, port := range next.ServicePorts {
-			free, err := e.Docker.PortFree(r.Context(), port)
-			if err != nil {
-				fail(w, err, request)
-				return
-			}
-			if free {
-				hostPort = port
-				break
-			}
-		}
-		if hostPort == 0 {
-			// Multiple routed services may occupy the reusable pool. Reserve
-			// one more free candidate port, rather than changing a sibling's
-			// binding or allocating a fresh pair on every update.
-			skip := map[int]bool{}
-			for _, port := range next.ServicePorts {
-				skip[port] = true
-			}
-			hostPort, err = e.AvailablePort(r.Context(), skip)
-			if err != nil {
-				fail(w, err, request)
-				return
-			}
-			next.ServicePorts = append(next.ServicePorts, hostPort)
-		}
-		if primary && next.BluePort == 0 {
-			next.BluePort = next.ServicePorts[0]
-		}
+		// Docker reserves an ephemeral loopback binding when creating the
+		// candidate; there is no host-port pool or availability race.
 		if legacyImport {
 			upstream, err := d.PublishedUpstream(r.Context(), p, input.Service, input.ContainerPort)
 			if err != nil {

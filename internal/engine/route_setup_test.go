@@ -25,7 +25,17 @@ func (d *publishingRouteDocker) PortFree(_ context.Context, port int) (bool, err
 	return port != d.occupied, nil
 }
 
-func TestServiceDomainDeploymentDrainsAndChecksNewBindingBeforeStart(t *testing.T) {
+func (d *publishingRouteDocker) ResolveRouteBindings(_ context.Context, p *model.Project, _ string) error {
+	*d.events = append(*d.events, "resolve-bindings")
+	p.BluePort = 45001
+	p.ServiceRoutes = append([]model.ServiceRoute(nil), p.ServiceRoutes...)
+	for i := range p.ServiceRoutes {
+		p.ServiceRoutes[i].HostPort = 45002
+	}
+	return nil
+}
+
+func TestServiceDomainDeploymentDiscoversDockerPortsBeforeHealthAndRouting(t *testing.T) {
 	for _, scenario := range []struct {
 		occupied int
 		transfer bool
@@ -41,6 +51,7 @@ func TestServiceDomainDeploymentDrainsAndChecksNewBindingBeforeStart(t *testing.
 			previous, _ := e.Store.Project(j.ProjectID)
 			previous.Mode, previous.ZeroDowntime, previous.GreenPort = "compose", false, 0
 			previous.RouteService, previous.RoutePort = "web", 3000
+			previous.ServiceInstances = map[string]model.ServiceInstance{"web": {Name: "old-update", Port: 34999}}
 			next := previous
 			next.Domains = []string{"app.example.com", "api.example.com"}
 			next.ServiceRoutes = []model.ServiceRoute{{Service: "api", ContainerPort: 3040, HostPort: 3010, Domains: []string{"api.example.com"}, Managed: true}}
@@ -78,15 +89,14 @@ func TestServiceDomainDeploymentDrainsAndChecksNewBindingBeforeStart(t *testing.
 			if scenario.transfer && !strings.Contains(order, "import,route:,stop:blue") {
 				t.Fatal("manual site was not moved into maintenance before stopping its service", order)
 			}
-			if !strings.Contains(order, "route:,stop:blue") || strings.Contains(order, "pull") || !containsPort(d.ports, 3010) || occupied == 0 && !containsPort(d.ports, previous.BluePort) {
+			if !strings.Contains(order, "route:,stop:blue") || strings.Contains(order, "pull") || len(d.ports) != 0 {
 				t.Fatal("unsafe binding deployment", done, order, d.ports)
 			}
-			if occupied != 0 {
-				if done.Status != "failed" || done.Error != "PORT_IN_USE" || strings.Contains(order, "start:") {
-					t.Fatal(done, order)
-				}
-			} else if done.Status != "succeeded" || !strings.Contains(order, "stop:blue,start:blue") || current.State != "running" || len(current.ServiceRoutes) != 1 || current.Domains[0] != "app.example.com" {
+			if done.Status != "succeeded" || !strings.Contains(order, "stop:blue,start:blue,resolve-bindings,health:blue,route:blue") || current.State != "running" || len(current.ServiceRoutes) != 1 || current.Domains[0] != "app.example.com" {
 				t.Fatal(done, current, order)
+			}
+			if current.BluePort != 45001 || current.ServiceRoutes[0].HostPort != 45002 || len(current.ServiceInstances) != 0 || done.Input.Project.ServiceRoutes[0].HostPort != 45002 {
+				t.Fatal("Docker assignment was not journaled or stale service instance survived", current, done.Input.Project)
 			}
 		})
 	}

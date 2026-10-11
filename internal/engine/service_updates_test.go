@@ -18,6 +18,63 @@ type updatingDocker struct {
 	stopErr   error
 }
 
+type resolvingServiceDocker struct{ *updatingDocker }
+
+func (d *resolvingServiceDocker) ResolveServiceRouteBindings(_ context.Context, p *model.Project, plan *model.ServiceUpdate) error {
+	*d.events = append(*d.events, "resolve-service-binding")
+	plan.Instance.Port = 47001
+	if plan.Mode == "restart" && plan.Service == p.RouteService {
+		p.BluePort = plan.Instance.Port
+	}
+	return nil
+}
+
+func TestServiceUpdatesJournalDockerAssignedPortBeforeHealthAndCaddy(t *testing.T) {
+	for _, mode := range []string{"restart", "seamless"} {
+		t.Run(mode, func(t *testing.T) {
+			e, j, base, _, events := serviceFixture(t, mode)
+			j.Input.Previous.Mode, j.Input.Project.Mode = "compose", "compose"
+			j.Input.ServiceUpdate.Instance.Port = 0
+			if err := e.Store.Update(j, j.Input.Previous); err != nil {
+				t.Fatal(err)
+			}
+			e.Docker = &resolvingServiceDocker{base}
+			e.execute(context.Background(), j)
+			done, _ := e.Store.Job(j.ID)
+			p, _ := e.Store.Project(j.ProjectID)
+			if done.Status != "succeeded" || p.ServiceInstances["web"].Port != 47001 || done.Input.ServiceUpdate.Instance.Port != 47001 || done.Input.Project.ServiceInstances["web"].Port != 47001 {
+				t.Fatal("assigned port was not committed to project and recovery journal", done, p)
+			}
+			order := strings.Join(*events, ",")
+			if !strings.Contains(order, "resolve-service-binding,health-service:") || !strings.Contains(order, "route:blue") || strings.Contains(order, "postgres") {
+				t.Fatal("routing preceded discovery or affected dependencies", order)
+			}
+		})
+	}
+}
+
+func TestRestartRecoveryRepairsRouteFromVerifiedDockerAssignment(t *testing.T) {
+	e, j, base, routes, _ := serviceFixture(t, "restart")
+	j.Input.Previous.Mode, j.Input.Project.Mode = "compose", "compose"
+	j.Input.ServiceUpdate.Instance.Release.Image = "new-image"
+	j.Input.ServiceUpdate.Instance.Port = 0
+	j.Input.Project.ServiceInstances["web"] = j.Input.ServiceUpdate.Instance
+	j.Status, j.Phase = "recovery_required", "service_candidate_intent"
+	if err := e.Store.Update(j, j.Input.Previous); err != nil {
+		t.Fatal(err)
+	}
+	e.Docker = &resolvingServiceDocker{base}
+	live := &snippetServiceRoutes{fakeRoutes: routes, live: string(runtime.Snippet(*j.Input.Previous, "blue"))}
+	e.Routes = live
+	if err := e.Reconcile(context.Background(), j.ID); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := e.Store.Project(j.ProjectID)
+	if p.ServiceInstances["web"].Port != 47001 || !strings.Contains(live.live, "reverse_proxy 127.0.0.1:47001") {
+		t.Fatal("recovery left Caddy on the stale port", p, live.live)
+	}
+}
+
 type snippetServiceRoutes struct {
 	*fakeRoutes
 	live   string

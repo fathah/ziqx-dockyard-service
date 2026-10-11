@@ -176,6 +176,9 @@ func (c Caddy) DomainsAvailable(ctx context.Context, domains, owned []string) er
 // Set modifies only a generated snippet. The shared worker serializes all reloads.
 // A reload result is classified against live JSON; a timeout never implies rollback.
 func (c Caddy) Set(ctx context.Context, p model.Project, slot string) error {
+	if err := routeBindingsReady(p, slot); err != nil {
+		return err
+	}
 	if p.NativeCompose() && len(p.Domains) == 0 {
 		if _, err := os.Lstat(filepath.Join(c.Config.CaddySites, p.ID+".caddy")); os.IsNotExist(err) {
 			return nil

@@ -48,6 +48,10 @@ function explain(error: unknown) {
       "Saved and live Caddy routes differ. Review the repair below, then retry the connection.",
     DOMAIN_IN_USE:
       "This domain is already assigned to another service. Choose another hostname.",
+    SERVICE_ROUTE_BINDING_UNAVAILABLE:
+      "Docker hasn't created a usable local port for this service yet. Review the service deployment.",
+    COMPOSE_ROUTE_NETWORK_UNSUPPORTED:
+      "This service needs a Compose network to connect a domain. Remove its network_mode override before deploying.",
     SITE_NOT_MANAGED:
       "Update the VPS service to enable transfers from the main Caddyfile. If it is already up to date, this domain is defined in another included file; Dockyard hasn't changed it.",
     CADDY_ROUTE_PARSE_FAILED:
@@ -159,8 +163,11 @@ export default function RouteSetup({
         candidates[0];
       setService(first.name);
       setPort(String(preferredPort(first.name) ?? ""));
-    } else if (selected && !port && !portEdited) {
-      setPort(String(preferredPort(selected.name) ?? ""));
+    } else if (selected && !portEdited) {
+      const detected = preferredPort(selected.name);
+      if (detected !== undefined && port !== String(detected)) {
+        setPort(String(detected));
+      }
     }
   }, [JSON.stringify(candidates), selected, port, portEdited]);
   const data: api.RouteSetupInput = {
@@ -337,7 +344,7 @@ export default function RouteSetup({
           />
         </div>
         <label className="route-port">
-          <span>Port</span>
+          <span>Container port</span>
           <input
             type="number"
             min={1}
@@ -379,7 +386,7 @@ export default function RouteSetup({
       {selected?.container_ports?.length ? (
         <p className="muted">
           Detected container ports: {selected.container_ports.join(", ")}.
-          Dockyard chooses the host port.
+          Docker assigns the host port automatically.
         </p>
       ) : (
         <p className="muted">

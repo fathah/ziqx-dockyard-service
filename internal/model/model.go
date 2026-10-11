@@ -101,7 +101,7 @@ func (p Project) ValidateTarget() error {
 	}
 	seen := map[string]bool{}
 	for _, route := range p.ServiceRoutes {
-		if !p.NativeCompose() || p.ZeroDowntime || route.Service == "" || route.ContainerPort < 1 || route.ContainerPort > 65535 || route.HostPort < 1 || route.HostPort > 65535 || len(route.Domains) == 0 {
+		if !p.NativeCompose() || p.ZeroDowntime || route.Service == "" || route.ContainerPort < 1 || route.ContainerPort > 65535 || route.HostPort < 0 || route.HostPort == 0 && !route.Managed || route.HostPort > 65535 || len(route.Domains) == 0 {
 			return Uncertain("SERVICE_ROUTE_INVALID")
 		}
 		for _, domain := range route.Domains {
@@ -115,7 +115,7 @@ func (p Project) ValidateTarget() error {
 			seen[domain] = true
 		}
 	}
-	if p.Port(p.Active) == 0 {
+	if p.Port(p.Active) == 0 && p.RouteService == "" && p.PublishedRoute == nil {
 		for _, domain := range p.Domains {
 			if !seen[domain] {
 				return Uncertain("SERVICE_ROUTE_INVALID")

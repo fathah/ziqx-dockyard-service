@@ -57,6 +57,9 @@ func (e *Engine) blueGreen(ctx context.Context, j *model.Job, p *model.Project) 
 		return err
 	}
 	for _, port := range []int{next.BluePort, next.GreenPort} {
+		if next.NativeCompose() {
+			continue
+		}
 		free, err := e.Docker.PortFree(ctx, port)
 		if err != nil {
 			return err
@@ -84,6 +87,16 @@ func (e *Engine) blueGreen(ctx context.Context, j *model.Job, p *model.Project) 
 	started = true
 	if err := e.Docker.Start(ctx, next, "green"); err != nil {
 		return err
+	}
+	// Keep the live project unchanged until cutover; journal only the resolved
+	// candidate snapshot here.
+	if resolver, ok := e.Docker.(interface {
+		ResolveRouteBindings(context.Context, *model.Project, string) error
+	}); ok {
+		if err := resolver.ResolveRouteBindings(ctx, &next, "green"); err != nil {
+			return err
+		}
+		j.Input.Project = &next
 	}
 	if err := e.phase(j, "readiness"); err != nil {
 		return err

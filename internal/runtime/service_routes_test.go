@@ -34,7 +34,7 @@ func TestServiceRouteBindingsPersistWithoutChangingResolvedInputs(t *testing.T) 
 	oldSvc := object(object(oldDoc["services"])["postgres"])
 	newSvc := object(object(newDoc["services"])["postgres"])
 	ports := array(newSvc["ports"])
-	if len(ports) != 1 || object(ports[0])["host_ip"] != "127.0.0.1" || object(ports[0])["published"] != "3010" || object(ports[0])["target"] != float64(5432) {
+	if len(ports) != 1 || object(ports[0])["host_ip"] != "127.0.0.1" || object(ports[0])["published"] != nil || object(ports[0])["target"] != float64(5432) {
 		t.Fatal("private binding missing", ports)
 	}
 	delete(oldSvc, "ports")

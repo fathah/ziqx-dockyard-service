@@ -917,7 +917,7 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 			return
 		}
 		blue := 0
-		if !native || len(create.Domains) > 0 {
+		if !native {
 			blue, err = a.port(r.Context(), create.Port, id, map[int]bool{})
 			if err != nil {
 				fail(w, err, request)
@@ -925,7 +925,7 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 			}
 		}
 		green := 0
-		if zero {
+		if zero && !native {
 			green, err = a.port(r.Context(), create.Secondary, id, map[int]bool{blue: true})
 			if err != nil {
 				fail(w, err, request)
@@ -1053,12 +1053,6 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					if len(target.Domains) == 0 || target.RouteService == "" || target.ZeroDowntime || target.PublishedRoute != nil {
 						problem(w, 400, "COMPOSE_ROUTE_INVALID", request)
 						return
-					}
-					if target.BluePort == 0 {
-						if target.BluePort, err = a.port(r.Context(), 0, id, map[int]bool{}); err != nil {
-							fail(w, err, request)
-							return
-						}
 					}
 					j.Input.Project = &target
 				}
@@ -1194,8 +1188,12 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					}
 				}
 			}
-			if p.NativeCompose() && (action == "rollback" && p.ServiceMode || len(p.ServiceRoutes) > 0) {
-				release, err = runtime.RebindNativeRoute(e.Config, p, release)
+			if p.NativeCompose() && (p.RouteService != "" || p.PublishedRoute != nil || len(p.ServiceRoutes) > 0 || len(p.ServiceInstances) > 0) {
+				if action == "rollback" {
+					release, err = runtime.RebindNativeRoute(e.Config, p, release)
+				} else {
+					release, err = runtime.RebindNativeServices(e.Config, p, release)
+				}
 				if err != nil {
 					fail(w, err, request)
 					return

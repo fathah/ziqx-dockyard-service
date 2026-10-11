@@ -131,7 +131,11 @@ func ServiceUpdateOptions(c config.Config, p model.Project) (map[string]ServiceO
 			}
 		}
 		for _, raw := range array(svc["expose"]) {
-			n, _ := strconv.Atoi(fmt.Sprint(raw))
+			target, protocol, qualified := strings.Cut(fmt.Sprint(raw), "/")
+			if qualified && protocol != "tcp" {
+				continue
+			}
+			n, _ := strconv.Atoi(target)
 			if n > 0 && n <= 65535 && !seen[n] {
 				ports = append(ports, n)
 				seen[n] = true
@@ -288,7 +292,7 @@ func (d Docker) PlanServiceUpdate(ctx context.Context, p model.Project, service,
 		plan.Instance.ContainerID = "" // Docker recreates the selected container.
 		return plan, nil
 	}
-	if mode != "seamless" || p.Environment != model.Production || containerPort < 1 || containerPort > 65535 || hostPort < 1 || hostPort > 65535 {
+	if mode != "seamless" || p.Environment != model.Production || containerPort < 1 || containerPort > 65535 || hostPort < 0 || hostPort > 65535 {
 		return zero, model.Fail("SERVICE_UPDATE_INVALID")
 	}
 	targetPort, domains, err := ServiceUpdateTarget(p, service)
@@ -417,7 +421,11 @@ func (d Docker) PullServiceUpdate(ctx context.Context, p model.Project, plan *mo
 		delete(svc, "container_name")
 		delete(svc, "hostname")
 		delete(svc, "links")
-		svc["ports"] = []any{map[string]any{"target": serviceInstancePort(p, plan.Service, plan.Instance), "published": strconv.Itoa(plan.Instance.Port), "host_ip": "127.0.0.1", "protocol": "tcp"}}
+		binding := automaticRouteBinding(serviceInstancePort(p, plan.Service, plan.Instance))
+		if plan.Instance.Port > 0 {
+			binding["published"] = strconv.Itoa(plan.Instance.Port) // Older accepted jobs.
+		}
+		svc["ports"] = []any{binding}
 		nets := map[string]any{}
 		defs := map[string]any{}
 		names := []string{}
@@ -478,6 +486,33 @@ func (d Docker) HealthyServiceUpdate(ctx context.Context, p model.Project, plan 
 	}
 	if !c.State.Running || c.Image != plan.Instance.Release.Image || c.State.Health != nil && c.State.Health.Status != "healthy" || plan.Mode == "seamless" && c.State.Health == nil {
 		return model.Fail("SERVICE_UNHEALTHY")
+	}
+	if plan.Mode == "restart" {
+		verify := func(target, host int) error {
+			for _, binding := range c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", target)] {
+				if (binding.HostIP == "127.0.0.1" || binding.HostIP == "0.0.0.0") && binding.HostPort == strconv.Itoa(host) && host > 0 {
+					return nil
+				}
+			}
+			return model.Uncertain("CONTAINER_BINDING_DIVERGED")
+		}
+		if p.RouteService == plan.Service {
+			if err := verify(p.RoutePort, p.Port(p.Active)); err != nil {
+				return err
+			}
+		}
+		if pin := p.PublishedRoute; pin != nil && pin.Service == plan.Service {
+			if err := verify(pin.ContainerPort, pin.HostPort); err != nil {
+				return err
+			}
+		}
+		for _, route := range p.ServiceRoutes {
+			if route.Service == plan.Service {
+				if err := verify(route.ContainerPort, routeHostPort(p, route.Domains[0], p.Active)); err != nil {
+					return err
+				}
+			}
+		}
 	}
 	if plan.Mode == "seamless" {
 		for _, m := range c.Mounts {

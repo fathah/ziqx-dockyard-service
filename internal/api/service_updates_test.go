@@ -113,7 +113,7 @@ func TestServiceUpdateReviewBindsSnapshotNetworksAndPortsAndReplaysJob(t *testin
 	var acceptedJob model.Job
 	json.Unmarshal(w.Body.Bytes(), &acceptedJob)
 	job, _ := a.Engine.Store.Job(acceptedJob.ID)
-	if job.Input.ServiceUpdate == nil || job.Input.Previous == nil || job.Input.ServiceUpdate.Service != "web" || job.Input.Project.ZeroDowntime || len(job.Input.Project.ServicePorts) != 2 {
+	if job.Input.ServiceUpdate == nil || job.Input.Previous == nil || job.Input.ServiceUpdate.Service != "web" || job.Input.Project.ZeroDowntime || len(job.Input.Project.ServicePorts) != 0 || job.Input.ServiceUpdate.Instance.Port != 0 {
 		t.Fatal("incomplete journal", job)
 	}
 	for _, port := range job.Input.Project.ServicePorts {
@@ -163,7 +163,7 @@ func TestServiceRestartNeedsDeployScopeAndRejectsAmbiguousInputs(t *testing.T) {
 	}
 }
 
-func TestEachAssignedServiceReviewsOnlyItsDomainsAndExpandsOccupiedPool(t *testing.T) {
+func TestEachAssignedServiceReviewsOnlyItsDomainsWithoutReservingHostPorts(t *testing.T) {
 	for _, service := range []string{"api", "web"} {
 		t.Run(service, func(t *testing.T) {
 			a, d, _, send := apiFixture(t)
@@ -216,12 +216,12 @@ func TestEachAssignedServiceReviewsOnlyItsDomainsAndExpandsOccupiedPool(t *testi
 			var accepted model.Job
 			json.Unmarshal(w.Body.Bytes(), &accepted)
 			job, _ := a.Engine.Store.Job(accepted.ID)
-			if len(job.Input.Project.ServicePorts) != 3 || job.Input.Project.RouteService != "web" || job.Input.Project.RoutePort != 3000 || len(job.Input.Project.ServiceRoutes) != 2 {
+			if len(job.Input.Project.ServicePorts) != 2 || job.Input.ServiceUpdate.Instance.Port != 0 || job.Input.Project.RouteService != "web" || job.Input.Project.RoutePort != 3000 || len(job.Input.Project.ServiceRoutes) != 2 {
 				t.Fatal("candidate replaced primary or sibling configuration", job.Input.Project)
 			}
 			reserved, err := a.Engine.Store.Reserved(review.HostPort, "other")
-			if err != nil || !reserved {
-				t.Fatal("candidate port not reserved", reserved, err)
+			if err != nil || reserved || review.HostPort != 0 {
+				t.Fatal("ephemeral candidate reserved a fixed host port", reserved, err)
 			}
 		})
 	}

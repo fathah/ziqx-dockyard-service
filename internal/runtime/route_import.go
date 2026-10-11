@@ -135,6 +135,9 @@ func (c Caddy) VerifyRouteImport(edits []model.RouteEdit) error {
 	return nil
 }
 func (c Caddy) ImportRoutes(ctx context.Context, edits []model.RouteEdit, p model.Project) error {
+	if err := routeBindingsReady(p, importSlot(p)); err != nil {
+		return err
+	}
 	if err := c.VerifyRouteImport(edits); err != nil {
 		return err
 	}

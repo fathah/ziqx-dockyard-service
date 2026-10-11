@@ -145,17 +145,7 @@ func Snippet(p model.Project, slot string) []byte {
 		if slot == "" {
 			b.WriteString("\theader Retry-After 30\n\trespond \"Application unavailable\" 503\n")
 		} else {
-			port := p.Port(slot)
-			for _, route := range p.ServiceRoutes {
-				for _, host := range route.Domains {
-					if host == d {
-						port = route.HostPort
-						if instance := p.ServiceInstances[route.Service]; slot == p.Active && instance.Port > 0 {
-							port = instance.Port
-						}
-					}
-				}
-			}
+			port := routeHostPort(p, d, slot)
 			if imported != nil {
 				b.WriteString(strings.ReplaceAll(imported.Body, model.CaddyUpstream, fmt.Sprintf("127.0.0.1:%d", port)))
 				if !strings.HasSuffix(imported.Body, "\n") {
@@ -168,4 +158,31 @@ func Snippet(p model.Project, slot string) []byte {
 		b.WriteString("}\n")
 	}
 	return []byte(b.String())
+}
+
+func routeHostPort(p model.Project, domain, slot string) int {
+	port := p.Port(slot)
+	for _, route := range p.ServiceRoutes {
+		for _, host := range route.Domains {
+			if host == domain {
+				port = route.HostPort
+				if instance := p.ServiceInstances[route.Service]; slot == p.Active && instance.Port > 0 {
+					port = instance.Port
+				}
+			}
+		}
+	}
+	return port
+}
+
+func routeBindingsReady(p model.Project, slot string) error {
+	if slot == "" {
+		return nil
+	}
+	for _, domain := range p.Domains {
+		if port := routeHostPort(p, domain, slot); port < 1 || port > 65535 {
+			return model.Fail("SERVICE_ROUTE_BINDING_UNAVAILABLE")
+		}
+	}
+	return nil
 }

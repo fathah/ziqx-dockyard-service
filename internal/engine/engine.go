@@ -498,9 +498,10 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 	}
 	// A full-stack deployment is an explicit maintenance operation. All active
 	// service versions were stopped above; the new full manifest becomes primary.
-	if j.Action == "deploy" || j.Action == "rollback" || j.Action == "route_setup" {
-		p.ServiceInstances = nil
-	}
+	// Start/restart also recreates the full stack. Its prepared manifest retains
+	// individually updated images; stale instance names and ports must not hide
+	// the newly created primary containers during binding/health verification.
+	p.ServiceInstances = nil
 	var err error
 	ports := map[int]bool{}
 	if p.Port(slot) > 0 {
@@ -512,6 +513,9 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 		}
 	}
 	for port := range ports {
+		if p.NativeCompose() {
+			continue // Docker allocates managed route bindings during container creation.
+		}
 		free, checkErr := e.Docker.PortFree(ctx, port)
 		if checkErr != nil {
 			return checkErr
@@ -532,6 +536,9 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 		return model.Uncertain("STATE_WRITE_FAILED")
 	}
 	if err = e.Docker.Start(ctx, *p, slot); err != nil {
+		return err
+	}
+	if err = e.resolveRouteBindings(ctx, j, p, slot); err != nil {
 		return err
 	}
 	if err = e.phase(j, "readiness"); err != nil {
@@ -583,6 +590,31 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 		if err = e.Docker.Stop(ctx, *p, old); err != nil {
 			j.Warning = "OLD_SLOT_STOP_FAILED"
 		}
+	}
+	return nil
+}
+
+func (e *Engine) resolveRouteBindings(ctx context.Context, j *model.Job, p *model.Project, slot string) error {
+	if !p.NativeCompose() {
+		return nil
+	}
+	resolver, ok := e.Docker.(interface {
+		ResolveRouteBindings(context.Context, *model.Project, string) error
+	})
+	if !ok {
+		return nil
+	}
+	if err := resolver.ResolveRouteBindings(ctx, p, slot); err != nil {
+		return err
+	}
+	// Journal the actual assignment before Caddy can send traffic to it.
+	// Keep the candidate snapshot in agreement for interruption recovery.
+	if j.Input.Project != nil {
+		next := *p
+		j.Input.Project = &next
+	}
+	if err := e.Store.Update(*j, p); err != nil {
+		return model.Uncertain("STATE_WRITE_FAILED")
 	}
 	return nil
 }

@@ -307,7 +307,7 @@ func TestNativeDeployConnectsDomains(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &deployed)
 	job, _ = a.Engine.Store.Job(deployed.ID)
 	next := job.Input.Project
-	if next == nil || len(next.Domains) != 1 || next.RouteService != "web" || next.RoutePort != 80 || next.BluePort < a.Engine.Config.PortMin {
+	if next == nil || len(next.Domains) != 1 || next.RouteService != "web" || next.RoutePort != 80 || next.BluePort != 0 {
 		t.Fatal("domain connection not carried by the job", next)
 	}
 }

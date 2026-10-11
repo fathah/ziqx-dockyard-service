@@ -110,12 +110,6 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	// Only Dockyard's generated slot port and network substitutions remain.
 	escapeNative(doc)
 	services := doc["services"].(map[string]any)
-	if p.RouteService != "" {
-		svc := services[p.RouteService].(map[string]any)
-		ports, _ := svc["ports"].([]any)
-		ports = append(ports, map[string]any{"target": p.RoutePort, "published": "${DOCKYARD_PORT}", "host_ip": "127.0.0.1", "protocol": "tcp"})
-		svc["ports"] = ports
-	}
 	addServiceRouteBindings(p, services)
 	if p.ZeroDowntime {
 		for name, raw := range object(doc["networks"]) {
@@ -159,6 +153,9 @@ func compileNative(c config.Config, p model.Project, doc map[string]any) error {
 	if p.RouteService != "" && object(services[p.RouteService]) == nil {
 		return model.Fail("COMPOSE_ROUTE_SERVICE_MISSING")
 	}
+	if p.PublishedRoute != nil && object(services[p.PublishedRoute.Service]) == nil {
+		return model.Fail("COMPOSE_ROUTE_SERVICE_MISSING")
+	}
 	for _, route := range p.ServiceRoutes {
 		if object(services[route.Service]) == nil {
 			return model.Fail("COMPOSE_ROUTE_SERVICE_MISSING")
@@ -171,6 +168,13 @@ func compileNative(c config.Config, p model.Project, doc map[string]any) error {
 		svc := object(raw)
 		if svc == nil || !config.ServiceName.MatchString(name) {
 			return model.Fail("COMPOSE_VALIDATION_FAILED")
+		}
+		routed := name == p.RouteService || p.PublishedRoute != nil && name == p.PublishedRoute.Service
+		for _, route := range p.ServiceRoutes {
+			routed = routed || route.Service == name
+		}
+		if routed && svc["network_mode"] != nil {
+			return model.Fail("COMPOSE_ROUTE_NETWORK_UNSUPPORTED")
 		}
 		labels := object(svc["labels"])
 		if labels == nil {
@@ -189,9 +193,12 @@ func compileNative(c config.Config, p model.Project, doc map[string]any) error {
 			}
 			managed := false
 			for _, route := range p.ServiceRoutes {
-				if route.Managed && name == route.Service && fmt.Sprint(mapping["target"]) == strconv.Itoa(route.ContainerPort) && (mapping["protocol"] == nil || mapping["protocol"] == "tcp") {
+				if name == route.Service && fmt.Sprint(mapping["target"]) == strconv.Itoa(route.ContainerPort) && (mapping["protocol"] == nil || mapping["protocol"] == "tcp") {
 					managed = true
 				}
+			}
+			if pin := p.PublishedRoute; pin != nil && name == pin.Service && fmt.Sprint(mapping["target"]) == strconv.Itoa(pin.ContainerPort) && (mapping["protocol"] == nil || mapping["protocol"] == "tcp") {
+				managed = true
 			}
 			if managed {
 				continue
@@ -353,6 +360,11 @@ func EditableConfiguration(c config.Config, p model.Project, r model.Release) (s
 
 // Older adopted releases predate Dockyard's managed website port. Rebind only
 // that port when explicitly rolling back the full stack; never reevaluate env.
+// RebindNativeServices retains independently updated images for a full restart.
+func RebindNativeServices(c config.Config, p model.Project, r model.Release) (model.Release, error) {
+	return rebindNativeRoute(c, p, r, true)
+}
+
 func RebindNativeRoute(c config.Config, p model.Project, r model.Release) (model.Release, error) {
 	return rebindNativeRoute(c, p, r, false)
 }
@@ -394,10 +406,6 @@ func rebindNativeRoute(c config.Config, p model.Project, r model.Release, preser
 	if err = compileNative(c, p, doc); err != nil {
 		return r, err
 	}
-	if p.RouteService != "" {
-		svc := object(object(doc["services"])[p.RouteService])
-		svc["ports"] = append(array(svc["ports"]), map[string]any{"target": p.RoutePort, "published": "${DOCKYARD_PORT}", "host_ip": "127.0.0.1", "protocol": "tcp"})
-	}
 	addServiceRouteBindings(p, object(doc["services"]))
 	b, err = json.MarshalIndent(doc, "", "  ")
 	if err != nil || len(b) > 2<<20 {
@@ -416,13 +424,31 @@ func rebindNativeRoute(c config.Config, p model.Project, r model.Release, preser
 }
 
 func addServiceRouteBindings(p model.Project, services map[string]any) {
-	for _, route := range p.ServiceRoutes {
-		if !route.Managed {
-			continue
+	seen := map[string]bool{}
+	add := func(service string, port int) {
+		key := fmt.Sprintf("%s:%d", service, port)
+		if seen[key] {
+			return
 		}
-		svc := object(services[route.Service])
-		svc["ports"] = append(array(svc["ports"]), map[string]any{"target": route.ContainerPort, "published": strconv.Itoa(route.HostPort), "host_ip": "127.0.0.1", "protocol": "tcp"})
+		seen[key] = true
+		svc := object(services[service])
+		svc["ports"] = append(array(svc["ports"]), automaticRouteBinding(port))
 	}
+	if p.RouteService != "" {
+		add(p.RouteService, p.RoutePort)
+	}
+	if pin := p.PublishedRoute; pin != nil {
+		add(pin.Service, pin.ContainerPort)
+	}
+	for _, route := range p.ServiceRoutes {
+		add(route.Service, route.ContainerPort)
+	}
+}
+
+// Omitting published lets Docker allocate a free host port atomically. Keep
+// domain backends private; Caddy is the public entry point.
+func automaticRouteBinding(port int) map[string]any {
+	return map[string]any{"target": port, "host_ip": "127.0.0.1", "protocol": "tcp"}
 }
 
 // Reuse resolved inputs and image references; no environment secrets leave the VPS.

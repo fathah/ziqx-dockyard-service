@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -173,7 +172,7 @@ func TestNativeBlueGreenSlotRoundTrip(t *testing.T) {
 			t.Fatal("slots share network", name)
 		}
 		ports := array(object(object(doc["services"])["frontend"])["ports"])
-		if len(ports) != 1 || object(ports[0])["host_ip"] != "127.0.0.1" || object(ports[0])["published"] != strconv.Itoa(p.Port(slot)) {
+		if len(ports) != 1 || object(ports[0])["host_ip"] != "127.0.0.1" || object(ports[0])["published"] != nil || object(ports[0])["target"] != float64(80) {
 			t.Fatal("slot route incorrect", ports)
 		}
 	}

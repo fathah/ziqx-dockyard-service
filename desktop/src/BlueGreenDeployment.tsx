@@ -318,10 +318,7 @@ export default function BlueGreenDeployment({
               {review.route_service}:{review.route_port}
             </dd>
             <dt>Server ports</dt>
-            <dd>
-              {review.blue_port} and {review.green_port} · assigned
-              automatically
-            </dd>
+            <dd>Assigned automatically by Docker</dd>
           </dl>
           <p>
             Your current version keeps serving visitors until the update is

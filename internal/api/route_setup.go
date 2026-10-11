@@ -302,24 +302,24 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 			fail(w, err, request)
 			return
 		}
-		port, err := e.AvailablePort(r.Context(), map[int]bool{})
-		if err != nil {
-			fail(w, err, request)
-			return
-		}
-		upstream = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+		// The concrete host port is assigned by Docker at container creation.
+		upstream = net.JoinHostPort("127.0.0.1", "0")
 		managed = true
 	}
 	host, port, parseErr := net.SplitHostPort(upstream)
 	hostPort, numberErr := strconv.Atoi(port)
-	if parseErr != nil || numberErr != nil || host != "127.0.0.1" || hostPort < 1 || hostPort > 65535 {
+	if parseErr != nil || numberErr != nil || host != "127.0.0.1" || hostPort < 0 || hostPort == 0 && !managed || hostPort > 65535 {
 		problem(w, 409, "CONTAINER_BINDING_DIVERGED", request)
 		return
 	}
 	if !primary {
 		route := model.ServiceRoute{Service: input.Service, ContainerPort: input.ContainerPort, HostPort: hostPort, Domains: append([]string{}, input.Domains...), Managed: managed}
 		if index >= 0 {
-			if p.ServiceRoutes[index].HostPort != hostPort {
+			expectedPort := p.ServiceRoutes[index].HostPort
+			if instance, ok := p.ServiceInstances[input.Service]; ok && instance.Port > 0 && (instance.ContainerPort == 0 || instance.ContainerPort == input.ContainerPort) {
+				expectedPort = instance.Port
+			}
+			if expectedPort != hostPort {
 				problem(w, 409, "CONTAINER_BINDING_DIVERGED", request)
 				return
 			}

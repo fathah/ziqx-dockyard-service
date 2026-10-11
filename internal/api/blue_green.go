@@ -129,14 +129,7 @@ func (a *API) blueGreen(w http.ResponseWriter, r *http.Request, principal auth.P
 		fail(w, err, principal.RequestID)
 		return
 	}
-	next.BluePort, err = e.AvailablePort(r.Context(), map[int]bool{p.BluePort: true, p.GreenPort: true})
-	if err == nil {
-		next.GreenPort, err = e.AvailablePort(r.Context(), map[int]bool{p.BluePort: true, p.GreenPort: true, next.BluePort: true})
-	}
-	if err != nil {
-		fail(w, err, principal.RequestID)
-		return
-	}
+	next.BluePort, next.GreenPort = 0, 0 // Assigned atomically by Docker.
 	var edits []model.RouteEdit
 	if p.Adoption != nil {
 		d, ok := e.Docker.(interface {

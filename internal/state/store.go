@@ -241,6 +241,11 @@ func (s *Store) Accept(j model.Job, p *model.Project, key, fingerprint string, m
 		for _, route := range candidate.ServiceRoutes {
 			ports = append(ports, route.HostPort)
 		}
+		if candidate.NativeCompose() {
+			// Native route ports describe Docker's current assignments. Reserving
+			// them as fixed slots would reject a valid later Docker allocation.
+			ports = nil
+		}
 		for _, port := range ports {
 			if port == 0 {
 				continue

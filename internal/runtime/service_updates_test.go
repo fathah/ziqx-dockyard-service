@@ -114,6 +114,9 @@ func TestServiceCandidateKeepsDatabaseAndUsesExistingNetwork(t *testing.T) {
 	if strings.Join(options["web"].DependsOn, ",") != "postgres" || options["postgres"].DependsOn == nil || len(options["postgres"].DependsOn) != 0 {
 		t.Fatal("dependency metadata must distinguish a dependency from none", options)
 	}
+	if len(options["web"].Ports) != 1 || options["web"].Ports[0] != 3000 {
+		t.Fatal("container port metadata used a host port instead of the Compose target", options)
+	}
 	plan, err := d.PlanServiceUpdate(context.Background(), p, "web", "seamless", 3000, 3010, "")
 	if err != nil {
 		t.Fatal(err)
@@ -363,7 +366,7 @@ func TestFullRollbackRebindsAdoptedRouteWithoutReevaluatingSecrets(t *testing.T)
 	var doc map[string]any
 	json.Unmarshal(b, &doc)
 	web := object(object(doc["services"])["web"])
-	if len(object(doc["services"])) != 2 || object(web["environment"])["TOKEN"] != "keep$$secret" || object(array(web["ports"])[0])["published"] != "${DOCKYARD_PORT}" || rebound.Environment != r.Environment {
+	if len(object(doc["services"])) != 2 || object(web["environment"])["TOKEN"] != "keep$$secret" || object(array(web["ports"])[0])["published"] != nil || rebound.Environment != r.Environment {
 		t.Fatal("rollback changed full source or secrets", string(b))
 	}
 	if source, err := ComposeMirror(d.Config, p, rebound); err != nil || string(source) != "services: supplied" {

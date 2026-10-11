@@ -1,12 +1,14 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"reflect"
 	"time"
 
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
+	"github.com/ziqx/ziqx-dockyard-service/internal/runtime"
 	"github.com/ziqx/ziqx-dockyard-service/internal/state"
 )
 
@@ -86,6 +88,15 @@ func (e *Engine) updateService(ctx context.Context, j *model.Job, p *model.Proje
 		}
 		return err
 	}
+	if resolver, ok := e.Docker.(interface {
+		ResolveServiceRouteBindings(context.Context, *model.Project, *model.ServiceUpdate) error
+	}); ok {
+		if err := resolver.ResolveServiceRouteBindings(ctx, &next, plan); err != nil {
+			return model.Uncertain("SERVICE_UPDATE_RECOVERY_REQUIRED")
+		}
+		next.ServiceInstances[plan.Service] = plan.Instance
+		j.Input.Project = &next
+	}
 	if err := e.phase(j, "service_readiness"); err != nil {
 		return err
 	}
@@ -96,6 +107,17 @@ func (e *Engine) updateService(ctx context.Context, j *model.Job, p *model.Proje
 		return err
 	}
 	if plan.Mode == "restart" {
+		if !bytes.Equal(runtime.Snippet(old, old.Active), runtime.Snippet(next, next.Active)) {
+			if err := e.Routes.Ensure(ctx, old); err != nil {
+				return err
+			}
+			if err := e.phase(j, "service_route_intent"); err != nil {
+				return err
+			}
+			if err := e.Routes.Set(ctx, next, next.Active); err != nil {
+				return err
+			}
+		}
 		*p = next
 		if err := e.Store.Update(*j, p); err != nil {
 			return model.Uncertain("STATE_WRITE_FAILED")
@@ -188,8 +210,28 @@ func (e *Engine) reconcileService(ctx context.Context, j *model.Job) (model.Proj
 	instance, journaled := next.ServiceInstances[plan.Service]
 	journaled = journaled && instance.Name == plan.Instance.Name && instance.Release.Compose == plan.Instance.Release.Compose && instance.Release.Image == plan.Instance.Release.Image
 	if plan.Mode == "restart" && journaled {
+		if resolver, ok := e.Docker.(interface {
+			ResolveServiceRouteBindings(context.Context, *model.Project, *model.ServiceUpdate) error
+		}); ok {
+			if err := resolver.ResolveServiceRouteBindings(ctx, &next, &plan); err != nil {
+				return old, err
+			}
+			next.ServiceInstances[plan.Service] = plan.Instance
+			j.Input.Project, j.Input.ServiceUpdate = &next, &plan
+			if err := e.Store.Update(*j, nil); err != nil {
+				return old, model.Uncertain("STATE_WRITE_FAILED")
+			}
+		}
 		if err := d.HealthyServiceUpdate(ctx, next, plan); err != nil {
 			return old, err
+		}
+		if err := e.Routes.Ensure(ctx, next); err != nil {
+			if err := e.Routes.Ensure(ctx, old); err != nil {
+				return old, err
+			}
+			if err := e.Routes.Set(ctx, next, next.Active); err != nil {
+				return old, err
+			}
 		}
 		return next, nil
 	}
