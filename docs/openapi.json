@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Ziqx Dockyard Service API",
-    "version": "0.7.4",
+    "version": "0.7.24",
     "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
     "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Native service update eligibility additionally verifies the current immutable Compose manifest. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved.\n\nIndividual service updates preserve the complete Compose project and its dependencies. Seamless service updates are production-only and switch only the routed stateless app; stateful services use restart."
   },
@@ -853,7 +853,7 @@
         "operationId": "deployProject",
         "summary": "Deploy a validated Compose stack",
         "tags": ["Deployments"],
-        "description": "Requires Compose YAML and an explicit environment matching the project. Full Compose mode requires a server-wide key with a configured compose.admin grant, plus signed deploy.execute and deploy.environment scopes. Docker Compose validates and resolves YAML and raw env_file contents before a durable job is accepted. Referenced external files must exist on the VPS. The job starts the stack and verifies running/healthy state; optional Caddy routing switches after those checks. Single-instance deployment can interrupt service; blue-green is production-only and requires independent stateless stacks with healthchecks. Full Compose can deploy to stopped projects. Legacy template projects retain their existing restricted validation and require start first. Missing environment returns 422 DEPLOYMENT_ENVIRONMENT_REQUIRED; a mismatched environment returns 409 DEPLOYMENT_ENVIRONMENT_MISMATCH.",
+        "description": "Requires Compose YAML and an explicit environment matching the project. Full Compose mode requires a server-wide key with a configured compose.admin grant, plus signed deploy.execute and deploy.environment scopes. Docker Compose validates and resolves YAML and raw env_file contents before a durable job is accepted. Referenced external files must exist on the VPS. The job starts the stack and verifies running/healthy state; optional Caddy routing switches after those checks. mode: seamless applies eligible website configuration/environment changes through healthy replacement instances and returns configuration_update jobs; shared resources, databases/workers and topology changes are rejected without a restart. It additionally requires projects.write sites.write and nonempty expected_release_id. Omitted mode or restart uses the full-stack workflow. Single-instance deployment can interrupt service; blue-green is production-only and requires independent stateless stacks with healthchecks. Full Compose can deploy to stopped projects. Legacy template projects retain their existing restricted validation and require start first. Missing environment returns 422 DEPLOYMENT_ENVIRONMENT_REQUIRED; a mismatched environment returns 409 DEPLOYMENT_ENVIRONMENT_MISMATCH.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -2874,7 +2874,8 @@
           "start",
           "stop",
           "project_adopt",
-          "service_update"
+          "service_update",
+          "configuration_update"
         ]
       },
       "AcceptedJob": {
@@ -3525,6 +3526,11 @@
       "Deploy": {
         "type": "object",
         "properties": {
+          "mode": {
+            "type": "string",
+            "enum": ["restart", "seamless"],
+            "description": "Seamless requires a running production Compose project, managed routes, nonempty expected_release_id, and deploy.environment deploy.execute projects.write sites.write. Applies changed eligible app configuration/env without restarting dependencies; incompatible changes are rejected. Omitted mode or restart deploys the full stack."
+          },
           "variables": {
             "type": ["object", "null"],
             "writeOnly": true,
@@ -3818,6 +3824,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "host_ports",
           "depends_on",
           "slot",
           "name",
@@ -3826,6 +3833,11 @@
           "environment_revision"
         ],
         "properties": {
+          "host_ports": {
+            "type": ["array", "null"],
+            "items": {"type": "integer", "minimum": 1, "maximum": 65535},
+            "description": "Observed host port bindings for a running service, when available."
+          },
           "depends_on": {
             "type": "array",
             "nullable": true,

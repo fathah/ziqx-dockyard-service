@@ -54,11 +54,11 @@ import { composeForEditor, lintCompose } from "./composeLint";
 import ProjectConfiguration, {
   type HealthcheckRequest,
 } from "./ProjectConfiguration";
+import ProjectLogo, { ProjectLogoScope } from "./ProjectLogo";
 import ProjectHeader, { ProjectSummary } from "./ProjectHeader";
 import ServiceUpdate from "./ServiceUpdate";
 import JobsTable from "./JobsTable";
 import CopyButton from "./CopyButton";
-import RouteSetup from "./RouteSetup";
 import DomainConnection from "./DomainConnection";
 import { ConnectionHealth } from "./ServerRepair";
 import TerminalPage, { type ShellRequest } from "./TerminalPage";
@@ -154,13 +154,6 @@ const ago = (s?: string) =>
         minute: "2-digit",
       })
     : "Not observed";
-const initials = (s: string) =>
-  s
-    .split("-")
-    .map((p) => p[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
 function Tag({
   children,
   tone = "neutral",
@@ -708,7 +701,9 @@ function App() {
   );
   if (locked && !overlayLocked) return lockScreen;
   return (
-    <>
+    <ProjectLogoScope.Provider
+      value={preview ? "preview" : `server:${session.profile?.server_ip ?? ""}`}
+    >
       {locked && lockScreen}
       <div
         className={
@@ -1097,7 +1092,7 @@ function App() {
           />
         )}
       </div>
-    </>
+    </ProjectLogoScope.Provider>
   );
 }
 function Connect({
@@ -1379,7 +1374,11 @@ function Projects({
                     onClick={() => selectObserved(p.id)}
                   >
                     <span className="project-name">
-                      <span className="app-icon sand">{initials(p.name)}</span>
+                      <ProjectLogo
+                        project={`observed:${p.id}`}
+                        name={p.name}
+                        tone="sand"
+                      />
                       <span>
                         <strong>{p.name}</strong>
                         <span className="env-label">
@@ -1422,11 +1421,7 @@ function Projects({
                   onClick={() => select(p.id)}
                 >
                   <span className="project-name">
-                    <span
-                      className={`app-icon ${p.app_id.charCodeAt(0) % 3 === 0 ? "lavender" : p.app_id.charCodeAt(0) % 3 === 1 ? "sand" : "mint"}`}
-                    >
-                      {initials(p.app_id)}
-                    </span>
+                    <ProjectLogo project={p.id} name={p.app_id} />
                     <span>
                       <strong>{p.app_id}</strong>
                       <span className="env-label">
@@ -1605,7 +1600,6 @@ export function ProjectDetail({
   const [since, setSince] = useState("30m");
   const [busy, setBusy] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [configuringRoute, setConfiguringRoute] = useState(false);
   const [dns, setDNS] = useState<
     { hostname: string; assigned: boolean; dns_record_id?: string }[]
   >([]);
@@ -1678,6 +1672,11 @@ export function ProjectDetail({
           updatable: true,
           seamless: p.environment === "production" && !p.zerodowntime,
           container_ports: [3000],
+          host_ports: [
+            p.active_slot === "green"
+              ? (p.green_port ?? p.blue_port)
+              : p.blue_port,
+          ],
           update_reason: "This flavor uses a controlled restart.",
           slot: p.active_slot ?? "blue",
           image: p.releases[0].image,
@@ -1686,6 +1685,7 @@ export function ProjectDetail({
         },
         {
           name: "worker",
+          host_ports: [],
           depends_on: ["app"],
           updatable: true,
           seamless: false,
@@ -2169,7 +2169,24 @@ export function ProjectDetail({
                               <Box size={20} aria-hidden="true" />
                             </span>
                             <div>
-                              <strong>{s.name}</strong>
+                              <div className="services-name-line">
+                                <strong>{s.name}</strong>
+                                {s.host_ports == null ? (
+                                  <Tag>
+                                    {!active
+                                      ? "Host port not checked"
+                                      : p.state === "running"
+                                        ? "Host port unavailable"
+                                        : "Not running"}
+                                  </Tag>
+                                ) : s.host_ports.length ? (
+                                  s.host_ports.map((port) => (
+                                    <Tag key={port}>Host :{port}</Tag>
+                                  ))
+                                ) : (
+                                  <Tag>No host port</Tag>
+                                )}
+                              </div>
                               <code title={s.image}>
                                 {s.image || "Built from Compose"}
                               </code>
@@ -2213,48 +2230,53 @@ export function ProjectDetail({
                           </p>
                         </td>
                         <td className="services-action">
-                          {p.mode === "compose" && active && (
-                            <Button
-                              type="button"
-                              className="button"
-                              variant="outline"
-                              disabled={Boolean(
-                                recoveryJob || projectOperation || status?.busy,
-                              )}
-                              onClick={() => setConnectingService(s)}
-                              aria-label={`Connect domain to ${s.name}`}
-                            >
-                              <Globe2 size={16} /> Connect domain
-                            </Button>
-                          )}
-                          {openShell && active && (
-                            <Button
-                              type="button"
-                              className="button services-shell"
-                              variant="outline"
-                              title={`Open a shell in ${s.name}`}
-                              aria-label={`Open terminal in ${s.name}`}
-                              onClick={() => openShell(s)}
-                            >
-                              <Terminal size={16} />
-                            </Button>
-                          )}
-                          {p.mode === "compose" && active && (
-                            <Button
-                              type="button"
-                              className="button"
-                              variant="outline"
-                              disabled={Boolean(blocked)}
-                              title={
-                                blocked ||
-                                `Update only ${s.name} · ${s.seamless ? "Seamless updates" : "Controlled restart"}`
-                              }
-                              aria-label={`Pull & update ${s.name}`}
-                              onClick={() => setUpdatingService(s)}
-                            >
-                              <RefreshCw size={16} /> Pull & update
-                            </Button>
-                          )}
+                          <div className="services-action-buttons">
+                            {p.mode === "compose" && active && (
+                              <Button
+                                type="button"
+                                className="button"
+                                variant="outline"
+                                disabled={Boolean(
+                                  recoveryJob ||
+                                  projectOperation ||
+                                  status?.busy,
+                                )}
+                                onClick={() => setConnectingService(s)}
+                                title={`Connect domain to ${s.name}`}
+                                aria-label={`Connect domain to ${s.name}`}
+                              >
+                                <Globe2 size={16} />
+                              </Button>
+                            )}
+                            {openShell && active && (
+                              <Button
+                                type="button"
+                                className="button services-shell"
+                                variant="outline"
+                                title={`Open a shell in ${s.name}`}
+                                aria-label={`Open terminal in ${s.name}`}
+                                onClick={() => openShell(s)}
+                              >
+                                <Terminal size={16} />
+                              </Button>
+                            )}
+                            {p.mode === "compose" && active && (
+                              <Button
+                                type="button"
+                                className="button"
+                                variant="outline"
+                                disabled={Boolean(blocked)}
+                                title={
+                                  blocked ||
+                                  `Pull & update ${s.name} · ${s.seamless ? "Seamless updates" : "Controlled restart"}`
+                                }
+                                aria-label={`Pull & update ${s.name}`}
+                                onClick={() => setUpdatingService(s)}
+                              >
+                                <RefreshCw size={16} />
+                              </Button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2437,19 +2459,10 @@ export function ProjectDetail({
           {dnsLoading && (
             <SkeletonRows count={3} label="Loading project domains" />
           )}
-          {p.mode === "compose" && !p.zerodowntime && (
-            <RouteSetup
-              project={p}
-              services={services}
-              loading={servicesLoading}
-              unavailable={servicesError}
-              blocked={Boolean(recoveryJob || projectOperation || status?.busy)}
-              preview={preview}
-              execute={execute}
-              onClose={() => setConfiguringRoute(false)}
-              openDeployments={openDeployments}
-              refresh={() => setServicesRefresh((n) => n + 1)}
-            />
+          {!dnsLoading && !dns.length && !p.external_domains?.length && (
+            <Empty title="No connected domains">
+              Connect a domain from a service in the Services tab.
+            </Empty>
           )}
           {(p.external_domains ?? []).map((hostname) => (
             <div className="domain-row" key={hostname}>
@@ -2467,7 +2480,22 @@ export function ProjectDetail({
                 <strong>{d.hostname}</strong>
                 <p>
                   {p.mode === "compose" && !p.zerodowntime
-                    ? "Service domain"
+                    ? (() => {
+                        const route = p.service_routes?.find((route) =>
+                          route.domains.includes(d.hostname),
+                        );
+                        const service =
+                          route?.service ||
+                          p.route_service ||
+                          p.published_route?.service;
+                        const port =
+                          route?.container_port ||
+                          p.route_port ||
+                          p.published_route?.container_port;
+                        return service
+                          ? `${service}${port ? ` · container port ${port}` : ""}`
+                          : "Service domain";
+                      })()
                     : d.dns_record_id
                       ? "Cloudflare record tracked"
                       : "DNS record not tracked"}
@@ -2737,7 +2765,14 @@ function ObservedProjectDetail({
           <Button type="button" className="text-button" onClick={back}>
             <ChevronLeft size={15} /> Projects
           </Button>
-          <h1>{project.name}</h1>
+          <div className="observed-project-identity">
+            <ProjectLogo
+              project={`observed:${project.id}`}
+              name={project.name}
+              editable
+            />
+            <h1>{project.name}</h1>
+          </div>
           <p>/docker/{project.name}</p>
         </div>
         <div className="heading-actions">
@@ -3148,9 +3183,11 @@ function InventoryView({
       <section className="panel">
         {i?.projects.map((p) => (
           <div className="inventory-row" key={p.id}>
-            <span className="app-icon sand">
-              <FolderGit2 size={23} />
-            </span>
+            <ProjectLogo
+              project={p.managed ? p.id : `observed:${p.id}`}
+              name={p.name}
+              tone="sand"
+            />
             <div>
               <strong>/docker/{p.name}</strong>
               <p>

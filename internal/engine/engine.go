@@ -163,14 +163,17 @@ func (e *Engine) Run(ctx context.Context) error {
 }
 
 var phaseLabels = map[string]string{
-	"validating":         "Validating",
-	"pulling":            "Pulling images",
-	"candidate_intent":   "Starting new version",
-	"readiness":          "Health check",
-	"route_intent":       "Switching traffic",
-	"maintenance_intent": "Maintenance",
-	"draining":           "Draining old version",
-	"dns_intent":         "Updating DNS",
+	"configuration_route_intent":    "Switching app traffic",
+	"configuration_rollback_intent": "Restoring previous app traffic",
+	"configuration_retire_intent":   "Retiring drained apps",
+	"validating":                    "Validating",
+	"pulling":                       "Pulling images",
+	"candidate_intent":              "Starting new version",
+	"readiness":                     "Health check",
+	"route_intent":                  "Switching traffic",
+	"maintenance_intent":            "Maintenance",
+	"draining":                      "Draining old version",
+	"dns_intent":                    "Updating DNS",
 }
 
 // JobLogPath is where a job's deployment log is kept.
@@ -225,6 +228,8 @@ func (e *Engine) execute(ctx context.Context, j model.Job) {
 		switch j.Action {
 		case "route_setup":
 			err = e.setupRoute(ctx, &j, &p)
+		case "configuration_update":
+			err = e.updateConfiguration(ctx, &j, &p)
 		case "service_update":
 			err = e.updateService(ctx, &j, &p)
 		case "blue_green":
@@ -656,7 +661,12 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if j.Action == "service_update" {
+	if j.Action == "configuration_update" {
+		p, err = e.reconcileConfiguration(ctx, &j)
+		if err != nil {
+			return err
+		}
+	} else if j.Action == "service_update" {
 		p, err = e.reconcileService(ctx, &j)
 		if err != nil {
 			return err
@@ -765,7 +775,7 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 	j.Error = "JOB_INTERRUPTED_RECONCILED"
 	j.Phase = "reconciled"
 	j.Warning = "CONTAINERS_PRESERVED"
-	p.RecoveryDrain = j.Action != "service_update"
+	p.RecoveryDrain = j.Action != "service_update" && j.Action != "configuration_update"
 	now := time.Now().UTC()
 	j.Finished = &now
 	return e.Store.Update(j, &p)

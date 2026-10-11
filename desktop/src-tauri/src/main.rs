@@ -3,6 +3,7 @@
 #[cfg(not(target_os = "macos"))]
 compile_error!("Dockyard Desktop currently requires macOS Keychain and LocalAuthentication");
 mod native;
+mod project_logos;
 mod auth_window;
 mod credential_cache;
 mod domain_https;
@@ -1041,6 +1042,13 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         "\nPayload SHA-256:\n{}\n\nThis changes services on your VPS.",
         hex::encode(sha2::Sha256::digest(op.body.as_bytes()))
     ));
+    if op.action == "deploy" {
+        review.push_str(if body.get("mode").and_then(Value::as_str) == Some("seamless") {
+            "\nSeamless configuration update: start replacements with the submitted environment, verify health, switch traffic, then drain the old apps. Databases and unchanged services remain running. Incompatible changes are rejected without restarting the stack."
+        } else {
+            "\nDeploy the full stack. Single-instance projects enter maintenance while all services restart."
+        });
+    }
     if op.action == "blue-green" {review.push_str("\nStart the new version separately, verify health, switch the reviewed domains, then drain and stop the old instance. Original files and the previous project snapshot are retained for recovery.");}
     if op.action == "service-update" {
         review.push_str(&format!("\nService: {}\nUpdate: {}\nOther services and their data volumes remain running.", body.get("service").and_then(Value::as_str).unwrap_or(""), if body.get("mode").and_then(Value::as_str)==Some("seamless") { "Seamless traffic switch after health checks" } else { "Controlled restart of this service" }));
@@ -1446,6 +1454,8 @@ fn main() {
         }))
         .manage(control.clone())
         .invoke_handler(tauri::generate_handler![
+            project_logos::project_logo_read,
+            project_logos::project_logo_save,
             session_info,
             enroll,
             unlock,

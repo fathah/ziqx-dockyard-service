@@ -193,7 +193,7 @@ export type RouteSetupReview = {
   existing_routes?: {
     domains: string[];
     previous_upstream?: string;
-    remaining_domains: string[];
+    remaining_domains?: string[] | null;
     rules_preserved: boolean;
   }[];
   review_sha256: string;

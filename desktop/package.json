@@ -1,6 +1,6 @@
 {
   "name": "dockyard-desktop",
-  "version": "0.1.1",
+  "version": "0.1.5",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "format": "prettier --write src package.json tsconfig.json vite.config.ts index.html",
     "desktop:release": "tauri build --bundles app -- --locked",
     "test:editor": "node --experimental-strip-types --test tests/compose-editor.test.mjs",
+    "test:route-review": "node --test tests/route-review.test.mjs",
     "test:route": "node --experimental-strip-types --test tests/compose-route.test.mjs",
     "editor:schema": "node scripts/generate-compose-validator.mjs"
   },

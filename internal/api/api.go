@@ -593,6 +593,20 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 			fail(w, err, p.RequestID)
 			return
 		}
+
+		if project.State == "running" {
+			if detector, ok := e.Docker.(interface {
+				PublishedServicePorts(context.Context, model.Project) (map[string][]int, error)
+			}); ok {
+				if ports, err := detector.PublishedServicePorts(r.Context(), project); err == nil {
+					for i := range services {
+						if services[i].Slot == project.Active {
+							services[i].HostPorts = append([]int{}, ports[services[i].Name]...)
+						}
+					}
+				}
+			}
+		}
 		if project.NativeCompose() {
 			options, err := runtime.ServiceUpdateOptions(e.Config, project)
 			if err != nil {
@@ -656,6 +670,7 @@ type createRequest struct {
 	ReadinessPath string   `json:"readiness_path,omitempty"`
 }
 type deployRequest struct {
+	Mode            string            `json:"mode,omitempty"`
 	ExpectedRelease *string           `json:"expected_release_id,omitempty"`
 	Environment     string            `json:"environment"`
 	Compose         string            `json:"compose_yaml"`
@@ -975,8 +990,15 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 		switch action {
 		case "deploy":
 			var input deployRequest
-			if secure.Decode(body, &input) != nil {
+			if secure.Decode(body, &input) != nil || input.Mode != "" && input.Mode != "restart" && input.Mode != "seamless" {
 				problem(w, 400, "REQUEST_INVALID", request)
+				return
+			}
+			if input.Mode == "seamless" && (!p.NativeCompose() || p.ZeroDowntime || input.ExpectedRelease == nil || *input.ExpectedRelease == "" || input.Domains != nil || input.RouteService != nil || input.RoutePort != nil) {
+				problem(w, 409, "CONFIGURATION_SEAMLESS_UNAVAILABLE", request)
+				return
+			}
+			if input.Mode == "seamless" && (!require(w, principal, "projects.write", id) || !require(w, principal, "sites.write", id)) {
 				return
 			}
 			if input.ExpectedRelease != nil {
@@ -1078,6 +1100,45 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 				if err = runtime.IndexCompose(e.Config, e.Store, target, release); err != nil {
 					fail(w, err, request)
 					return
+				}
+				if input.Mode == "seamless" {
+					planner, ok := e.Docker.(interface {
+						PlanConfigurationUpdates(context.Context, model.Project, model.Release) ([]model.ServiceUpdate, error)
+					})
+					if !ok {
+						problem(w, 409, "CONFIGURATION_SEAMLESS_UNAVAILABLE", request)
+						return
+					}
+					plans, planErr := planner.PlanConfigurationUpdates(r.Context(), p, release)
+					if planErr != nil {
+						fail(w, planErr, request)
+						return
+					}
+					if len(plans) == 0 {
+						problem(w, 409, "CONFIGURATION_SEAMLESS_UNAVAILABLE", request)
+						return
+					}
+					if err = e.Routes.Ensure(r.Context(), p); err != nil {
+						fail(w, err, request)
+						return
+					}
+					next := p
+					next.ServiceInstances = map[string]model.ServiceInstance{}
+					for name, instance := range p.ServiceInstances {
+						next.ServiceInstances[name] = instance
+					}
+					if p.PublishedRoute != nil {
+						next.RouteService, next.RoutePort = p.PublishedRoute.Service, p.PublishedRoute.ContainerPort
+						next.PublishedRoute = nil
+					}
+					next.ServiceMode = true
+					if err = next.ValidateTarget(); err != nil {
+						fail(w, err, request)
+						return
+					}
+					j.Action = "configuration_update"
+					j.Input.Previous, j.Input.Project = &p, &next
+					j.Input.ConfigurationUpdates = plans
 				}
 				break
 			}

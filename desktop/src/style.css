@@ -1390,7 +1390,7 @@ pre {
   width: 18%;
 }
 .services-column-action {
-  width: 252px;
+  width: 168px;
 }
 .services-table thead th {
   padding: 10px 24px;
@@ -1486,14 +1486,23 @@ pre {
 .services-action {
   text-align: right;
 }
+.services-action-buttons {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .services-action .ziqx-button {
-  min-width: 148px;
+  min-width: 32px;
+  width: 32px;
+  height: 30px;
+  padding: 0;
   border-color: #dfe5df;
 }
 .services-action .ziqx-button.services-shell {
   min-width: 0;
-  margin-right: 8px;
-  padding-inline: 12px;
+  padding-inline: 0;
 }
 .services-sr-only {
   position: absolute;
@@ -3969,7 +3978,11 @@ div.configuration-note p {
   align-items: center;
   gap: 6px;
   padding: 0;
-  font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+  font:
+    12px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
   color: #7c8a80;
   background: none;
   border: 0;
@@ -4112,4 +4125,11 @@ div.configuration-note p {
   flex-wrap: wrap;
   margin-top: 6px;
   font-size: 13px;
+}
+
+.services-name-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
 }

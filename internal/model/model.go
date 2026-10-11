@@ -170,14 +170,15 @@ type RouteEdit struct {
 }
 
 type Input struct {
-	RouteTarget   *PublishedRoute `json:"route_target,omitempty"`
-	ServiceUpdate *ServiceUpdate  `json:"service_update,omitempty"`
-	Previous      *Project        `json:"previous,omitempty"`
-	RouteEdits    []RouteEdit     `json:"route_edits,omitempty"`
-	Project       *Project        `json:"project,omitempty"`
-	Release       *Release        `json:"release,omitempty"`
-	Hostname      string          `json:"hostname,omitempty"`
-	DNSRecordID   string          `json:"dns_record_id,omitempty"`
+	ConfigurationUpdates []ServiceUpdate `json:"configuration_updates,omitempty"`
+	RouteTarget          *PublishedRoute `json:"route_target,omitempty"`
+	ServiceUpdate        *ServiceUpdate  `json:"service_update,omitempty"`
+	Previous             *Project        `json:"previous,omitempty"`
+	RouteEdits           []RouteEdit     `json:"route_edits,omitempty"`
+	Project              *Project        `json:"project,omitempty"`
+	Release              *Release        `json:"release,omitempty"`
+	Hostname             string          `json:"hostname,omitempty"`
+	DNSRecordID          string          `json:"dns_record_id,omitempty"`
 	// DraftSHA identifies the saved draft this deployment was made from.
 	DraftSHA string `json:"draft_sha,omitempty"`
 }
@@ -194,6 +195,7 @@ type ServiceSpec struct {
 }
 
 type ServiceInfo struct {
+	HostPorts      []int    `json:"host_ports"`
 	DependsOn      []string `json:"depends_on"`
 	Updatable      bool     `json:"updatable,omitempty"`
 	ContainerPorts []int    `json:"container_ports,omitempty"`
@@ -219,6 +221,8 @@ type ServiceInstance struct {
 	NetworkAliases map[string][]string `json:"network_aliases,omitempty"`
 }
 type ServiceUpdate struct {
+	// Configuration deployments use this submitted full release, even if the image is unchanged.
+	SourceRelease  *Release            `json:"source_release,omitempty"`
 	Service        string              `json:"service"`
 	Mode           string              `json:"mode"`
 	Instance       ServiceInstance     `json:"instance"`

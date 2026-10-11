@@ -446,34 +446,7 @@ export default function RouteSetup({
           </Button>
         </p>
       )}
-      {review?.existing_routes?.map((existing, i) => (
-        <div className="repair-review" key={i}>
-          <strong>Already in the main Caddyfile</strong>
-          <p>
-            {existing.domains.join(", ")}
-            {existing.previous_upstream
-              ? ` → ${existing.previous_upstream}`
-              : " · custom site rules"}
-          </p>
-          <p>
-            Move to {review.service}:{review.container_port}.{" "}
-            {existing.rules_preserved
-              ? "Existing site rules are kept; only the proxy destination changes."
-              : "Existing site rules are replaced with a standard service route."}
-          </p>
-          {existing.remaining_domains.length > 0 && (
-            <p>
-              Stays in the main Caddyfile:{" "}
-              {existing.remaining_domains.join(", ")}.
-            </p>
-          )}
-          <small>
-            Dockyard removes the selected domains from the main Caddyfile and
-            saves their routes in its managed file. The previous files are
-            recorded for recovery.
-          </small>
-        </div>
-      ))}
+      {review && <ExistingRouteReviews review={review} />}
       {review && (
         <p className="route-review">
           <ShieldCheck size={14} />
@@ -502,5 +475,44 @@ export default function RouteSetup({
         </p>
       )}
     </div>
+  );
+}
+
+export function ExistingRouteReviews({
+  review,
+}: {
+  review: api.RouteSetupReview;
+}) {
+  return (
+    <>
+      {review.existing_routes?.map((existing, i) => (
+        <div className="repair-review" key={i}>
+          <strong>Already in the main Caddyfile</strong>
+          <p>
+            {existing.domains.join(", ")}
+            {existing.previous_upstream
+              ? ` → ${existing.previous_upstream}`
+              : " · custom site rules"}
+          </p>
+          <p>
+            Move to {review.service}:{review.container_port}.{" "}
+            {existing.rules_preserved
+              ? "Existing site rules are kept; only the proxy destination changes."
+              : "Existing site rules are replaced with a standard service route."}
+          </p>
+          {(existing.remaining_domains?.length ?? 0) > 0 && (
+            <p>
+              Stays in the main Caddyfile:{" "}
+              {existing.remaining_domains?.join(", ")}.
+            </p>
+          )}
+          <small>
+            Dockyard removes the selected domains from the main Caddyfile and
+            saves their routes in its managed file. The previous files are
+            recorded for recovery.
+          </small>
+        </div>
+      ))}
+    </>
   );
 }

@@ -191,6 +191,8 @@ pub struct Create {
 #[serde(deny_unknown_fields)]
 pub struct Deploy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_release_id: Option<String>,
     pub environment: String,
     pub compose_yaml: String,
@@ -407,6 +409,8 @@ impl Mutation {
             }
             Self::Deploy { project, mut data } => {
                 if !environment(&data.environment)
+                    || data.mode.as_ref().is_some_and(|m| m != "seamless" && m != "restart")
+                    || (data.mode.as_deref() == Some("seamless") && data.expected_release_id.as_ref().is_none_or(|r| r.is_empty()))
                     || data.expected_release_id.as_ref().is_some_and(|r| !r.is_empty() && !token(r))
                     || data.compose_yaml.is_empty()
                     || data.compose_yaml.len() > 65536
@@ -427,6 +431,7 @@ impl Mutation {
                         "Select an environment and submit a Compose file up to 64 KiB".into(),
                     );
                 }
+                let scopes = if data.mode.as_deref() == Some("seamless") { "deploy.environment deploy.execute projects.write sites.write" } else { "deploy.environment deploy.execute" };
                 let body = serde_json::to_string(&data);
                 data.compose_yaml.zeroize();
                 if let Some(env) = data.env_file.as_mut() {
@@ -439,7 +444,7 @@ impl Mutation {
                     "POST",
                     project,
                     "deploy",
-                    "deploy.environment deploy.execute",
+                    scopes,
                     body,
                 )
             }
@@ -564,6 +569,21 @@ pub fn sign(secret: &[u8], e: &Enrollment, op: &Operation, timestamp: &str) -> S
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn seamless_configuration_deploy_requires_route_scopes_and_current_release() {
+        let mut value = serde_json::json!({"action":"deploy","project":"demo","data":{"environment":"production","mode":"seamless","compose_yaml":"services: {}","env_file":"TOKEN=new","expected_release_id":"rel-current"}});
+        let plan = serde_json::from_value::<Mutation>(value.clone()).unwrap().plan().unwrap();
+        assert_eq!(plan.target, "/v1/projects/demo/deploy");
+        assert_eq!(plan.scopes, "deploy.environment deploy.execute projects.write sites.write");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&plan.body).unwrap()["mode"], "seamless");
+        value["data"]["expected_release_id"] = serde_json::json!("");
+        assert!(serde_json::from_value::<Mutation>(value.clone()).unwrap().plan().is_err());
+        value["data"]["expected_release_id"] = serde_json::json!("rel-current");
+        value["data"]["mode"] = serde_json::json!("automatic");
+        assert!(serde_json::from_value::<Mutation>(value.clone()).unwrap().plan().is_err());
+        value["data"]["mode"] = serde_json::json!("restart");
+        assert_eq!(serde_json::from_value::<Mutation>(value).unwrap().plan().unwrap().scopes, "deploy.environment deploy.execute");
+    }
     use super::*;
     fn enrollment(origin: &str) -> Enrollment {
         Enrollment {

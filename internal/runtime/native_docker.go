@@ -295,3 +295,55 @@ func (d Docker) CheckBlueGreenSource(ctx context.Context, p model.Project) error
 	}
 	return nil
 }
+
+// PublishedServicePorts reads host bindings only from verified containers.
+// Exposed container ports do not imply a port is published on the host.
+func (d Docker) PublishedServicePorts(ctx context.Context, p model.Project) (map[string][]int, error) {
+	containers, err := d.nativeContainers(ctx, p, p.Active)
+	if err != nil {
+		return nil, err
+	}
+	ports := map[string][]int{}
+	for _, c := range containers {
+		name := c.Config.Labels["com.docker.compose.service"]
+		if _, replaced := p.ServiceInstances[name]; replaced {
+			continue
+		}
+		ports[name] = append(ports[name], publishedHostPorts(c)...)
+	}
+	for name, instance := range p.ServiceInstances {
+		c, err := d.inspectServiceInstance(ctx, p, instance)
+		if err != nil {
+			return nil, err
+		}
+		ports[name] = publishedHostPorts(c)
+	}
+	for name, values := range ports {
+		seen := map[int]bool{}
+		ports[name] = []int{}
+		for _, port := range values {
+			if !seen[port] {
+				ports[name] = append(ports[name], port)
+				seen[port] = true
+			}
+		}
+		sort.Ints(ports[name])
+	}
+	return ports, nil
+}
+
+func publishedHostPorts(c Container) []int {
+	ports := []int{}
+	if !c.State.Running {
+		return ports
+	}
+	for _, bindings := range c.NetworkSettings.Ports {
+		for _, binding := range bindings {
+			port, err := strconv.Atoi(binding.HostPort)
+			if err == nil && port > 0 && port <= 65535 {
+				ports = append(ports, port)
+			}
+		}
+	}
+	return ports
+}

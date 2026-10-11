@@ -1,3 +1,4 @@
+import ProjectLogo from "./ProjectLogo";
 import Button from "./Button";
 import { ArrowUpRight, Globe2, Layers3, Plus, Settings2 } from "lucide-react";
 import type { Project } from "./types";
@@ -17,19 +18,22 @@ export default function ProjectHeader({
     <header className="project-header">
       <div className="project-header-top">
         <div className="project-header-identity">
-          <h1>{p.app_id}</h1>
-          <div className="project-header-badges">
-            <span
-              className={`tag ${p.environment === "production" ? "green" : "neutral"}`}
-            >
-              {environment}
-            </span>
-            <span
-              className={`project-status ${p.state === "running" ? "running" : ""}`}
-            >
-              <i aria-hidden="true" />
-              {p.state.replaceAll("_", " ")}
-            </span>
+          <ProjectLogo project={p.id} name={p.app_id} editable />
+          <div>
+            <h1>{p.app_id}</h1>
+            <div className="project-header-badges">
+              <span
+                className={`tag ${p.environment === "production" ? "green" : "neutral"}`}
+              >
+                {environment}
+              </span>
+              <span
+                className={`project-status ${p.state === "running" ? "running" : ""}`}
+              >
+                <i aria-hidden="true" />
+                {p.state.replaceAll("_", " ")}
+              </span>
+            </div>
           </div>
         </div>
         <div className="project-header-actions">

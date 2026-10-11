@@ -369,6 +369,10 @@ func checkServiceHTTP(ctx context.Context, port int, path string) error {
 
 func (d Docker) PullServiceUpdate(ctx context.Context, p model.Project, plan *model.ServiceUpdate) (bool, error) {
 	r, _ := p.Current()
+	if plan.SourceRelease != nil {
+		r = *plan.SourceRelease
+		plan.Instance.Release = r
+	}
 	_, b, err := nativeRelease(d.Config, p, r)
 	if err != nil {
 		return false, err
@@ -392,13 +396,13 @@ func (d Docker) PullServiceUpdate(ctx context.Context, p model.Project, plan *mo
 	if err != nil || result.Truncated || json.Unmarshal(result.Output, &images) != nil || len(images) != 1 || len(images[0].ID) != 71 || !strings.HasPrefix(images[0].ID, "sha256:") || strings.Trim(images[0].ID[7:], "0123456789abcdef") != "" {
 		return false, model.Fail("IMAGE_IDENTITY_UNKNOWN")
 	}
-	if images[0].ID == plan.Previous.Release.Image {
+	if images[0].ID == plan.Previous.Release.Image && plan.SourceRelease == nil {
 		return false, nil
 	}
 	if plan.Mode == "seamless" && len(images[0].Config.Volumes) > 0 {
 		return false, model.Fail("SERVICE_IMAGE_HAS_STORAGE")
 	}
-	if plan.Mode == "restart" && plan.Previous.Name != plan.Service {
+	if plan.Mode == "restart" && plan.Previous.Name != plan.Service && plan.SourceRelease == nil {
 		_, b, err = nativeRelease(d.Config, p, plan.Previous.Release)
 		if err != nil {
 			return false, err

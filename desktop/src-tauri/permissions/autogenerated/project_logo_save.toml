@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-project-logo-save"
+description = "Enables the project_logo_save command without any pre-configured scope."
+commands.allow = ["project_logo_save"]
+
+[[permission]]
+identifier = "deny-project-logo-save"
+description = "Denies the project_logo_save command without any pre-configured scope."
+commands.deny = ["project_logo_save"]

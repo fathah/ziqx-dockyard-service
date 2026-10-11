@@ -1,0 +1,111 @@
+.project-logo {
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.project-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.project-logo-edit {
+  position: relative;
+  flex: none;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  cursor: pointer;
+  background: transparent;
+}
+.project-logo-edit .app-icon {
+  width: 100%;
+  height: 100%;
+  font-size: 24px;
+  border-radius: inherit;
+}
+.project-logo-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: inherit;
+  background: #0009;
+  color: white;
+  font-size: 10px;
+  opacity: 0;
+}
+.project-logo-edit:hover .project-logo-overlay,
+.project-logo-edit:focus-visible .project-logo-overlay {
+  opacity: 1;
+}
+.project-logo-edit:focus-visible {
+  outline: 2px solid #236b50;
+  outline-offset: 3px;
+}
+.project-header-identity {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.project-header-identity > div {
+  min-width: 0;
+}
+.project-logo-modal {
+  width: min(540px, calc(100vw - 40px));
+}
+.logo-crop-frame {
+  width: 300px;
+  max-width: 100%;
+  aspect-ratio: 1;
+  margin: 20px auto;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid #d4d8d5;
+  background: repeating-conic-gradient(#eee 0% 25%, white 0% 50%) 0 0 / 20px
+    20px;
+}
+.logo-crop-frame canvas,
+.logo-crop-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.logo-crop-frame canvas {
+  touch-action: none;
+  cursor: default;
+}
+.logo-crop-controls {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+}
+.logo-crop-controls label {
+  display: grid;
+  grid-template-columns: 145px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+.logo-crop-controls input {
+  width: 100%;
+  min-width: 0;
+  accent-color: #236b50;
+}
+
+.observed-project-identity {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 12px 0;
+}
+.project-logo-modal input[type="file"] {
+  display: none;
+}

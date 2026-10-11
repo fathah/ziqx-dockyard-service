@@ -61,6 +61,16 @@ function message(error: unknown): string {
     return "The service that should receive your domain's traffic isn't in this Compose file. Pick the right one below, then deploy.";
   if (/COMPOSE_ROUTE_INVALID/.test(text))
     return "Choose the service and container port that should receive your domain's traffic.";
+  if (/CONFIGURATION_SEAMLESS_TOPOLOGY_CHANGED/.test(text))
+    return "Shared resources, service additions/removals, and network changes need Controlled restart. The running site has not been stopped.";
+  if (
+    /CONFIGURATION_SEAMLESS_INCOMPATIBLE|SERVICE_SEAMLESS_INCOMPATIBLE|SERVICE_HAS_STORAGE|SERVICE_IMAGE_HAS_STORAGE|SERVICE_EXTRA_PORTS|SERVICE_HEALTHCHECK_REQUIRED/.test(
+      text,
+    )
+  )
+    return "Seamless deployment requires healthy website services without writable storage or extra published ports. Changes to databases or workers need Controlled restart. The running site has not been stopped.";
+  if (/CONFIGURATION_SEAMLESS_UNAVAILABLE/.test(text))
+    return "Seamless configuration updates require a running production Compose project with managed domains and an updated VPS service.";
   if (/PROJECT_BUSY/.test(text))
     return "A project operation is still running. Wait for it to finish, then deploy again.";
   if (
@@ -100,6 +110,15 @@ export default function ProjectConfiguration({
   const [dotenv, setDotenv] = useState(initial?.env_file ?? "");
   const [file, setFile] = useState<"compose" | "env">("compose");
   const [busy, setBusy] = useState(false);
+  const canSeamless =
+    project.mode === "compose" &&
+    project.environment === "production" &&
+    project.state === "running" &&
+    !project.zerodowntime &&
+    project.domains.length > 0;
+  const [deploymentMode, setDeploymentMode] = useState<"seamless" | "restart">(
+    "seamless",
+  );
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [errorDetail, setErrorDetail] = useState("");
@@ -304,6 +323,12 @@ export default function ProjectConfiguration({
       );
       return;
     }
+    if (canSeamless && deploymentMode === "seamless" && routeMissing) {
+      setError(
+        "Changing the domain target requires Controlled restart. Choose that deployment strategy to continue.",
+      );
+      return;
+    }
     setBusy(true);
     setError("");
     setErrorDetail("");
@@ -315,6 +340,7 @@ export default function ProjectConfiguration({
         project: project.id,
         data: {
           environment: project.environment,
+          ...(canSeamless ? { mode: deploymentMode } : {}),
           compose_yaml: compose,
           env_file: env,
           ...(routeMissing
@@ -588,11 +614,29 @@ export default function ProjectConfiguration({
             </div>
           )}
           <div className="configuration-footer">
-            <span>
-              {project.zerodowntime
-                ? "Health checks before traffic switches."
-                : "Restarts all services. To update one, use Services → Pull & update."}
-            </span>
+            <div>
+              {canSeamless && (
+                <Select
+                  label="Deployment strategy"
+                  value={deploymentMode}
+                  options={[
+                    { value: "seamless", label: "Seamless update" },
+                    { value: "restart", label: "Controlled restart" },
+                  ]}
+                  onValueChange={(value) =>
+                    setDeploymentMode(value as "seamless" | "restart")
+                  }
+                  disabled={busy}
+                />
+              )}
+              <span>
+                {project.zerodowntime
+                  ? "Health checks before traffic switches."
+                  : canSeamless && deploymentMode === "seamless"
+                    ? "Apply app configuration and env changes after health checks. Unchanged services stay running."
+                    : "Restarts all services with a brief outage."}
+              </span>
+            </div>
             <div className="configuration-buttons">
               <Button
                 type="button"

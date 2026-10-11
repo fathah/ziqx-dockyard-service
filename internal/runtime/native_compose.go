@@ -397,7 +397,10 @@ func rebindNativeRoute(c config.Config, p model.Project, r model.Release, preser
 			}
 			service := object(object(doc["services"])[name])
 			updated := object(object(active["services"])[instance.Name])
-			if service == nil || updated == nil || instance.Release.Environment != r.Environment || instance.Release.Image == "" || updated["image"] != instance.Release.Image {
+			// A seamless configuration rollout can change the full release's env
+			// revision while unchanged siblings retain their earlier manifests.
+			// Only carry over their verified image, using the full release's env.
+			if service == nil || updated == nil || instance.Release.Image == "" || updated["image"] != instance.Release.Image {
 				return r, model.Fail("SERVICE_CONFIGURATION_CHANGED")
 			}
 			service["image"] = instance.Release.Image

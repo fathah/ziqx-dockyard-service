@@ -1,6 +1,8 @@
 fn main() {
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "project_logo_read",
+            "project_logo_save",
             "session_info",
             "enroll",
             "unlock",
