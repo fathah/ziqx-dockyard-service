@@ -12,6 +12,7 @@ import (
 	"github.com/ziqx/ziqx-dockyard-service/internal/auth"
 	"github.com/ziqx/ziqx-dockyard-service/internal/config"
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
+	"github.com/ziqx/ziqx-dockyard-service/internal/runtime"
 	"github.com/ziqx/ziqx-dockyard-service/internal/secure"
 	"github.com/ziqx/ziqx-dockyard-service/internal/state"
 )
@@ -100,36 +101,41 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 	}
 	next.ServicePorts = append([]int{}, p.ServicePorts...)
 	var edits []model.RouteEdit
+	domains := []string{}
 	hostPort := 0
 	if input.Mode == "seamless" {
-		for _, route := range p.ServiceRoutes {
-			if route.Service == input.Service {
-				problem(w, 409, "SERVICE_ROUTE_RESTART_REQUIRED", request)
-				return
-			}
-		}
-		next.PublishedRoute = nil
 		if p.Environment != model.Production || input.ContainerPort < 1 || input.ContainerPort > 65535 {
 			problem(w, 409, "SERVICE_UPDATE_INVALID", request)
 			return
 		}
-		if p.RouteService != "" && p.RouteService != input.Service || p.PublishedRoute != nil && p.PublishedRoute.Service != input.Service {
+		targetPort, selectedDomains, targetErr := runtime.ServiceUpdateTarget(p, input.Service)
+		if targetErr != nil {
+			fail(w, targetErr, request)
+			return
+		}
+		if targetPort > 0 && targetPort != input.ContainerPort {
 			problem(w, 409, "SERVICE_ROUTE_MISMATCH", request)
 			return
 		}
-		next.RouteService = input.Service
-		next.RoutePort = input.ContainerPort
-		next.ReadinessPath = input.Readiness
-		next.ServiceMode = true
-		if p.Adoption != nil && len(p.Domains) == 0 {
+		domains = selectedDomains
+		legacyImport := p.Adoption != nil && len(p.Domains) == 0 && len(domains) > 0
+		primary := p.RouteService == input.Service || p.PublishedRoute != nil && p.PublishedRoute.Service == input.Service || legacyImport
+		if primary {
+			next.PublishedRoute = nil
+			next.RouteService = input.Service
+			next.RoutePort = input.ContainerPort
+			next.ReadinessPath = input.Readiness
+			next.ServiceMode = true
+		}
+		if legacyImport {
 			next.Domains = append([]string{}, p.ExternalDomains...)
 			next.ExternalDomains = nil
 		}
-		if len(next.Domains) == 0 {
+		if len(domains) == 0 {
 			problem(w, 409, "SERVICE_DOMAIN_REQUIRED", request)
 			return
 		}
-		if err = a.nativeDomains(next.Domains, id); err != nil {
+		if err = a.nativeDomains(domains, id); err != nil {
 			fail(w, err, request)
 			return
 		}
@@ -158,13 +164,24 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 			}
 		}
 		if hostPort == 0 {
-			problem(w, 409, "PORT_IN_USE", request)
-			return
+			// Multiple routed services may occupy the reusable pool. Reserve
+			// one more free candidate port, rather than changing a sibling's
+			// binding or allocating a fresh pair on every update.
+			skip := map[int]bool{}
+			for _, port := range next.ServicePorts {
+				skip[port] = true
+			}
+			hostPort, err = e.AvailablePort(r.Context(), skip)
+			if err != nil {
+				fail(w, err, request)
+				return
+			}
+			next.ServicePorts = append(next.ServicePorts, hostPort)
 		}
-		if next.BluePort == 0 {
+		if primary && next.BluePort == 0 {
 			next.BluePort = next.ServicePorts[0]
 		}
-		if p.Adoption != nil && len(p.Domains) == 0 {
+		if legacyImport {
 			upstream, err := d.PublishedUpstream(r.Context(), p, input.Service, input.ContainerPort)
 			if err != nil {
 				fail(w, err, request)
@@ -180,6 +197,10 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 				fail(w, err, request)
 				return
 			}
+		}
+		if err = next.ValidateTarget(); err != nil {
+			fail(w, err, request)
+			return
 		}
 	}
 	if err = e.Routes.Ensure(r.Context(), p); err != nil {
@@ -197,7 +218,7 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 	sum := sha256.Sum256(b)
 	review := hex.EncodeToString(sum[:])
 	if preview {
-		write(w, 200, map[string]any{"review_sha256": review, "service": input.Service, "mode": input.Mode, "domains": next.Domains, "container_port": input.ContainerPort, "host_port": hostPort, "imports_routes": len(edits) > 0, "dependencies_unchanged": true})
+		write(w, 200, map[string]any{"review_sha256": review, "service": input.Service, "mode": input.Mode, "domains": domains, "container_port": input.ContainerPort, "host_port": hostPort, "imports_routes": len(edits) > 0, "dependencies_unchanged": true})
 		return
 	}
 	if approved != review {

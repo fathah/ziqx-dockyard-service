@@ -1,4 +1,5 @@
 import Button from "./Button";
+import DomainHTTPS from "./DomainHTTPS";
 import ServerDetailsTabs from "./ServerDetailsTabs";
 import ServerDiagnostics from "./ServerDiagnostics";
 import ServerUpdater from "./ServerUpdater";
@@ -1946,7 +1947,19 @@ export function ProjectDetail({
                   <dt>Job in progress</dt>
                   <dd>{status ? String(status.busy) : "Not checked"}</dd>
                   <dt>Public HTTPS</dt>
-                  <dd>{status?.public_tls_state ?? "Unverified"}</dd>
+                  <dd>
+                    {p.domains.length ? (
+                      <Button
+                        type="button"
+                        className="text-button"
+                        onClick={() => setTab("domains")}
+                      >
+                        Check domains
+                      </Button>
+                    ) : (
+                      "No domains assigned"
+                    )}
+                  </dd>
                 </dl>
               </details>
               <hr />
@@ -2438,9 +2451,19 @@ export function ProjectDetail({
                     ? "Service domain"
                     : d.dns_record_id
                       ? "Cloudflare record tracked"
-                      : "DNS record not tracked"}{" "}
-                  · Public TLS unverified
+                      : "DNS record not tracked"}
                 </p>
+                <DomainHTTPS
+                  project={p.id}
+                  hostname={d.hostname}
+                  revision={JSON.stringify([
+                    p.service_routes,
+                    p.service_instances,
+                    p.active_slot,
+                    p.slots,
+                  ])}
+                  disabled={preview || !d.assigned}
+                />
               </div>
               <Tag tone="green">{d.assigned ? "Assigned" : "Unassigned"}</Tag>
               <Button

@@ -28,6 +28,55 @@ type ServiceOptions struct {
 	Ports     []int    `json:"container_ports"`
 }
 
+// ServiceUpdateTarget includes only the selected service's hostnames. A
+// project's primary route never owns hosts explicitly assigned to a sibling.
+func ServiceUpdateTarget(p model.Project, service string) (int, []string, error) {
+	port := 0
+	domains := []string{}
+	assigned := map[string]bool{}
+	for _, route := range p.ServiceRoutes {
+		for _, domain := range route.Domains {
+			assigned[domain] = true
+		}
+		if route.Service != service {
+			continue
+		}
+		if port != 0 && port != route.ContainerPort {
+			return 0, nil, model.Fail("SERVICE_EXTRA_PORTS")
+		}
+		port = route.ContainerPort
+		domains = append(domains, route.Domains...)
+	}
+	primaryPort := 0
+	if p.RouteService == service {
+		primaryPort = p.RoutePort
+	} else if p.PublishedRoute != nil && p.PublishedRoute.Service == service {
+		primaryPort = p.PublishedRoute.ContainerPort
+	}
+	for _, domain := range p.Domains {
+		if !assigned[domain] && primaryPort > 0 {
+			if port != 0 && port != primaryPort {
+				return 0, nil, model.Fail("SERVICE_EXTRA_PORTS")
+			}
+			port = primaryPort
+			domains = append(domains, domain)
+		}
+	}
+	if len(domains) == 0 && p.Adoption != nil && len(p.Domains) == 0 && len(p.ServiceRoutes) == 0 && p.RouteService == "" && p.PublishedRoute == nil {
+		domains = append(domains, p.ExternalDomains...)
+	}
+	sort.Strings(domains)
+	return port, domains, nil
+}
+
+func serviceInstancePort(p model.Project, service string, instance model.ServiceInstance) int {
+	if instance.ContainerPort > 0 {
+		return instance.ContainerPort
+	}
+	port, _, _ := ServiceUpdateTarget(p, service)
+	return port
+}
+
 func ValidateServiceInstance(c config.Config, p model.Project, instance model.ServiceInstance) error {
 	if !config.ServiceName.MatchString(instance.Name) {
 		return model.Uncertain("SERVICE_IDENTITY_UNKNOWN")
@@ -90,11 +139,7 @@ func ServiceUpdateOptions(c config.Config, p model.Project) (map[string]ServiceO
 		}
 		sort.Ints(ports)
 		image, _ := svc["image"].(string)
-		for _, route := range p.ServiceRoutes {
-			if route.Service == name {
-				reason = "This service's domains use a fixed local binding. Use a controlled restart."
-			}
-		}
+		_, domains, routeErr := ServiceUpdateTarget(p, name)
 		updatable := p.State == "running" && !p.ZeroDowntime && image != ""
 		if image == "" {
 			reason = "This service is built locally. Use Edit & deploy to rebuild it."
@@ -102,8 +147,10 @@ func ServiceUpdateOptions(c config.Config, p model.Project) (map[string]ServiceO
 			reason = "This project uses the older whole-stack update strategy."
 		} else if p.Environment != model.Production {
 			reason = "This flavor uses a controlled restart."
-		} else if p.PublishedRoute != nil && p.PublishedRoute.Service != name || p.PublishedRoute == nil && p.RouteService != name && (p.Adoption == nil || len(p.Domains) > 0 || len(p.ExternalDomains) == 0) {
-			reason = "Only the service serving this project's domains can switch traffic seamlessly."
+		} else if routeErr != nil {
+			reason = "This service routes multiple container ports. Use a controlled restart."
+		} else if len(domains) == 0 && reason == "" {
+			reason = "Assign a domain to this service to enable seamless updates."
 		}
 		if n, ok := svc["scale"].(float64); ok && n != 1 {
 			updatable = false
@@ -244,6 +291,16 @@ func (d Docker) PlanServiceUpdate(ctx context.Context, p model.Project, service,
 	if mode != "seamless" || p.Environment != model.Production || containerPort < 1 || containerPort > 65535 || hostPort < 1 || hostPort > 65535 {
 		return zero, model.Fail("SERVICE_UPDATE_INVALID")
 	}
+	targetPort, domains, err := ServiceUpdateTarget(p, service)
+	if err != nil {
+		return zero, err
+	}
+	if len(domains) == 0 {
+		return zero, model.Fail("SERVICE_DOMAIN_REQUIRED")
+	}
+	if targetPort > 0 && targetPort != containerPort {
+		return zero, model.Fail("SERVICE_ROUTE_MISMATCH")
+	}
 	if serviceSeamlessReason(svc) != "" {
 		return zero, model.Fail("SERVICE_SEAMLESS_INCOMPATIBLE")
 	}
@@ -261,7 +318,7 @@ func (d Docker) PlanServiceUpdate(ctx context.Context, p model.Project, service,
 	if c.State.Health == nil || c.State.Health.Status != "healthy" {
 		return zero, model.Fail("SERVICE_HEALTHCHECK_REQUIRED")
 	}
-	plan.Instance = model.ServiceInstance{Name: "dy-update-" + strings.TrimPrefix(stateID(), "svc-")[:16], Release: r, Port: hostPort}
+	plan.Instance = model.ServiceInstance{Name: "dy-update-" + strings.TrimPrefix(stateID(), "svc-")[:16], Release: r, Port: hostPort, ContainerPort: containerPort, ReadinessPath: readiness}
 	// Candidate gets a unique DNS name until its readiness checks pass. Original
 	// service aliases are attached only during promotion, while the old app is live.
 	for network, connection := range c.NetworkSettings.Networks {
@@ -360,7 +417,7 @@ func (d Docker) PullServiceUpdate(ctx context.Context, p model.Project, plan *mo
 		delete(svc, "container_name")
 		delete(svc, "hostname")
 		delete(svc, "links")
-		svc["ports"] = []any{map[string]any{"target": p.RoutePort, "published": strconv.Itoa(plan.Instance.Port), "host_ip": "127.0.0.1", "protocol": "tcp"}}
+		svc["ports"] = []any{map[string]any{"target": serviceInstancePort(p, plan.Service, plan.Instance), "published": strconv.Itoa(plan.Instance.Port), "host_ip": "127.0.0.1", "protocol": "tcp"}}
 		nets := map[string]any{}
 		defs := map[string]any{}
 		names := []string{}
@@ -428,12 +485,16 @@ func (d Docker) HealthyServiceUpdate(ctx context.Context, p model.Project, plan 
 				return model.Fail("SERVICE_HAS_STORAGE")
 			}
 		}
-		ports := c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", p.RoutePort)]
+		ports := c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", serviceInstancePort(p, plan.Service, plan.Instance))]
 		if len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(plan.Instance.Port) {
 			return model.Uncertain("CONTAINER_BINDING_DIVERGED")
 		}
-		if p.ReadinessPath != "" {
-			return checkServiceHTTP(ctx, plan.Instance.Port, p.ReadinessPath)
+		readiness := plan.Instance.ReadinessPath
+		if plan.Instance.ContainerPort == 0 && plan.Service == p.RouteService {
+			readiness = p.ReadinessPath // Older journaled primary-service candidates.
+		}
+		if readiness != "" {
+			return checkServiceHTTP(ctx, plan.Instance.Port, readiness)
 		}
 	}
 	return nil

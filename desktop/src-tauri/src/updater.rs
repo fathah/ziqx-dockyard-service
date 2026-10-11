@@ -156,15 +156,30 @@ pub struct UpdateJobs {
 }
 impl UpdateJobs {
     fn valid(&self) -> bool {
-        let token = |s: &str| s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
-        valid_hash(&self.sha256) && self.active_count <= 1000 && self.recovery_count <= 1000
+        let token = |s: &str| {
+            s.len() <= 128
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        };
+        valid_hash(&self.sha256)
+            && self.active_count <= 1000
+            && self.recovery_count <= 1000
             && self.active_count + self.recovery_count <= 1000
             && self.active_jobs.len() == self.active_count.min(10)
             && self.recovery_jobs.len() == self.recovery_count.min(10)
-            && self.active_jobs.iter().all(|j| j.status == "queued" || j.status == "running")
-            && self.recovery_jobs.iter().all(|j| j.status == "recovery_required")
-            && self.active_jobs.iter().chain(&self.recovery_jobs).all(|j|
-                [&j.job_id, &j.project_id, &j.action, &j.phase, &j.error_code].iter().all(|s| token(s)))
+            && self
+                .active_jobs
+                .iter()
+                .all(|j| j.status == "queued" || j.status == "running")
+            && self
+                .recovery_jobs
+                .iter()
+                .all(|j| j.status == "recovery_required")
+            && self.active_jobs.iter().chain(&self.recovery_jobs).all(|j| {
+                [&j.job_id, &j.project_id, &j.action, &j.phase, &j.error_code]
+                    .iter()
+                    .all(|s| token(s))
+            })
     }
 }
 
@@ -280,7 +295,11 @@ fn latest_release() -> Result<Build, String> {
         .and_then(|r| r.error_for_status())
         .and_then(|r| r.json())
         .map_err(|_| "Cannot read the latest release from GitHub")?;
-    if let Some((tag, build)) = RELEASE_CACHE.lock().map_err(|_| "Release cache unavailable")?.as_ref() {
+    if let Some((tag, build)) = RELEASE_CACHE
+        .lock()
+        .map_err(|_| "Release cache unavailable")?
+        .as_ref()
+    {
         if *tag == release.tag_name {
             return Ok(build.clone());
         }
@@ -317,9 +336,14 @@ fn latest_release() -> Result<Build, String> {
         source_commit: field("Source commit:"),
         version: field("Version:"),
         dockyard_sha256: expected("dockyard-linux-amd64").ok_or("SHA256SUMS has no dockyard")?,
-        dockyardctl_sha256: expected("dockyardctl-linux-amd64").ok_or("SHA256SUMS has no dockyardctl")?,
+        dockyardctl_sha256: expected("dockyardctl-linux-amd64")
+            .ok_or("SHA256SUMS has no dockyardctl")?,
     };
-    if !valid_hex(&m.source_commit, 40) || version_parts(&m.version).is_none() || !valid_hash(&m.dockyard_sha256) || !valid_hash(&m.dockyardctl_sha256) {
+    if !valid_hex(&m.source_commit, 40)
+        || version_parts(&m.version).is_none()
+        || !valid_hash(&m.dockyard_sha256)
+        || !valid_hash(&m.dockyardctl_sha256)
+    {
         return Err("The latest release has invalid build information".into());
     }
     let agent = fetch("dockyard-linux-amd64")?;
@@ -328,7 +352,9 @@ fn latest_release() -> Result<Build, String> {
         return Err("The downloaded release failed its checksum".into());
     }
     let build = (agent, ctl, m);
-    *RELEASE_CACHE.lock().map_err(|_| "Release cache unavailable")? = Some((release.tag_name, build.clone()));
+    *RELEASE_CACHE
+        .lock()
+        .map_err(|_| "Release cache unavailable")? = Some((release.tag_name, build.clone()));
     Ok(build)
 }
 
@@ -367,7 +393,12 @@ fn ssh(app: &AppHandle, identity: &SshIdentity, reason: Option<&str>) -> Result<
         Some(&identity.host_sha256),
     )?;
     let account = terminal::account(&identity.server_ip, identity.port, &identity.host_sha256);
-    let password = native::root_credential(app, format!("{}:{}", identity.server_ip, identity.port), &account, false)?;
+    let password = native::root_credential(
+        app,
+        format!("{}:{}", identity.server_ip, identity.port),
+        &account,
+        false,
+    )?;
     if session.userauth_password("root", &password).is_err() || !session.authenticated() {
         native::terminal_invalidate(&account);
         return Err("Root SSH login failed. Try again to enter the current password.".into());
@@ -378,12 +409,36 @@ fn ssh(app: &AppHandle, identity: &SshIdentity, reason: Option<&str>) -> Result<
 fn command(session: &Session, cmd: &str, timeout: u32) -> Result<String, String> {
     command_limited(session, cmd, timeout, 8192)
 }
-fn command_limited(session: &Session, cmd: &str, timeout: u32, limit: usize) -> Result<String, String> {
+fn command_limited(
+    session: &Session,
+    cmd: &str,
+    timeout: u32,
+    limit: usize,
+) -> Result<String, String> {
+    command_limited_input(session, cmd, None, timeout, limit)
+}
+fn command_limited_input(
+    session: &Session,
+    cmd: &str,
+    input: Option<&[u8]>,
+    timeout: u32,
+    limit: usize,
+) -> Result<String, String> {
     session.set_timeout(timeout);
     let mut channel = session
         .channel_session()
         .map_err(|_| "Cannot open update command channel")?;
-    channel.exec(cmd).map_err(|_| "Cannot run update command")?;
+    channel
+        .exec(cmd)
+        .map_err(|error| format!("Cannot start server command over SSH: {error}"))?;
+    if let Some(input) = input {
+        channel.write_all(input).map_err(|_| {
+            "Sending the server command was interrupted. Run server checks before retrying."
+        })?;
+        channel.send_eof().map_err(|_| {
+            "Finishing the server command was interrupted. Run server checks before retrying."
+        })?;
+    }
     let mut output = String::new();
     Read::by_ref(&mut channel)
         .take((limit + 1) as u64)
@@ -406,12 +461,49 @@ fn command_limited(session: &Session, cmd: &str, timeout: u32, limit: usize) -> 
     }
     Ok(output)
 }
+fn python_command(args: &[&str]) -> Result<String, String> {
+    // Only fixed operation names and previously validated tokens reach the shell.
+    if args.iter().any(|arg| {
+        !arg.bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+    }) {
+        return Err("Invalid server script arguments".into());
+    }
+    Ok(format!(
+        "python3 - {}",
+        args.iter()
+            .map(|arg| format!("'{arg}'"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    ))
+}
+fn python_script(
+    session: &Session,
+    source: &str,
+    args: &[&str],
+    timeout: u32,
+    limit: usize,
+) -> Result<String, String> {
+    // SSH exec requests have a much smaller practical size limit than channel
+    // data. Stream source via stdin, then EOF; never put it in the exec request.
+    command_limited_input(
+        session,
+        &python_command(args)?,
+        Some(source.as_bytes()),
+        timeout,
+        limit,
+    )
+}
 fn inspect_access(session: &Session, key_id: &str) -> Result<AccessReport, String> {
-    if key_id.is_empty() || key_id.len() > 48 || !key_id.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-') {
+    if key_id.is_empty()
+        || key_id.len() > 48
+        || !key_id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    {
         return Err("Invalid enrolled credential".into());
     }
-    let script = ACCESS_CHECK.replace('\'', "'\"'\"'");
-    let output = command_limited(session, &format!("python3 -c '{}' '{}'", script, key_id), 90000, 32768).map_err(|_| {
+    let output = python_script(session, ACCESS_CHECK, &[key_id], 90000, 32768).map_err(|_| {
         "Could not check updater access. Confirm Python 3 and root SSH are available on the VPS"
             .to_owned()
     })?;
@@ -419,7 +511,11 @@ fn inspect_access(session: &Session, key_id: &str) -> Result<AccessReport, Strin
         serde_json::from_str(output.trim()).map_err(|_| "VPS returned an invalid access check")?;
     Ok(access_report(raw))
 }
-pub fn check_access(app: &AppHandle, identity: &SshIdentity, key_id: &str) -> Result<AccessReport, String> {
+pub fn check_access(
+    app: &AppHandle,
+    identity: &SshIdentity,
+    key_id: &str,
+) -> Result<AccessReport, String> {
     let session = ssh(app, identity, None)?;
     inspect_access(&session, key_id)
 }
@@ -431,42 +527,114 @@ pub struct RepairPreview {
     pub changes: Vec<String>,
     pub saved_domains: Vec<String>,
     pub live_domains: Vec<String>,
-	#[serde(default)]
-	pub preserved_domains: Vec<String>,
+    #[serde(default)]
+    pub preserved_domains: Vec<String>,
     pub changed_sections: Vec<String>,
     pub reloads_caddy: bool,
     pub saved_available: bool,
     pub live_available: bool,
 }
-fn repair_command(session: &Session, action: &str, expected: &str) -> Result<serde_json::Value, String> {
-    if !matches!(action, "caddy_admin" | "caddy_import" | "caddy_sites" | "caddy_coherence" | "caddy_write" | "caddy_capability" | "caddy_service" | "docker" | "docker_compose") || (!expected.is_empty() && !valid_hash(expected)) {
+fn repair_command(
+    session: &Session,
+    action: &str,
+    expected: &str,
+) -> Result<serde_json::Value, String> {
+    if !matches!(
+        action,
+        "caddy_admin"
+            | "caddy_import"
+            | "caddy_sites"
+            | "caddy_coherence"
+            | "caddy_write"
+            | "caddy_capability"
+            | "caddy_service"
+            | "docker"
+            | "docker_compose"
+    ) || (!expected.is_empty() && !valid_hash(expected))
+    {
         return Err("Invalid server repair".into());
     }
-    let script = REPAIR.replace('\'', "'\"'\"'");
-    let output = command_limited(session, &format!("python3 -c '{}' '{}' '{}'", script, action, expected), 240000, 32768)?;
-    let result: serde_json::Value = serde_json::from_str(output.trim()).map_err(|_| "Server returned an invalid repair result")?;
-    if let Some(error) = result["error"].as_str() { return Err(error.to_owned()); }
+    let output = python_script(session, REPAIR, &[action, expected], 240000, 32768)?;
+    let result: serde_json::Value = serde_json::from_str(output.trim())
+        .map_err(|_| "Server returned an invalid repair result")?;
+    if let Some(error) = result["error"].as_str() {
+        return Err(error.to_owned());
+    }
     Ok(result)
 }
-fn repair_worker(session: &Session, mode: &str, action: &str, expected: &str) -> Result<serde_json::Value, String> {
-    if !matches!(mode, "launch" | "status") || !valid_hash(expected) { return Err("Invalid repair worker".into()); }
-    let source = format!("SOURCE = {}\n{}", serde_json::to_string(REPAIR).map_err(|_| "Invalid repair script")?, REPAIR).replace('\'', "'\"'\"'");
-    let args = if mode == "launch" { format!("launch '{}' '{}'", action, expected) } else { format!("status '{}'", expected) };
-    let output = command_limited(session, &format!("python3 -c '{}' {}", source, args), 90000, 32768)?;
-    let result: serde_json::Value = serde_json::from_str(output.trim()).map_err(|_| "Server returned an invalid repair result")?;
-    if let Some(error) = result["error"].as_str() { return Err(error.into()); }
+fn repair_worker(
+    session: &Session,
+    mode: &str,
+    action: &str,
+    expected: &str,
+) -> Result<serde_json::Value, String> {
+    if !matches!(mode, "launch" | "status") || !valid_hash(expected) {
+        return Err("Invalid repair worker".into());
+    }
+    if mode == "launch"
+        && !matches!(
+            action,
+            "caddy_admin"
+                | "caddy_import"
+                | "caddy_sites"
+                | "caddy_coherence"
+                | "caddy_write"
+                | "caddy_capability"
+                | "caddy_service"
+                | "docker"
+                | "docker_compose"
+        )
+    {
+        return Err("Invalid server repair".into());
+    }
+    let source = format!(
+        "SOURCE = {}\n{}",
+        serde_json::to_string(REPAIR).map_err(|_| "Invalid repair script")?,
+        REPAIR
+    );
+    let args = if mode == "launch" {
+        vec!["launch", action, expected]
+    } else {
+        vec!["status", expected]
+    };
+    let output = python_script(session, &source, &args, 90000, 32768)?;
+    let result: serde_json::Value = serde_json::from_str(output.trim())
+        .map_err(|_| "Server returned an invalid repair result")?;
+    if let Some(error) = result["error"].as_str() {
+        return Err(error.into());
+    }
     Ok(result)
 }
-pub fn preview_repair(app: &AppHandle, identity: &SshIdentity, action: &str) -> Result<RepairPreview, String> {
+pub fn preview_repair(
+    app: &AppHandle,
+    identity: &SshIdentity,
+    action: &str,
+) -> Result<RepairPreview, String> {
     let session = ssh(app, identity, None)?;
-    serde_json::from_value(repair_command(&session, action, "")?).map_err(|_| "Server returned an invalid repair review".into())
+    serde_json::from_value(repair_command(&session, action, "")?)
+        .map_err(|_| "Server returned an invalid repair review".into())
 }
-pub fn repair_access(app: &AppHandle, identity: &SshIdentity, key_id: &str, action: &str, expected: &str, check: impl Fn() -> Result<(), String>) -> Result<AccessReport, String> {
+pub fn repair_access(
+    app: &AppHandle,
+    identity: &SshIdentity,
+    key_id: &str,
+    action: &str,
+    expected: &str,
+    check: impl Fn() -> Result<(), String>,
+) -> Result<AccessReport, String> {
     let session = ssh(app, identity, None)?;
-    let review: RepairPreview = serde_json::from_value(repair_command(&session, action, "")?).map_err(|_| "Server returned an invalid repair review")?;
-    if review.review_sha256 != expected { return Err("Server settings changed. Review the repair again.".into()); }
+    let review: RepairPreview = serde_json::from_value(repair_command(&session, action, "")?)
+        .map_err(|_| "Server returned an invalid repair review")?;
+    if review.review_sha256 != expected {
+        return Err("Server settings changed. Review the repair again.".into());
+    }
     check()?;
-    native::authenticate_reason(&format!("Repair {} on {}. {}", action.replace('_', " "), identity.server_ip, review.changes.join(" ")))?;
+    native::authenticate_reason(&format!(
+        "Repair {} on {}. {}",
+        action.replace('_', " "),
+        identity.server_ip,
+        review.changes.join(" ")
+    ))?;
     check()?;
     repair_worker(&session, "launch", action, expected)?;
     let mut complete = false;
@@ -474,13 +642,22 @@ pub fn repair_access(app: &AppHandle, identity: &SshIdentity, key_id: &str, acti
         check()?;
         std::thread::sleep(std::time::Duration::from_secs(2));
         let result = repair_worker(&session, "status", action, expected)?;
-        if result["repaired"] == true { complete = true; break; }
+        if result["repaired"] == true {
+            complete = true;
+            break;
+        }
     }
-    if !complete { return Err("The repair is still running on the server. Run checks again shortly.".into()); }
+    if !complete {
+        return Err("The repair is still running on the server. Run checks again shortly.".into());
+    }
     check()?;
     inspect_access(&session, key_id)
 }
-pub fn prepare_access(app: &AppHandle, identity: &SshIdentity, key_id: &str) -> Result<AccessReport, String> {
+pub fn prepare_access(
+    app: &AppHandle,
+    identity: &SshIdentity,
+    key_id: &str,
+) -> Result<AccessReport, String> {
     let session = ssh(
         app,
         identity,
@@ -523,7 +700,9 @@ fn inspect(session: &Session, m: &Manifest) -> Result<Preview, String> {
         .map_err(|_| "Could not inspect Dockyard jobs. Check Python 3 and database access on the VPS before updating".to_owned())?;
     let jobs: UpdateJobs = serde_json::from_str(raw_jobs.trim())
         .map_err(|_| "VPS returned an invalid update job check")?;
-    if !jobs.valid() { return Err("VPS returned an invalid update job check".into()); }
+    if !jobs.valid() {
+        return Err("VPS returned an invalid update job check".into());
+    }
     Ok(Preview {
         source_commit: m.source_commit.clone(),
         candidate_version: m.version.clone(),
@@ -616,7 +795,12 @@ pub fn apply(
     command(&session, &format!("set -eu; for name in dockyard dockyardctl; do path={stage}/$name; test -f \"$path\"; test ! -L \"$path\"; test \"$(stat -c %u \"$path\")\" = 0; chmod 0700 \"$path\"; test -x \"$path\"; done"), 15000)
         .map_err(|_| "Could not make the private updater binaries executable on the VPS".to_owned())?;
     upload(&session, &format!("{stage}/update.py"), SCRIPT, false)?;
-    upload(&session, &format!("{stage}/update_jobs.py"), JOB_CHECK.as_bytes(), false)?;
+    upload(
+        &session,
+        &format!("{stage}/update_jobs.py"),
+        JOB_CHECK.as_bytes(),
+        false,
+    )?;
     upload(&session, &format!("{stage}/dockyard.service"), UNIT, false)?;
     let request = serde_json::to_vec(&json!({"candidate":{"dockyard":m.dockyard_sha256,"dockyardctl":m.dockyardctl_sha256},"expected":{"dockyard":expected.installed_dockyard,"dockyardctl":expected.installed_dockyardctl},"jobs_sha256":expected.jobs.sha256})).map_err(|_| "Cannot prepare update request")?;
     upload(&session, &format!("{stage}/request.json"), &request, false)?;
@@ -656,6 +840,158 @@ pub fn apply(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn python_scripts_use_short_validated_exec_arguments() {
+        let expected = "a".repeat(64);
+        assert_eq!(
+            python_command(&["caddy_coherence", ""]).unwrap(),
+            "python3 - 'caddy_coherence' ''"
+        );
+        assert!(
+            python_command(&["launch", "caddy_coherence", &expected])
+                .unwrap()
+                .len()
+                < 128
+        );
+        for invalid in ["name;whoami", "$(id)", "a'b", "a\nb", "../file"] {
+            assert!(python_command(&[invalid]).is_err());
+        }
+    }
+
+    #[test]
+    #[ignore = "starts a disposable local OpenSSH container; no VPS or Keychain"]
+    fn large_repair_scripts_stream_over_real_ssh() {
+        use std::{process::Command, time::Duration};
+        struct Container(String);
+        impl Drop for Container {
+            fn drop(&mut self) {
+                let _ = Command::new("docker").args(["rm", "-f", &self.0]).output();
+            }
+        }
+        let name = format!("dockyard-repair-ssh-{}", uuid::Uuid::new_v4().simple());
+        let _guard = Container(name.clone());
+        let started = Command::new("docker")
+            .args([
+                "run",
+                "--platform",
+                "linux/amd64",
+                "-d",
+                "--name",
+                &name,
+                "-p",
+                "127.0.0.1::22",
+                "dockyard-ssh-fixture:local",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            started.status.success(),
+            "build the local SSH fixture first"
+        );
+        let output = Command::new("docker")
+            .args(["port", &name, "22/tcp"])
+            .output()
+            .unwrap();
+        let port: u16 = String::from_utf8(output.stdout)
+            .unwrap()
+            .trim()
+            .rsplit(':')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut connected = None;
+        for _ in 0..50 {
+            if let Ok(value) = setup::connect("127.0.0.1", port, None) {
+                connected = Some(value);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let (session, _) = connected.expect("fixture must accept SSH");
+        session
+            .userauth_password("root", "dockyard-fixture-only")
+            .unwrap();
+        // Reproduce the former oversized exec request on a separate session,
+        // since OpenSSH can close that connection when it rejects the packet.
+        let (old, _) = setup::connect("127.0.0.1", port, None).unwrap();
+        old.userauth_password("root", "dockyard-fixture-only")
+            .unwrap();
+        old.set_timeout(5000);
+        let mut old_channel = old.channel_session().unwrap();
+        let former = format!(
+            "python3 -c '{}' 'caddy_coherence' ''",
+            REPAIR.replace('\'', "'\"'\"'")
+        );
+        assert!(former.len() > 32768);
+        let former_result = old_channel.exec(&former);
+        println!("Former oversized exec result: {:?}", former_result);
+        drop(old_channel);
+        drop(old);
+
+        let fixture = r#"
+import json, pathlib, sqlite3
+root=pathlib.Path('/etc/dockyard'); root.mkdir(mode=0o700, exist_ok=True)
+state=pathlib.Path('/var/lib/dockyard'); state.mkdir(mode=0o700, exist_ok=True)
+caddy=pathlib.Path('/etc/caddy'); caddy.mkdir(mode=0o755, exist_ok=True)
+(caddy/'Caddyfile').write_text('{\n admin off\n}\napp.example.com {\n reverse_proxy localhost:3000\n}\n')
+(root/'config.json').write_text(json.dumps({'state_dir': str(state)}))
+db=sqlite3.connect(state/'state.db')
+db.executescript('CREATE TABLE projects(id TEXT, data BLOB); CREATE TABLE jobs(status TEXT);'); db.close()
+pathlib.Path('/usr/bin/systemctl').write_text('#!/bin/sh\nif [ "$1" = is-active ]; then exit 1; fi\nexit 0\n')
+pathlib.Path('/usr/bin/systemctl').chmod(0o755)
+pathlib.Path('/usr/bin/systemd-run').write_text('#!/usr/bin/python3\nimport sys,subprocess\ni=sys.argv.index("/usr/bin/python3")\nsubprocess.Popen(sys.argv[i:], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)\n')
+pathlib.Path('/usr/bin/systemd-run').chmod(0o755)
+print('ready')
+"#;
+        assert_eq!(
+            python_script(&session, fixture, &[], 10000, 1024)
+                .unwrap()
+                .trim(),
+            "ready"
+        );
+        // The full shipped script reaches its Caddy check, rather than failing
+        // to send the command. No Caddy daemon runs in this fixture.
+        assert!(repair_command(&session, "caddy_coherence", "")
+            .unwrap_err()
+            .contains("Private Caddy connection"));
+        let review = repair_command(&session, "docker", "").unwrap();
+        let expected = review["review_sha256"].as_str().unwrap();
+        assert!(valid_hash(expected));
+        assert_eq!(
+            repair_worker(&session, "launch", "docker", expected).unwrap()["running"],
+            true
+        );
+        let mut repaired = false;
+        for _ in 0..50 {
+            if repair_worker(&session, "status", "docker", expected).unwrap()["repaired"] == true {
+                repaired = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(
+            repaired,
+            "the detached worker must finish and expose its result"
+        );
+        // Exercise a source larger than both exec and packet limits; its quotes,
+        // Unicode and exact stdin length survive without shell interpretation.
+        let big = format!(
+            "# {}\nimport json,sys\nprint(json.dumps(sys.argv[1:]))\n",
+            "\"'☁".repeat(50000)
+        );
+        let output = python_script(&session, &big, &["quoted_token", ""], 10000, 1024).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<String>>(&output).unwrap(),
+            vec!["quoted_token", ""]
+        );
+        assert!(
+            python_script(&session, "print('x'*2048)\n", &[], 10000, 1024)
+                .unwrap_err()
+                .contains("exceeded its limit")
+        );
+    }
+
     #[test]
     #[ignore = "network: downloads the latest GitHub release"]
     fn latest_release_downloads_and_verifies() {

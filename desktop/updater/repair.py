@@ -164,7 +164,8 @@ def snippet(project):
     port = project.get('green_port') if project.get('active_slot') == 'green' else project.get('blue_port')
     instance = (project.get('service_instances') or {}).get(project.get('route_service'), {})
     port = instance.get('port') or port
-    routed = {name: route['host_port'] for route in routes for name in route['domains']}
+    instances = project.get('service_instances') or {}
+    routed = {name: (instances.get(route['service'], {}).get('port') or route['host_port']) for route in routes for name in route['domains']}
     groups = [([name], routed.get(name, port)) for name in domains]
     templates = {route['domain']: route for route in project.get('caddy_routes') or []}
     for names, upstream in groups:
@@ -187,37 +188,334 @@ def snippet(project):
     return result.encode()
 
 
+def caddy_value(value):
+    if not isinstance(value, str) or any(ord(c) < 32 for c in value):
+        raise ValueError('a value that cannot be represented losslessly')
+    return json.dumps(value, ensure_ascii=False)
+
+
+def header_rules(operations, directive):
+    if not isinstance(operations, dict) or set(operations) - {'set', 'add', 'delete', 'deferred'}:
+        raise ValueError('custom header operations')
+    lines = []
+    for operation, prefix in [('set', ''), ('add', '+')]:
+        for name, values in operations.get(operation, {}).items():
+            if not re.fullmatch(r'[A-Za-z0-9!#$%&\'*+.^_`|~-]+', name) or not isinstance(values, list) or not values or (operation == 'set' and len(values) != 1):
+                raise ValueError('custom header values')
+            lines.extend(directive + ' ' + caddy_value(prefix + name) + ' ' + caddy_value(value) for value in values)
+    for name in operations.get('delete', []):
+        if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9!#$%&\'*+.^_`|~-]+', name):
+            raise ValueError('custom header names')
+        lines.append(directive + ' ' + caddy_value('-' + name))
+    if operations.get('deferred'):
+        if directive != '':
+            raise ValueError('deferred proxy headers')
+        lines.append('defer')
+    return [line.lstrip() for line in lines]
+
+
+def recovery_fields(value, allowed, label):
+    if not isinstance(value, dict):
+        raise ValueError(label + ' has invalid settings')
+    unknown = set(value) - set(allowed)
+    if unknown:
+        # Report schema names, never private values or arbitrary object keys.
+        names = sorted(key if isinstance(key, str) and re.fullmatch(r'[a-z_@][a-z0-9_@]{0,63}', key) else 'unknown field' for key in unknown)
+        raise ValueError(label + ' unsupported fields: ' + ', '.join(names))
+
+
+def recovery_number(value, label, duration=False):
+    if type(value) is not int:
+        raise ValueError(label + ' has an invalid numeric setting')
+    return str(value) + ('ns' if duration else '')
+
+
+def recovery_list(value, label):
+    if not isinstance(value, list) or not value:
+        raise ValueError(label + ' has an invalid list setting')
+    return ' '.join(caddy_value(item) for item in value)
+
+
+def recovery_policy(policy, depth=0):
+    if depth > 8:
+        raise ValueError('reverse_proxy load balancing nesting')
+    recovery_fields(policy, {'policy', 'choose', 'weights', 'field', 'key', 'name', 'secret', 'max_age', 'fallback'}, 'reverse_proxy selection_policy')
+    kind = policy.get('policy')
+    fields = {
+        'random': (), 'least_conn': (), 'round_robin': (), 'first': (),
+        'ip_hash': (), 'client_ip_hash': (), 'uri_hash': (),
+        'random_choose': ('choose',), 'weighted_round_robin': ('weights',),
+        'header': ('field', 'fallback'), 'query': ('key', 'fallback'),
+        'cookie': ('name', 'secret', 'max_age', 'fallback'),
+    }
+    if kind not in fields:
+        raise ValueError('reverse_proxy unsupported selection_policy module')
+    recovery_fields(policy, {'policy', *fields[kind]}, 'reverse_proxy selection_policy')
+    result = kind
+    if kind == 'random_choose':
+        result += ' ' + recovery_number(policy.get('choose'), 'reverse_proxy choose')
+    elif kind == 'weighted_round_robin':
+        weights = policy.get('weights')
+        if not isinstance(weights, list) or not weights:
+            raise ValueError('reverse_proxy weights')
+        result += ' ' + ' '.join(recovery_number(weight, 'reverse_proxy weight') for weight in weights)
+    elif kind in ('header', 'query'):
+        result += ' ' + caddy_value(policy.get('field' if kind == 'header' else 'key'))
+    elif kind == 'cookie':
+        if 'name' in policy or 'secret' in policy:
+            result += ' ' + caddy_value(policy.get('name', ''))
+        if 'secret' in policy:
+            result += ' ' + caddy_value(policy['secret'])
+    options = []
+    if 'max_age' in policy:
+        options.append('max_age ' + recovery_number(policy['max_age'], 'reverse_proxy cookie max_age', True))
+    if 'fallback' in policy:
+        options.append('fallback ' + recovery_policy(policy['fallback'], depth + 1))
+    return result + (' {\n' + '\n'.join(options) + '\n}' if options else '')
+
+
+def recovery_matchers(match):
+    recovery_fields(match, {'method', 'path', 'host', 'header', 'expression'}, 'reverse_proxy retry_match')
+    lines = []
+    for field in ('method', 'path', 'host'):
+        if field in match:
+            lines.append(field + ' ' + recovery_list(match[field], 'reverse_proxy retry_match ' + field))
+    if 'header' in match:
+        if not isinstance(match['header'], dict):
+            raise ValueError('reverse_proxy retry_match header')
+        for name, values in match['header'].items():
+            lines.append('header ' + caddy_value(name) + ' ' + recovery_list(values, 'reverse_proxy retry_match header'))
+    if 'expression' in match:
+        expression = match['expression']
+        if isinstance(expression, dict):
+            recovery_fields(expression, {'expr'}, 'reverse_proxy retry_match expression')
+            expression = expression.get('expr')
+        lines.append('expression ' + caddy_value(expression))
+    return lines
+
+
+def recovery_proxy_options(handler):
+    durations = ('flush_interval', 'stream_timeout', 'stream_close_delay')
+    sizes = ('request_buffers', 'response_buffers', 'stream_buffer_size')
+    recovery_fields(handler, {'handler', 'upstreams', 'headers', 'transport', 'load_balancing', 'health_checks', 'trusted_proxies', 'rewrite', 'verbose_logs', 'handle_response', *durations, *sizes}, 'reverse_proxy')
+    rules = []
+    for field in durations:
+        if field in handler:
+            rules.append(field + ' ' + recovery_number(handler[field], 'reverse_proxy ' + field, True))
+    for field in sizes:
+        if field in handler:
+            value = handler[field]
+            rules.append(field + ' ' + ('unlimited' if type(value) is int and value == -1 else recovery_number(value, 'reverse_proxy ' + field)))
+    if 'verbose_logs' in handler:
+        if handler['verbose_logs'] is not True:
+            raise ValueError('reverse_proxy verbose_logs')
+        rules.append('verbose_logs')
+    if 'trusted_proxies' in handler:
+        rules.append('trusted_proxies ' + recovery_list(handler['trusted_proxies'], 'reverse_proxy trusted_proxies'))
+    if 'rewrite' in handler:
+        rewrite = handler['rewrite']
+        recovery_fields(rewrite, {'method', 'uri'}, 'reverse_proxy rewrite')
+        for field, directive in [('method', 'method'), ('uri', 'rewrite')]:
+            if field in rewrite:
+                rules.append(directive + ' ' + caddy_value(rewrite[field]))
+    if 'load_balancing' in handler:
+        balancing = handler['load_balancing']
+        recovery_fields(balancing, {'selection_policy', 'retries', 'try_duration', 'try_interval', 'retry_match'}, 'reverse_proxy load_balancing')
+        if 'selection_policy' in balancing:
+            rules.append('lb_policy ' + recovery_policy(balancing['selection_policy']))
+        for field in ('retries', 'try_duration', 'try_interval'):
+            if field in balancing:
+                rules.append('lb_' + field + ' ' + recovery_number(balancing[field], 'reverse_proxy ' + field, field != 'retries'))
+        if 'retry_match' in balancing:
+            if not isinstance(balancing['retry_match'], list) or not balancing['retry_match']:
+                raise ValueError('reverse_proxy retry_match')
+            for match in balancing['retry_match']:
+                rules.append('lb_retry_match {\n' + '\n'.join(recovery_matchers(match)) + '\n}')
+    if 'health_checks' in handler:
+        checks = handler['health_checks']
+        recovery_fields(checks, {'active', 'passive'}, 'reverse_proxy health_checks')
+        mappings = {
+            'active': {
+                'path': ('health_path', 'text'), 'uri': ('health_uri', 'text'),
+                'upstream': ('health_upstream', 'text'), 'port': ('health_port', 'number'),
+                'method': ('health_method', 'text'), 'body': ('health_request_body', 'text'),
+                'interval': ('health_interval', 'duration'), 'timeout': ('health_timeout', 'duration'),
+                'passes': ('health_passes', 'number'), 'fails': ('health_fails', 'number'),
+                'expect_status': ('health_status', 'number'), 'expect_body': ('health_body', 'text'),
+            },
+            'passive': {
+                'fail_duration': ('fail_duration', 'duration'), 'max_fails': ('max_fails', 'number'),
+                'unhealthy_request_count': ('unhealthy_request_count', 'number'),
+                'unhealthy_latency': ('unhealthy_latency', 'duration'),
+            },
+        }
+        for kind, mapping in mappings.items():
+            if kind not in checks:
+                continue
+            settings = checks[kind]
+            extra = {'headers', 'follow_redirects'} if kind == 'active' else {'unhealthy_status'}
+            recovery_fields(settings, {*mapping, *extra}, 'reverse_proxy health_checks.' + kind)
+            for field, (directive, value_kind) in mapping.items():
+                if field in settings:
+                    value = settings[field]
+                    rules.append(directive + ' ' + (caddy_value(value) if value_kind == 'text' else recovery_number(value, 'reverse_proxy health_checks.' + field, value_kind == 'duration')))
+            if 'follow_redirects' in settings:
+                if settings['follow_redirects'] is not True:
+                    raise ValueError('reverse_proxy health follow_redirects')
+                rules.append('health_follow_redirects')
+            if 'headers' in settings:
+                headers = settings['headers']
+                if not isinstance(headers, dict):
+                    raise ValueError('reverse_proxy health headers')
+                rules.append('health_headers {\n' + '\n'.join(caddy_value(name) + ' ' + recovery_list(values, 'reverse_proxy health headers') for name, values in headers.items()) + '\n}')
+            if 'unhealthy_status' in settings:
+                statuses = settings['unhealthy_status']
+                if not isinstance(statuses, list) or not statuses:
+                    raise ValueError('reverse_proxy unhealthy_status')
+                rules.append('unhealthy_status ' + ' '.join(recovery_number(status, 'reverse_proxy unhealthy_status') for status in statuses))
+    if 'handle_response' in handler:
+        responses = handler['handle_response']
+        if not isinstance(responses, list) or not responses:
+            raise ValueError('reverse_proxy handle_response')
+        for index, response in enumerate(responses):
+            recovery_fields(response, {'match', 'status_code', 'routes'}, 'reverse_proxy handle_response')
+            matcher = ''
+            if 'match' in response:
+                match = response['match']
+                recovery_fields(match, {'status_code', 'headers'}, 'reverse_proxy response matcher')
+                matcher = '@dockyard_response_' + str(index)
+                matches = []
+                if 'status_code' in match:
+                    matches.append('status ' + ' '.join(recovery_number(status, 'reverse_proxy response status') for status in match['status_code']))
+                for name, values in match.get('headers', {}).items():
+                    matches.append('header ' + caddy_value(name) + ' ' + recovery_list(values, 'reverse_proxy response header'))
+                rules.append(matcher + ' {\n' + '\n'.join(matches) + '\n}')
+            if 'routes' in response:
+                if 'status_code' in response:
+                    raise ValueError('reverse_proxy combined response routes and status')
+                body = recover_handlers([{'handler': 'subroute', 'routes': response['routes']}])
+                rules.append('handle_response ' + matcher + ' {\nroute {\n' + '\n'.join(body) + '\n}\n}')
+            elif 'status_code' in response:
+                status = response['status_code']
+                if not str(status).isdigit() or not 100 <= int(status) <= 599:
+                    raise ValueError('reverse_proxy replacement status')
+                rules.append('replace_status ' + matcher + ' ' + str(status))
+            else:
+                raise ValueError('reverse_proxy empty handle_response')
+    return rules
+
+
+def recover_handlers(handlers):
+    """Render known handlers in their existing order; never guess unknown fields."""
+    if not isinstance(handlers, list) or not handlers:
+        raise ValueError('an empty or invalid handler chain')
+    lines = []
+    for handler in handlers:
+        if not isinstance(handler, dict):
+            raise ValueError('an invalid handler')
+        kind = handler.get('handler', 'unknown')
+        if kind == 'subroute' and set(handler) == {'handler', 'routes'}:
+            for route in handler['routes']:
+                if not isinstance(route, dict) or set(route) != {'handle'}:
+                    raise ValueError('matched or grouped routes')
+                lines.extend(recover_handlers(route['handle']))
+        elif kind == 'reverse_proxy':
+            rules = recovery_proxy_options(handler)
+            upstreams = handler.get('upstreams')
+            if not isinstance(upstreams, list) or not upstreams or any(not isinstance(upstream, dict) or set(upstream) != {'dial'} for upstream in upstreams):
+                raise ValueError('custom proxy upstreams')
+            headers = handler.get('headers', {})
+            if not isinstance(headers, dict) or set(headers) - {'request', 'response'}:
+                raise ValueError('custom proxy headers')
+            for direction, directive in [('request', 'header_up'), ('response', 'header_down')]:
+                rules.extend(header_rules(headers.get(direction, {}), directive))
+            if 'transport' in handler:
+                transport = handler['transport']
+                timeouts = ('dial_timeout', 'dial_fallback_delay', 'response_header_timeout', 'expect_continue_timeout', 'read_timeout', 'write_timeout')
+                recovery_fields(transport, {'protocol', 'tls', 'versions', 'keep_alive', 'compression', 'max_conns_per_host', *timeouts}, 'reverse_proxy transport')
+                if transport.get('protocol') != 'http':
+                    raise ValueError('reverse_proxy unsupported transport module')
+                settings = []
+                if 'tls' in transport:
+                    tls = transport['tls']
+                    recovery_fields(tls, {'server_name', 'insecure_skip_verify'}, 'reverse_proxy upstream TLS')
+                    settings.append('tls')
+                    if 'server_name' in tls:
+                        settings.append('tls_server_name ' + caddy_value(tls['server_name']))
+                    if tls.get('insecure_skip_verify'):
+                        settings.append('tls_insecure_skip_verify')
+                if 'versions' in transport:
+                    settings.append('versions ' + ' '.join(caddy_value(version) for version in transport['versions']))
+                for field in timeouts:
+                    if field in transport:
+                        settings.append(field + ' ' + recovery_number(transport[field], 'reverse_proxy ' + field, True))
+                if 'keep_alive' in transport:
+                    keepalive = transport['keep_alive']
+                    recovery_fields(keepalive, {'enabled', 'probe_interval', 'idle_timeout', 'max_idle_conns', 'max_idle_conns_per_host'}, 'reverse_proxy keep_alive')
+                    if 'enabled' in keepalive:
+                        if keepalive['enabled'] is not False:
+                            raise ValueError('reverse_proxy keep_alive enabled')
+                        settings.append('keepalive off')
+                    for field, directive in [('probe_interval', 'keepalive_interval'), ('idle_timeout', 'keepalive'), ('max_idle_conns', 'keepalive_idle_conns'), ('max_idle_conns_per_host', 'keepalive_idle_conns_per_host')]:
+                        if field in keepalive:
+                            settings.append(directive + ' ' + recovery_number(keepalive[field], 'reverse_proxy keep_alive.' + field, field in ('probe_interval', 'idle_timeout')))
+                if 'compression' in transport:
+                    if transport['compression'] is not False:
+                        raise ValueError('reverse_proxy transport compression')
+                    settings.append('compression off')
+                if 'max_conns_per_host' in transport:
+                    settings.append('max_conns_per_host ' + recovery_number(transport['max_conns_per_host'], 'reverse_proxy max_conns_per_host'))
+                rules.append('transport http {\n' + '\n'.join(settings) + '\n}')
+            line = 'reverse_proxy ' + ' '.join(caddy_value(upstream['dial']) for upstream in upstreams)
+            lines.append(line + (' {\n' + '\n'.join(rules) + '\n}' if rules else ''))
+        elif kind == 'headers' and set(handler) == {'handler', 'response'}:
+            lines.append('header {\n' + '\n'.join(header_rules(handler['response'], '')) + '\n}')
+        elif kind == 'encode' and set(handler) <= {'handler', 'encodings', 'prefer', 'minimum_length'}:
+            encodings = handler.get('encodings', {})
+            if not encodings or any(name not in ('gzip', 'zstd') or options != {} for name, options in encodings.items()):
+                raise ValueError('custom compression settings')
+            order = handler.get('prefer', list(encodings))
+            if not isinstance(order, list) or set(order) != set(encodings) or len(order) != len(encodings):
+                raise ValueError('custom compression order')
+            line = 'encode ' + ' '.join(order)
+            if 'minimum_length' in handler:
+                length = handler['minimum_length']
+                if not isinstance(length, int) or length < 0:
+                    raise ValueError('custom compression length')
+                line += ' {\nminimum_length ' + str(length) + '\n}'
+            lines.append(line)
+        elif kind == 'authentication' and set(handler) == {'handler', 'providers'} and set(handler['providers']) == {'http_basic'}:
+            basic = handler['providers']['http_basic']
+            if not isinstance(basic, dict) or set(basic) - {'accounts', 'hash', 'realm', 'hash_cache'} or basic.get('hash') != {'algorithm': 'bcrypt'} or basic.get('hash_cache', {}) != {}:
+                raise ValueError('custom authentication settings')
+            accounts = basic.get('accounts', [])
+            if not accounts or any(set(account) != {'username', 'password'} for account in accounts):
+                raise ValueError('custom authentication accounts')
+            line = 'basic_auth bcrypt' + (' ' + caddy_value(basic['realm']) if 'realm' in basic else '')
+            lines.append(line + ' {\n' + '\n'.join(caddy_value(account['username']) + ' ' + caddy_value(account['password']) for account in accounts) + '\n}')
+        elif kind == 'static_response' and set(handler) <= {'handler', 'body', 'status_code'}:
+            status = handler.get('status_code', 200)
+            if not str(status).isdigit() or not 100 <= int(status) <= 599:
+                raise ValueError('custom response status')
+            lines.append('respond ' + caddy_value(handler.get('body', '')) + ' ' + str(status))
+        elif kind == 'static_response' and set(handler) == {'handler', 'headers', 'status_code'}:
+            headers, status = handler['headers'], handler['status_code']
+            values = headers.get('Location') if isinstance(headers, dict) else None
+            if set(headers or {}) != {'Location'} or str(status) not in ('301', '302', '303', '307', '308') or not isinstance(values, list) or len(values) != 1 or not values[0].startswith(('http://', 'https://', '/')):
+                raise ValueError('custom response headers')
+            lines.append('redir ' + caddy_value(values[0]) + ' ' + str(status))
+        else:
+            raise ValueError(kind + ' rules')
+    return lines
+
+
 def live_only_sites(saved, current):
-    """Recover complete plain HTTPS proxies or redirects, retaining their rules."""
+    """Recover known HTTPS site rules, with equivalence verified before reload."""
     missing = set(hosts(current)) - set(hosts(saved))
     if not missing:
         return '', []
     found = {}
-    def proxy(handles):
-        if not isinstance(handles, list) or len(handles) != 1:
-            return None
-        handler = handles[0]
-        if not isinstance(handler, dict):
-            return None
-        if handler.get('handler') == 'reverse_proxy' and set(handler) == {'handler', 'upstreams'}:
-            upstreams = handler['upstreams']
-            if isinstance(upstreams, list) and len(upstreams) == 1 and set(upstreams[0]) == {'dial'}:
-                dial = upstreams[0]['dial']
-                if isinstance(dial, str) and re.fullmatch(r'(?:127\.0\.0\.1|localhost):[1-9][0-9]{0,4}', dial) and int(dial.rsplit(':', 1)[1]) <= 65535:
-                    return '\treverse_proxy ' + dial + '\n'
-        if handler.get('handler') == 'static_response' and set(handler) == {'handler', 'headers', 'status_code'}:
-            headers, status = handler['headers'], handler['status_code']
-            if isinstance(headers, dict) and set(headers) == {'Location'} and status in (301, 302, 303, 307, 308):
-                values = headers['Location']
-                if isinstance(values, list) and len(values) == 1 and isinstance(values[0], str):
-                    target = values[0]
-                    if target.startswith(('http://', 'https://', '/')) and not any(ord(c) < 32 for c in target):
-                        return '\tredir ' + json.dumps(target) + ' ' + str(status) + '\n'
-        if handler.get('handler') == 'subroute' and set(handler) == {'handler', 'routes'}:
-            routes = handler['routes']
-            if isinstance(routes, list) and len(routes) == 1 and set(routes[0]) <= {'handle', 'terminal'}:
-                return proxy(routes[0].get('handle'))
-        return None
+    reasons = {}
     servers = ((current.get('apps') or {}).get('http') or {}).get('servers') or {}
     for server in servers.values():
         if server.get('listen') != [':443']:
@@ -226,17 +524,97 @@ def live_only_sites(saved, current):
             match = route.get('match') or []
             if len(match) != 1 or set(match[0]) != {'host'} or set(route) - {'match', 'handle', 'terminal'}:
                 continue
-            dial = proxy(route.get('handle'))
-            if not dial:
+            try:
+                rules = recover_handlers(route.get('handle'))
+            except (ValueError, TypeError, KeyError, AttributeError) as error:
+                for name in set(match[0]['host']) & missing:
+                    reasons[name] = str(error) if isinstance(error, ValueError) else 'invalid site rules'
                 continue
             for name in match[0]['host']:
                 if name in missing:
                     if name in found or not re.fullmatch(r'[a-z0-9.-]{1,253}', name):
                         raise ValueError('Running sites have ambiguous routes. No saved configuration was activated.')
-                    found[name] = dial
+                    # An explicit route preserves handler order (auth, headers,
+                    # compression, proxy) instead of the adapter re-sorting it.
+                    found[name] = '\troute {\n' + '\n'.join('\t\t' + line.replace('\n', '\n\t\t') for line in rules) + '\n\t}\n'
     if set(found) != missing:
-        raise ValueError('Some running-only sites use custom rules that cannot be saved automatically. This repair will not remove them; no configuration was activated.')
+        details = '; '.join(name + ': ' + reasons.get(name, 'custom listener, matcher or route structure') for name in sorted(missing - set(found)))
+        raise ValueError('These running-only sites need additional recovery: ' + details + '. Dockyard will not remove them; no configuration was activated.')
     return ''.join('\n' + name + ' {\n' + found[name] + '}\n' for name in sorted(found)), sorted(found)
+
+
+def normalized_handlers(handlers):
+    result = []
+    for handler in handlers:
+        # Flatten only unconditional wrappers. Matchers, groups and terminal
+        # boundaries keep their original meaning and are never discarded.
+        if isinstance(handler, dict) and set(handler) == {'handler', 'routes'} and handler['handler'] == 'subroute' and all(set(route) == {'handle'} for route in handler['routes']):
+            for route in handler['routes']:
+                result.extend(normalized_handlers(route['handle']))
+        else:
+            if isinstance(handler, dict) and handler.get('handler') == 'reverse_proxy' and isinstance(handler.get('handle_response'), list):
+                handler = dict(handler)
+                responses = []
+                for response in handler['handle_response']:
+                    response = dict(response)
+                    routes = response.get('routes')
+                    # Canonicalize only unconditional response routes. Their
+                    # exact handler order survives; matcher/group/terminal
+                    # boundaries are retained and compared unchanged.
+                    if isinstance(routes, list) and routes and all(isinstance(route, dict) and set(route) == {'handle'} for route in routes):
+                        response['routes'] = [{'handle': normalized_handlers([item for route in routes for item in route['handle']])}]
+                    responses.append(response)
+                handler['handle_response'] = responses
+            result.append(handler)
+    return result
+
+
+def recovered_site(config, name):
+    matches = []
+    servers = ((config.get('apps') or {}).get('http') or {}).get('servers') or {}
+    for server in servers.values():
+        for route in server.get('routes', []):
+            if name not in hosts(route.get('match', [])):
+                continue
+            match = route.get('match')
+            if not isinstance(match, list) or len(match) != 1 or set(match[0]) != {'host'}:
+                raise ValueError('A recovered site has custom matchers: ' + name + '.')
+            # Compare the complete chain, terminal flag, listeners and server
+            # options, without sibling hostnames or adapter wrapper nesting.
+            entry = {key: value for key, value in server.items() if key != 'routes'}
+            entry['route'] = {key: value for key, value in route.items() if key not in ('match', 'handle')}
+            entry['handlers'] = normalized_handlers(route.get('handle', []))
+            matches.append(entry)
+    if len(matches) != 1:
+        raise ValueError('A recovered site has ambiguous routes: ' + name + '.')
+    policies = (((config.get('apps') or {}).get('tls') or {}).get('automation') or {}).get('policies', [])
+    matches[0]['certificate_policies'] = []
+    for policy in policies:
+        subjects = policy.get('subjects')
+        if subjects is None or name in subjects or any(subject.startswith('*.') and name.endswith(subject[1:]) for subject in subjects):
+            matches[0]['certificate_policies'].append({key: value for key, value in policy.items() if key != 'subjects'})
+    return matches[0]
+
+
+def verify_recovered_sites(current, desired, names):
+    for name in names:
+        if recovered_site(current, name) != recovered_site(desired, name):
+            raise ValueError('Dockyard could not preserve all active rules for ' + name + '. No configuration was activated.')
+
+
+def preview_recovered_sites(binary, caddyfile, source, current, names):
+    # Adapt a temporary sibling so relative imports retain the original base.
+    # The real Caddyfile and the running server are unchanged during review.
+    fd, path = tempfile.mkstemp(prefix='.dockyard-review-', dir=caddyfile.parent)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(source)
+        ok, adapted = run([binary, 'adapt', '--config', path, '--adapter', 'caddyfile'], cwd=str(caddyfile.parent))
+        if not ok:
+            raise ValueError('Caddy could not validate the recovered site rules. No configuration was activated.')
+        verify_recovered_sites(current, json.loads(adapted), names)
+    finally:
+        Path(path).unlink(missing_ok=True)
 
 
 def plan(action):
@@ -346,7 +724,8 @@ def plan(action):
         addition, preserved = live_only_sites(saved, current)
         if addition:
             files[caddyfile] = files.get(caddyfile, source).rstrip() + addition.encode()
-            changes.insert(0, 'Keep the existing running sites in the saved Caddyfile: ' + ', '.join(preserved) + '.')
+            preview_recovered_sites(binary, caddyfile, files[caddyfile], current, preserved)
+            changes.insert(0, 'Restore these still-running sites to the saved Caddyfile before reload: ' + ', '.join(preserved) + '.')
             snapshot['files'] = {str(path): data.hex() for path, data in files.items()}
             digest = hashlib.sha256(json.dumps([action, snapshot], sort_keys=True).encode()).hexdigest()
     preview = {'action': action, 'review_sha256': digest, 'changes': changes, 'changed_sections': changed,
@@ -449,6 +828,8 @@ def apply(action, expected):
                 running = snapshot.get('live') or snapshot.get('legacy_live')
                 if running is not None and set(hosts(running)) - set(hosts(desired)):
                     raise ValueError('This repair would remove existing running sites. The previous saved files were restored; Caddy was not reloaded.')
+                if preview.get('preserved_domains'):
+                    verify_recovered_sites(running, desired, preview['preserved_domains'])
                 admin = config.get('caddy_admin_socket', '/run/caddy/admin.sock')
                 if not snapshot['active']['caddy']:
                     ok = run(['systemctl', 'start', 'caddy'])[0]

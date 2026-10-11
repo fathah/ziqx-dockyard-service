@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
+	"github.com/ziqx/ziqx-dockyard-service/internal/runtime"
 )
 
 type updatingDocker struct {
@@ -15,6 +16,118 @@ type updatingDocker struct {
 	unchanged bool
 	verifyErr error
 	stopErr   error
+}
+
+type snippetServiceRoutes struct {
+	*fakeRoutes
+	live   string
+	writes []string
+}
+
+func (r *snippetServiceRoutes) Ensure(_ context.Context, p model.Project) error {
+	if string(runtime.Snippet(p, p.Active)) != r.live {
+		return model.Uncertain("ROUTE_DIVERGED")
+	}
+	return nil
+}
+func (r *snippetServiceRoutes) Set(ctx context.Context, p model.Project, slot string) error {
+	r.live = string(runtime.Snippet(p, slot))
+	r.writes = append(r.writes, r.live)
+	return r.fakeRoutes.Set(ctx, p, slot)
+}
+
+func assignedServiceFixture(t *testing.T) (*Engine, model.Job, *updatingDocker, *snippetServiceRoutes, *[]string) {
+	e, j, d, r, events := serviceFixture(t, "seamless")
+	old := j.Input.Previous
+	old.Mode = "compose"
+	old.Domains = []string{"api.example.com", "web.example.com"}
+	old.ServiceRoutes = []model.ServiceRoute{
+		{Service: "api", ContainerPort: 8080, HostPort: 3002, Domains: []string{"api.example.com"}},
+		{Service: "web", ContainerPort: 3000, HostPort: 3001, Domains: []string{"web.example.com"}},
+	}
+	old.ServiceInstances = map[string]model.ServiceInstance{"web": {Name: "dy-web-existing", Port: 3011, ContainerPort: 3000}}
+	old.ServicePorts = []int{3010, 3011}
+	next := *old
+	next.ServiceInstances = map[string]model.ServiceInstance{"web": old.ServiceInstances["web"]}
+	j.Input.Project = &next
+	plan := j.Input.ServiceUpdate
+	plan.Service = "api"
+	plan.Previous.Name, plan.Previous.Port = "api", 3002
+	plan.Instance.ContainerPort = 8080
+	if err := e.Store.Update(j, old); err != nil {
+		t.Fatal(err)
+	}
+	routes := &snippetServiceRoutes{fakeRoutes: r, live: string(runtime.Snippet(*old, old.Active))}
+	e.Routes = routes
+	return e, j, d, routes, events
+}
+
+func TestAssignedServiceCutoverAndRollbackPreserveSiblingReplacement(t *testing.T) {
+	for _, rollback := range []bool{false, true} {
+		t.Run(map[bool]string{false: "success", true: "rollback"}[rollback], func(t *testing.T) {
+			e, j, d, r, events := assignedServiceFixture(t)
+			before := r.live
+			if rollback {
+				d.failCheck = 3
+			}
+			e.execute(context.Background(), j)
+			done, _ := e.Store.Job(j.ID)
+			p, _ := e.Store.Project(j.ProjectID)
+			if len(r.writes) == 0 || !strings.Contains(r.writes[0], "api.example.com {\n\treverse_proxy 127.0.0.1:3010") || !strings.Contains(r.writes[0], "web.example.com {\n\treverse_proxy 127.0.0.1:3011") {
+				t.Fatal("cutover changed sibling", r.writes)
+			}
+			if p.ServiceInstances["web"].Name != "dy-web-existing" {
+				t.Fatal("lost sibling instance", p)
+			}
+			order := strings.Join(*events, ",")
+			if strings.Contains(order, "stop-service:dy-web-existing") || strings.Contains(order, "postgres") {
+				t.Fatal("retired sibling", order)
+			}
+			if rollback {
+				if done.Status != "failed" || done.Error != "SERVICE_UNHEALTHY_ROLLED_BACK" || r.live != before || len(p.ServiceInstances) != 1 || strings.Contains(order, "stop-service:api") {
+					t.Fatal(done, p, order, r.live)
+				}
+			} else if done.Status != "succeeded" || p.ServiceInstances["api"].ContainerPort != 8080 || !strings.HasSuffix(order, "stop-service:api") {
+				t.Fatal(done, p, order)
+			}
+		})
+	}
+}
+
+func TestAssignedServiceRecoveryObservesEachBinding(t *testing.T) {
+	for _, live := range []string{"old", "new", "unknown"} {
+		t.Run(live, func(t *testing.T) {
+			e, j, _, r, events := assignedServiceFixture(t)
+			j.Input.ServiceUpdate.Instance.Release.Image = "new-image"
+			j.Input.Project.ServiceInstances["api"] = j.Input.ServiceUpdate.Instance
+			j.Status, j.Phase = "recovery_required", "service_route_intent"
+			if live == "new" {
+				r.live = string(runtime.Snippet(*j.Input.Project, j.Input.Project.Active))
+			}
+			if live == "unknown" {
+				r.live = "unknown"
+			}
+			e.Store.Update(j, nil)
+			err := e.Reconcile(context.Background(), j.ID)
+			order := strings.Join(*events, ",")
+			if live == "unknown" {
+				if err == nil || order != "" {
+					t.Fatal("guessed traffic", err, order)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, _ := e.Store.Project(j.ProjectID)
+			if p.ServiceInstances["web"].Name != "dy-web-existing" || strings.Contains(order, "dy-web-existing") {
+				t.Fatal("recovery touched sibling", p, order)
+			}
+			if live == "new" && !strings.HasSuffix(order, "stop-service:api") || live == "old" && order != "stop-service:dy-update-candidate" {
+				t.Fatal("retired wrong instance", order)
+			}
+		})
+	}
 }
 
 func (d *updatingDocker) VerifyServiceUpdate(context.Context, model.Project, model.ServiceUpdate) error {

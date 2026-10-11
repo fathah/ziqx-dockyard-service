@@ -40,6 +40,8 @@ function explain(error: unknown) {
     SERVICE_IMAGE_REQUIRED:
       "This service is built locally. Use Edit & deploy to rebuild it.",
     SERVICE_DOMAIN_REQUIRED: "Assign a domain before using Seamless updates.",
+    SERVICE_ROUTE_MISMATCH:
+      "Use the container port assigned to this service's domains, then review again.",
     CADDY_UNAVAILABLE:
       "Dockyard cannot read Caddy’s live configuration to verify the traffic switch. Check its private admin connection on the server, then review again.",
     CADDY_CONFIG_WRITE_REQUIRED:
@@ -84,12 +86,21 @@ export default function ServiceUpdate({
   );
   const [port, setPort] = useState(
     String(
-      project.route_service === service.name
-        ? (project.route_port ?? "")
-        : (service.container_ports?.[0] ?? ""),
+      project.service_routes?.find((route) => route.service === service.name)
+        ?.container_port ??
+        (project.published_route?.service === service.name
+          ? project.published_route.container_port
+          : project.route_service === service.name
+            ? (project.route_port ?? "")
+            : (service.container_ports?.[0] ?? "")),
     ),
   );
-  const [path, setPath] = useState(project.readiness_path ?? "");
+  const [path, setPath] = useState(
+    project.service_instances?.[service.name]?.readiness_path ??
+      (project.route_service === service.name
+        ? (project.readiness_path ?? "")
+        : ""),
+  );
   const [checked, setChecked] = useState<{
     key: string;
     review: api.ServiceUpdateReview;

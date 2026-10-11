@@ -28,7 +28,13 @@ export type Project = {
   service_updates?: boolean;
   service_instances?: Record<
     string,
-    { name: string; port?: number; release: Release }
+    {
+      name: string;
+      port?: number;
+      container_port?: number;
+      readiness_path?: string;
+      release: Release;
+    }
   >;
   id: string;
   app_id: string;

@@ -211,6 +211,8 @@ type ServiceInfo struct {
 // immutable manifest is separate so pulls cannot recreate sibling services.
 type ServiceInstance struct {
 	Name           string              `json:"name"`
+	ContainerPort  int                 `json:"container_port,omitempty"`
+	ReadinessPath  string              `json:"readiness_path,omitempty"`
 	ContainerID    string              `json:"container_id,omitempty"`
 	Release        Release             `json:"release"`
 	Port           int                 `json:"port,omitempty"`

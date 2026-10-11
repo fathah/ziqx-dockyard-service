@@ -5,6 +5,7 @@ compile_error!("Dockyard Desktop currently requires macOS Keychain and LocalAuth
 mod native;
 mod auth_window;
 mod credential_cache;
+mod domain_https;
 mod protocol;
 mod providers;
 mod setup;
@@ -738,6 +739,40 @@ async fn pending_info(c: State<'_, Control>) -> Result<Value, String> {
     Ok(s.saved.pending.as_ref().map(|p| json!({"project":p.operation.project,"action":p.operation.action,"request_id":p.operation.request_id,"idempotency":p.operation.idempotency,"job_id":p.job_id})).unwrap_or(Value::Null))
 }
 #[tauri::command]
+async fn check_domain_https(
+    c: State<'_, Control>,
+    project: String,
+    hostname: String,
+) -> Result<domain_https::Check, String> {
+    let op = read_op(&Read::Project {
+        project,
+        view: "domains".into(),
+    })?;
+    let generation = {
+        let mut inner = c.inner.lock().await;
+        let s = session(&mut inner)?;
+        let data = send(s, &op).await?;
+        if !domain_https::assigned(&data, &hostname) {
+            return Err("DOMAIN_NOT_ASSIGNED".into());
+        }
+        s.generation
+    };
+    if generation != c.generation.load(Ordering::SeqCst) {
+        return Err("SESSION_LOCKED".into());
+    }
+    let checked = tokio::time::timeout(
+        Duration::from_secs(12),
+        tauri::async_runtime::spawn_blocking(move || domain_https::check(&hostname)),
+    )
+    .await
+    .map_err(|_| "HTTPS_CHECK_TIMEOUT")?
+    .map_err(|_| "HTTPS_CHECK_FAILED")?;
+    if generation != c.generation.load(Ordering::SeqCst) {
+        return Err("SESSION_LOCKED".into());
+    }
+    Ok(checked)
+}
+#[tauri::command]
 async fn read_api(c: State<'_, Control>, read: Read) -> Result<Value, String> {
     let op = read_op(&read)?;
     let mut inner = c.inner.lock().await;
@@ -1417,6 +1452,7 @@ fn main() {
             lock_session,
             forget_device,
             read_api,
+            check_domain_https,
             preview_blue_green,
             preview_service_update,
             preview_route_setup,

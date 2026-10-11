@@ -7,6 +7,7 @@ fn main() {
             "lock_session",
             "forget_device",
             "read_api",
+            "check_domain_https",
             "preview_blue_green",
             "preview_service_update",
             "preview_route_setup",

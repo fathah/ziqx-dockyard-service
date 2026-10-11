@@ -48,8 +48,10 @@ export default function ServerRepair({
             <>
               {review.preserved_domains?.length ? (
                 <p>
-                  Keep running sites: {review.preserved_domains.join(", ")}.
-                  These routes will be saved before Caddy reloads.
+                  Restore running-only sites to the Caddyfile:{" "}
+                  {review.preserved_domains.join(", ")}.
+                  These sites are still active but missing from the saved file.
+                  This repair restores their rules, then reloads Caddy.
                 </p>
               ) : null}
               <details>
@@ -72,7 +74,9 @@ export default function ServerRepair({
                     : review.changed_sections?.join(", ") || "none"}
                   <br />
                   {review.reloads_caddy
-                    ? "The saved configuration becomes active. "
+                    ? review.preserved_domains?.length
+                      ? "The saved configuration and restored sites become active. "
+                      : "The saved configuration becomes active. "
                     : ""}
                   Dockyard keeps a private backup.
                 </p>

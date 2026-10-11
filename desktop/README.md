@@ -4,10 +4,10 @@ A Tauri 2 desktop control room with a Rust API client and a bundled React interf
 
 ## Run on this Mac
 
-The latest local Apple Silicon app is in `releases/dockyard-caddy-transfer/Dockyard.app`. It includes per-service domain connections, automatic container-port detection, Cloudflare subdomains with the enrolled server IP, and reviewed Caddy/Docker repairs. Its bundled VPS service is **0.7.21**; install it through **Server details → Updates**. From the repository root:
+The latest local Apple Silicon app is in `releases/dockyard-service-seamless/Dockyard.app`. It includes per-service domain connections, automatic container-port detection, Cloudflare subdomains with the enrolled server IP, and reviewed Caddy/Docker repairs. Route sync recovers supported active site rules, including proxy load balancing, health checks and keepalive, and verifies their equivalence before reloading. The repair transport streams scripts over SSH rather than placing them in oversized command requests. Each eligible production service with assigned domains can switch traffic independently. Domain rows offer **Check HTTPS** to verify the public certificate and report the HTTP status from this Mac. Its bundled VPS service is **0.7.22**; install it through **Server details → Updates**. From the repository root:
 
 ```sh
-open desktop/releases/dockyard-caddy-transfer/Dockyard.app
+open desktop/releases/dockyard-service-seamless/Dockyard.app
 ```
 
 Quit any previously opened Dockyard instance first so the single-instance guard does not bring an older build to the foreground. This local artifact uses an ad-hoc signature; it is not notarized for distribution.
@@ -123,7 +123,7 @@ The desktop uses the existing certificate-pinned mTLS + HMAC API protocol. It do
 - Projects: search/filter and page through application flavors; create a Compose project with development, staging or production and optional domains. Use **Add flavor** on a project to create another environment under the same application identity. Port allocation is automatic; **Check next available port** is advisory, not a reservation.
 - Deploy Compose: after creation succeeds, open the project and choose **Deploy Compose**. Import or paste Compose and `.env` in Configuration, then **Deploy all services**. Every service, including profile services, is included. Each flavor keeps its own files under `/docker/<project-id>`. See [Compose deployments](../docs/COMPOSE.md).
 - Production supports stateless blue-green stacks. Dev/staging always use one slot. Persistent volumes require a single-instance production project. New projects accept ordinary Compose and `.env` without templates or required digests. Enable Compose management in Server details after updating an older VPS. This action requires root SSH and Touch ID.
-- Inspect live status separately from recorded state, browse release/service metadata, read bounded container logs by service/slot, and start/restart/stop/rollback services. Stop requires typing the exact project ID. Public TLS remains explicitly unverified by this API.
+- Inspect live status separately from recorded state, browse release/service metadata, read bounded container logs by service/slot, and start/restart/stop/rollback services. Stop requires typing the exact project ID. The VPS API does not claim public TLS verification. **Domains → Check HTTPS** verifies the assigned hostname from this Mac with ordinary certificate chain, hostname and expiry checks. It uses a credential-free HEAD request, pins public DNS answers, and follows no redirects. HTTP error statuses remain visible even when TLS is valid. Results are local, dated checks and reset when routing changes; they do not prove origin health behind a Cloudflare proxy.
 - Domains: edit managed Caddy assignments and optional ports, then create Cloudflare DNS for an assigned hostname in the project detail. The VPS selects the permitted zone and origin. Manual Caddy sites appear in read-only inventory.
 - Inventory: existing directories are observed into SQLite every five minutes. **Migrate Now** reviews live Compose/container identities and, with Touch ID, adopts the stack in place on VPS service 0.4.0 or later. It snapshots Compose and .env privately, preserves running containers, volumes, published ports and existing Caddy routes, and enables deployments, lifecycle controls and logs. Redeployments use a single instance; existing Caddy routes remain externally maintained. See [migration details](../docs/LEGACY_MIGRATION.md).
 - Deployments: tracks the newest ten jobs started by this Mac, retains up to 100 job IDs in Keychain, and supports job lookup by ID. This API has no global jobs-list endpoint. Audit reads the server's paginated event log.
@@ -148,9 +148,23 @@ Existing published bindings keep containers in place. Missing bindings require
 a reviewed controlled deployment. The transfer validates the combined Caddy
 configuration and checks that unrelated routes remain equivalent before reload.
 Imported rules are retained on future route generation and repair. Saved/live
-route repair preserves running-only plain HTTPS local-proxy sites and redirects; every reload
-repair refuses to remove existing running hostnames. Unsupported running-only
-custom sites block sync instead of being erased.
+route repair recovers supported running-only HTTPS sites, retaining headers,
+compression, basic authentication, responses, redirects and supported proxy
+headers/transports, load-balancing policies and retries, active/passive health
+checks, keepalive, buffering, streaming timeouts, trusted proxies and request
+rewrites. It adapts a temporary candidate and compares the complete
+active handler chains, listeners, server settings and certificate policies before
+offering approval, then checks again before reload. Every reload repair refuses
+to remove existing running hostnames. Unsupported rules identify their domain
+and unsupported field names (without private values) and block sync instead of
+being erased. The review explicitly lists still-running sites that will be
+restored to the saved Caddyfile; pending manual deletions are not applied by
+route sync. The expanded repair runs
+from the updated desktop app. Per-service seamless rollouts require the bundled VPS service **0.7.22**.
+Access checks, repair previews and detached worker launch/status send script
+source through SSH stdin, retaining bounded responses, timeouts and argument
+validation. A disposable OpenSSH test reproduces the former oversized exec
+failure and exercises streamed previews and the detached worker result.
 
 ## Security boundaries and production signing
 

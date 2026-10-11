@@ -3,6 +3,7 @@ import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import ServiceUpdate from "../src/ServiceUpdate";
+import DomainHTTPS from "../src/DomainHTTPS";
 import type { Project, Service } from "../src/types";
 import "../src/style.css";
 
@@ -18,7 +19,21 @@ const project: Project = {
   environment: "production",
   mode: "compose",
   template_id: "",
-  domains: ["shop.example.com"],
+  domains: ["shop.example.com", "api.shop.example.com"],
+  service_routes: [
+    {
+      service: "web",
+      container_port: 3000,
+      host_port: 4100,
+      domains: ["shop.example.com"],
+    },
+    {
+      service: "api",
+      container_port: 8080,
+      host_port: 4101,
+      domains: ["api.shop.example.com"],
+    },
+  ],
   zerodowntime: false,
   blue_port: 4100,
   active_slot: "blue",
@@ -29,6 +44,16 @@ const project: Project = {
   route_port: 3000,
 };
 const services: Service[] = [
+  {
+    name: "api",
+    image: "example/api:latest",
+    slot: "blue",
+    template_id: "",
+    environment_revision: "env-original",
+    updatable: true,
+    seamless: true,
+    container_ports: [8080],
+  },
   {
     name: "web",
     image: "example/shop:latest",
@@ -52,6 +77,20 @@ const services: Service[] = [
   },
 ];
 mockIPC((command, payload: any) => {
+  if (command === "check_domain_https") {
+    if (
+      payload.project !== project.id ||
+      !project.domains.includes(payload.hostname)
+    )
+      throw new Error("DOMAIN_NOT_ASSIGNED");
+    return {
+      state: new URLSearchParams(location.search).has("invalid_certificate")
+        ? "invalid_certificate"
+        : "verified",
+      http_status: 200,
+      checked_at: Math.floor(Date.now() / 1000),
+    };
+  }
   if (command !== "preview_service_update")
     throw new Error("Unexpected native operation: " + command);
   const { data } = payload;
@@ -78,7 +117,9 @@ mockIPC((command, payload: any) => {
     review_sha256: "a".repeat(64),
     service: data.service,
     mode: data.mode,
-    domains: project.domains,
+    domains:
+      project.service_routes?.find((route) => route.service === data.service)
+        ?.domains ?? [],
     container_port: data.container_port ?? 0,
     host_port: data.mode === "seamless" ? 4104 : 0,
     imports_routes: false,
@@ -97,7 +138,7 @@ function Fixture() {
       <section className="panel">
         <div className="section-heading">
           <h2>Services</h2>
-          <span className="tag">2 services</span>
+          <span className="tag">3 services</span>
         </div>
         <p className="muted">
           Update one service at a time. Its dependencies keep running.
@@ -119,6 +160,22 @@ function Fixture() {
             >
               Pull & update {service.name}
             </button>
+          </div>
+        ))}
+      </section>
+      <section className="panel">
+        <h2>Domains</h2>
+        {project.domains.map((hostname) => (
+          <div className="domain-row" key={hostname}>
+            <div>
+              <strong>{hostname}</strong>
+              <DomainHTTPS
+                project={project.id}
+                hostname={hostname}
+                revision="fixture"
+                disabled={false}
+              />
+            </div>
           </div>
         ))}
       </section>

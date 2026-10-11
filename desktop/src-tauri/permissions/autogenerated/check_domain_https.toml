@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-check-domain-https"
+description = "Enables the check_domain_https command without any pre-configured scope."
+commands.allow = ["check_domain_https"]
+
+[[permission]]
+identifier = "deny-check-domain-https"
+description = "Denies the check_domain_https command without any pre-configured scope."
+commands.deny = ["check_domain_https"]

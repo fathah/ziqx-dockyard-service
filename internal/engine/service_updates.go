@@ -28,8 +28,8 @@ func (e *Engine) updateService(ctx context.Context, j *model.Job, p *model.Proje
 	if !reflect.DeepEqual(*p, old) {
 		return model.Fail("SERVICE_REVIEW_CHANGED")
 	}
-	// Admission reserved these ports. Retain the pair even when pulling or
-	// readiness fails, so a retry never consumes another pair from the pool.
+	// Admission reserved these ports. Retain the reusable pool even when
+	// pulling or readiness fails; sibling replacements can share free entries.
 	p.ServicePorts = next.ServicePorts
 	if err := e.Store.Update(*j, p); err != nil {
 		return model.Uncertain("STATE_WRITE_FAILED")

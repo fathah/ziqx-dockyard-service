@@ -151,6 +151,71 @@ func TestServiceCandidateKeepsDatabaseAndUsesExistingNetwork(t *testing.T) {
 	}
 }
 
+func TestServiceRoutesEnableEachServiceAndKeepItsOwnCandidatePort(t *testing.T) {
+	d, p, runner := runtimeServiceFixture(t)
+	p.RouteService, p.RoutePort, p.BluePort = "", 0, 0
+	p.Domains = []string{"api.example.com", "web.example.com"}
+	p.ServiceRoutes = []model.ServiceRoute{
+		{Service: "web", ContainerPort: 3000, HostPort: 3001, Domains: []string{"web.example.com"}},
+		{Service: "api", ContainerPort: 8080, HostPort: 3002, Domains: []string{"api.example.com"}},
+	}
+	runner.doc = strings.Replace(runner.doc, `"postgres":{"image"`, `"api":{"image":"example/api:latest","healthcheck":{"test":["CMD","true"]},"ports":[{"target":8080,"published":"3002"}],"networks":{"default":{}}},"postgres":{"image"`, 1)
+	release, err := d.PrepareNative(context.Background(), p, "services: supplied", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Slots["blue"] = release
+	p.Releases = []model.Release{release}
+	api := runner.containers["web"]
+	api.ID = strings.Repeat("b", 64)
+	api.Config.Labels = map[string]string{"com.docker.compose.project": d.composeName(p, p.Active), "com.docker.compose.service": "api", "io.ziqx.dockyard.server": d.Config.ServerID, "io.ziqx.dockyard.project": p.ID}
+	api.NetworkSettings.Ports = map[string][]struct{ HostIP, HostPort string }{"8080/tcp": {{HostIP: "127.0.0.1", HostPort: "3002"}}}
+	runner.containers["api"] = api
+	options, err := ServiceUpdateOptions(d.Config, p)
+	if err != nil || !options["api"].Seamless || !options["web"].Seamless || options["postgres"].Seamless || !strings.Contains(options["postgres"].Reason, "storage") {
+		t.Fatal(options, err)
+	}
+	plan, err := d.PlanServiceUpdate(context.Background(), p, "api", "seamless", 8080, 3010, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = d.PullServiceUpdate(context.Background(), p, &plan); err != nil {
+		t.Fatal(err)
+	}
+	_, raw, err := nativeRelease(d.Config, p, plan.Instance.Release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	json.Unmarshal(raw, &doc)
+	ports := array(object(object(doc["services"])[plan.Instance.Name])["ports"])
+	if len(object(doc["services"])) != 1 || object(ports[0])["target"] != float64(8080) {
+		t.Fatal("candidate used primary or sibling port", string(raw))
+	}
+	candidate := api
+	candidate.ID = strings.Repeat("c", 64)
+	candidate.Config.Labels = map[string]string{"com.docker.compose.project": d.composeName(p, p.Active), "com.docker.compose.service": plan.Instance.Name, "io.ziqx.dockyard.server": d.Config.ServerID, "io.ziqx.dockyard.project": p.ID}
+	candidate.Image = plan.Instance.Release.Image
+	candidate.NetworkSettings.Ports = map[string][]struct{ HostIP, HostPort string }{"8080/tcp": {{HostIP: "127.0.0.1", HostPort: "3010"}}}
+	runner.containers[plan.Instance.Name] = candidate
+	p.ServiceInstances = map[string]model.ServiceInstance{"api": plan.Instance}
+	if err = d.HealthyServiceUpdate(context.Background(), p, plan); err != nil {
+		t.Fatal("readiness used sibling's port", err)
+	}
+	snippet := string(Snippet(p, p.Active))
+	if !strings.Contains(snippet, "api.example.com {\n\treverse_proxy 127.0.0.1:3010") || !strings.Contains(snippet, "web.example.com {\n\treverse_proxy 127.0.0.1:3001") {
+		t.Fatal("cutover changed sibling route", snippet)
+	}
+	p.ServiceInstances["web"] = model.ServiceInstance{Port: 3011}
+	snippet = string(Snippet(p, p.Active))
+	if !strings.Contains(snippet, "127.0.0.1:3010") || !strings.Contains(snippet, "127.0.0.1:3011") {
+		t.Fatal("second service overwrote first", snippet)
+	}
+	if _, err = d.PlanServiceUpdate(context.Background(), p, "api", "seamless", 3000, 3012, ""); err == nil || err.Error() != "SERVICE_ROUTE_MISMATCH" {
+		t.Fatal("accepted sibling container port", err)
+	}
+}
+
 func TestServiceUpdateRejectsStorageAndChangedNetworksBeforeMutation(t *testing.T) {
 	for _, scenario := range []string{"writable-mount", "image-volume", "network-replaced", "container-replaced", "same-image", "wrong-owner", "missing-health"} {
 		t.Run(scenario, func(t *testing.T) {

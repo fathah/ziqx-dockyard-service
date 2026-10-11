@@ -4105,3 +4105,11 @@ div.configuration-note p {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.domain-https {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 13px;
+}

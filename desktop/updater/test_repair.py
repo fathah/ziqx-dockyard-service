@@ -31,6 +31,8 @@ class RepairTests(unittest.TestCase):
             if args[0] == 'systemctl':
                 return (not (args[1] == 'is-active' and args[-1].startswith('dockyard-repair-')), b'')
             if args[1] == 'adapt':
+                if Path(args[args.index('--config') + 1]).name.startswith('.dockyard-review-'):
+                    return True, json.dumps(self.after_reload).encode()
                 return True, json.dumps(self.saved).encode()
             if args[1] == 'validate':
                 return self.validation, b''
@@ -132,7 +134,7 @@ class RepairTests(unittest.TestCase):
     def test_service_routes_are_not_duplicated_during_repair(self):
         value = repair.snippet({'state': 'running', 'active_slot': 'blue', 'blue_port': 3001,
                                 'domains': ['www.example.com', 'api.example.com'],
-                                'service_routes': [{'domains': ['api.example.com'], 'host_port': 3002}]})
+                                'service_routes': [{'service': 'api', 'domains': ['api.example.com'], 'host_port': 3002}]})
         self.assertEqual(value.count(b'api.example.com {'), 1)
         self.assertIn(b'reverse_proxy 127.0.0.1:3002', value)
 
@@ -143,10 +145,26 @@ class RepairTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             repair.result_path('../config')
 
+    def test_repair_keeps_each_service_replacement_and_custom_rules(self):
+        project = {'state': 'running', 'active_slot': 'blue', 'blue_port': 3001,
+                   'domains': ['api.example.com', 'web.example.com'],
+                   'service_routes': [
+                       {'service': 'api', 'domains': ['api.example.com'], 'host_port': 3002},
+                       {'service': 'web', 'domains': ['web.example.com'], 'host_port': 3001}],
+                   'service_instances': {'api': {'port': 3010}, 'web': {'port': 3011}},
+                   'caddy_routes': [{'domain': 'api.example.com', 'address': 'api.example.com',
+                                     'body': '\n header X-Site yes\n reverse_proxy {dockyard.upstream}\n'}]}
+        value = repair.snippet(project)
+        self.assertIn(b'header X-Site yes', value)
+        self.assertIn(b'reverse_proxy 127.0.0.1:3010', value)
+        self.assertIn(b'web.example.com {\n\treverse_proxy 127.0.0.1:3011', value)
+        self.assertNotIn(b'127.0.0.1:3002', value)
+        self.assertNotIn(b'127.0.0.1:3001', value)
+
     def test_imported_custom_rules_survive_generated_route_repair(self):
         value = repair.snippet({'state': 'running', 'active_slot': 'blue', 'blue_port': 3001,
                                 'domains': ['api.example.com'],
-                                'service_routes': [{'domains': ['api.example.com'], 'host_port': 3002}],
+                                'service_routes': [{'service': 'api', 'domains': ['api.example.com'], 'host_port': 3002}],
                                 'caddy_routes': [{'domain': 'api.example.com', 'address': 'api.example.com',
                                                   'body': '\n header X-Site yes\n reverse_proxy {dockyard.upstream}\n'}]})
         self.assertIn(b'header X-Site yes', value)
@@ -158,20 +176,112 @@ class RepairTests(unittest.TestCase):
             {'match': [{'host': ['ziqx.cc', 'www.ziqx.cc']}], 'handle': [{'handler': 'subroute', 'routes': [
                 {'handle': [{'handler': 'reverse_proxy', 'upstreams': [{'dial': '127.0.0.1:3000'}]}]}]}], 'terminal': True}
         ]}}}}}
+        self.after_reload = self.observed
         preview, _, files, _ = repair.plan('caddy_coherence')
         self.assertEqual(preview['preserved_domains'], ['www.ziqx.cc', 'ziqx.cc'])
-        self.assertIn(b'ziqx.cc {\n\treverse_proxy 127.0.0.1:3000', files[self.caddyfile])
+        self.assertIn(b'ziqx.cc {\n\troute {\n\t\treverse_proxy "127.0.0.1:3000"', files[self.caddyfile])
         self.assertIn(b'app.example.com', files[self.caddyfile])
         self.assertNotIn('stop', [call[1] for call in self.calls if call[0] == 'systemctl'])
 
     def test_sync_refuses_to_erase_running_only_custom_site(self):
         self.observed = {'apps': {'http': {'servers': {'srv0': {'listen': [':443'], 'routes': [
-            {'match': [{'host': ['ziqx.cc']}], 'handle': [{'handler': 'static_response', 'body': 'private'}]}
+            {'match': [{'host': ['ziqx.cc']}], 'handle': [{'handler': 'file_server', 'hide': ['private']} ]}
         ]}}}}}
         original = self.caddyfile.read_bytes()
         with self.assertRaisesRegex(ValueError, 'will not remove'):
             repair.plan('caddy_coherence')
         self.assertEqual(self.caddyfile.read_bytes(), original)
+
+    def test_sync_identifies_unsupported_domains_and_handler_without_secrets(self):
+        current = {'apps': {'http': {'servers': {'srv0': {'listen': [':443'], 'routes': [
+            {'match': [{'host': ['ziqx.cc']}], 'handle': [{'handler': 'file_server', 'hide': ['private-secret']} ]}
+        ]}}}}}
+        with self.assertRaisesRegex(ValueError, 'ziqx.cc: file_server rules') as caught:
+            repair.live_only_sites({}, current)
+        self.assertNotIn('private-secret', str(caught.exception))
+
+    def test_sync_preserves_headers_compression_and_proxy_request_headers(self):
+        handlers = [{'handler': 'headers', 'response': {'set': {'X-Site': ['yes']}}},
+                    {'handler': 'encode', 'encodings': {'gzip': {}}, 'prefer': ['gzip']},
+                    {'handler': 'reverse_proxy', 'upstreams': [{'dial': 'localhost:3000'}],
+                     'headers': {'request': {'set': {'X-Forwarded-Host': ['{http.request.host}']}}}}]
+        current = {'apps': {'http': {'servers': {'srv0': {'listen': [':443'], 'routes': [
+            {'match': [{'host': ['ziqx.cc']}], 'handle': [{'handler': 'subroute', 'routes': [
+                {'handle': [handler]} for handler in handlers]}], 'terminal': True}
+        ]}}}}}
+        source, names = repair.live_only_sites({}, current)
+        self.assertEqual(names, ['ziqx.cc'])
+        for expected in ('header {', '"X-Site" "yes"', 'encode gzip', 'header_up "X-Forwarded-Host"', 'reverse_proxy "localhost:3000"'):
+            self.assertIn(expected, source)
+        wrapped = json.loads(json.dumps(current))
+        wrapped['apps']['http']['servers']['srv0']['routes'][0]['handle'] = [{'handler': 'subroute', 'routes': [
+            {'handle': [{'handler': 'subroute', 'routes': [{'handle': handlers}]}]}]}]
+        repair.verify_recovered_sites(current, wrapped, names)
+        wrapped['apps']['http']['servers']['srv0']['routes'][0]['handle'][0]['routes'][0]['handle'][0]['routes'][0]['handle'] = handlers[1:]
+        with self.assertRaisesRegex(ValueError, 'preserve all active rules for ziqx.cc'):
+            repair.verify_recovered_sites(current, wrapped, names)
+
+    def test_proxy_recovery_names_unsupported_fields_without_values(self):
+        proxy = {'handler': 'reverse_proxy', 'upstreams': [{'dial': 'localhost:3000'}]}
+        cases = [
+            ({'dynamic_upstreams': {'source': 'private-secret'}}, 'reverse_proxy unsupported fields: dynamic_upstreams'),
+            ({'load_balancing': {'selection_policy': {'policy': 'cookie', 'secret': 'private-secret', 'unknown': 'private-secret'}}}, 'selection_policy unsupported fields: unknown'),
+            ({'health_checks': {'active': {'max_size': 123}}}, 'health_checks.active unsupported fields: max_size'),
+            ({'transport': {'protocol': 'http', 'network_proxy': {'from': 'private-secret'}}}, 'transport unsupported fields: network_proxy'),
+        ]
+        for extra, message in cases:
+            with self.subTest(message=message):
+                current = {'apps': {'http': {'servers': {'srv0': {'listen': [':443'], 'routes': [
+                    {'match': [{'host': ['ziqx.cc']}], 'handle': [{**proxy, **extra}], 'terminal': True}
+                ]}}}}}
+                with self.assertRaisesRegex(ValueError, message) as caught:
+                    repair.live_only_sites({}, current)
+                self.assertNotIn('private-secret', str(caught.exception))
+
+    def test_proxy_recovery_equivalence_keeps_retry_health_and_trust_rules(self):
+        proxy = {'handler': 'reverse_proxy', 'upstreams': [{'dial': 'localhost:3000'}],
+                 'load_balancing': {'retries': 3}, 'health_checks': {'passive': {'max_fails': 2}},
+                 'trusted_proxies': ['192.0.2.0/24'], 'stream_timeout': 1000000000,
+                 'transport': {'protocol': 'http', 'keep_alive': {'idle_timeout': 30000000000}}}
+        current = {'apps': {'http': {'servers': {'srv0': {'listen': [':443'], 'routes': [
+            {'match': [{'host': ['ziqx.cc']}], 'handle': [proxy], 'terminal': True}
+        ]}}}}}
+        repair.verify_recovered_sites(current, current, ['ziqx.cc'])
+        for field in ('load_balancing', 'health_checks', 'trusted_proxies', 'stream_timeout', 'transport'):
+            changed = json.loads(json.dumps(current))
+            del changed['apps']['http']['servers']['srv0']['routes'][0]['handle'][0][field]
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, 'preserve all active rules for ziqx.cc'):
+                repair.verify_recovered_sites(current, changed, ['ziqx.cc'])
+
+    def test_response_normalization_preserves_order_matchers_and_terminal_flags(self):
+        headers = {'handler': 'headers', 'response': {'set': {'X-Guard': ['yes']}}}
+        response = {'handler': 'static_response', 'body': 'unavailable', 'status_code': 503}
+        original = [{'handler': 'reverse_proxy', 'handle_response': [{'match': {'status_code': [5]}, 'routes': [
+            {'handle': [headers]}, {'handle': [response]}
+        ]}]}]
+        wrapped = json.loads(json.dumps(original))
+        wrapped[0]['handle_response'][0]['routes'] = [{'handle': [{'handler': 'subroute', 'routes': [{'handle': [headers, response]}]}]}]
+        self.assertEqual(repair.normalized_handlers(original), repair.normalized_handlers(wrapped))
+        for routes in ([{'handle': [response, headers]}], [{'handle': [headers, response], 'terminal': True}],
+                       [{'match': [{'path': ['/api/*']}], 'handle': [headers, response]}], [{'handle': [response]}]):
+            changed = json.loads(json.dumps(original))
+            changed[0]['handle_response'][0]['routes'] = routes
+            self.assertNotEqual(repair.normalized_handlers(original), repair.normalized_handlers(changed))
+        self.assertEqual(len(original[0]['handle_response'][0]['routes']), 2)
+
+    def test_recovery_verification_blocks_lost_auth_or_tls_and_changes_no_file(self):
+        self.observed = {'apps': {'http': {'servers': {'srv0': {'listen': [':443'], 'routes': [
+            {'match': [{'host': ['ziqx.cc']}], 'handle': [{'handler': 'static_response', 'body': 'yes', 'status_code': 200}], 'terminal': True}
+        ]}}}}}
+        original = self.caddyfile.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'ziqx.cc'):
+            repair.plan('caddy_coherence')
+        self.assertEqual(self.caddyfile.read_bytes(), original)
+        self.assertFalse(list(self.root.glob('.dockyard-review-*')))
+        changed = json.loads(json.dumps(self.observed))
+        changed['apps']['http']['servers']['srv0']['tls_connection_policies'] = [{'client_authentication': {'mode': 'require_and_verify'}}]
+        with self.assertRaisesRegex(ValueError, 'ziqx.cc'):
+            repair.verify_recovered_sites(self.observed, changed, ['ziqx.cc'])
 
     def test_sync_keeps_running_only_www_redirect(self):
         current = {'apps': {'http': {'servers': {'srv0': {'listen': [':443'], 'routes': [

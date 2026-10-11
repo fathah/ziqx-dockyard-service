@@ -7,6 +7,13 @@ export const enroll = () => invoke<Session>("enroll");
 export const lock = () => invoke<void>("lock_session");
 export const forget = () => invoke<void>("forget_device");
 export const read = <T>(read: Read) => invoke<T>("read_api", { read });
+export type DomainHTTPSCheck = {
+  state: string;
+  http_status: number | null;
+  checked_at: number;
+};
+export const checkDomainHTTPS = (project: string, hostname: string) =>
+  invoke<DomainHTTPSCheck>("check_domain_https", { project, hostname });
 export const mutate = (mutation: unknown) =>
   invoke<{ job_id: string }>("mutate", { mutation });
 export const reconcileJob = (job: string) =>

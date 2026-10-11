@@ -150,6 +150,9 @@ func Snippet(p model.Project, slot string) []byte {
 				for _, host := range route.Domains {
 					if host == d {
 						port = route.HostPort
+						if instance := p.ServiceInstances[route.Service]; slot == p.Active && instance.Port > 0 {
+							port = instance.Port
+						}
 					}
 				}
 			}
