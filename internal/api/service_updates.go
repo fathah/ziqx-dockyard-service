@@ -173,9 +173,25 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 		return
 	}
 	approved := input.Review
+	if planner, ok := e.Docker.(interface {
+		PrepareServiceEnvironment(context.Context, model.Project, *model.ServiceUpdate) error
+	}); ok {
+		if !require(w, principal, "deploy.environment", id) {
+			return
+		}
+		if err = planner.PrepareServiceEnvironment(r.Context(), p, &plan); err != nil {
+			fail(w, err, request)
+			return
+		}
+	}
 	plan.PreparedImage = a.preparedImage(p, input.Service)
 	input.Review = ""
-	b, _ := json.Marshal([]any{input, p, next.ServicePorts, hostPort, plan.Previous, plan.NetworkAliases, plan.NetworkIDs, edits, plan.PreparedImage})
+	// Bind resolved environment contents, not the randomly named private .env.
+	environmentRevision := ""
+	if plan.SourceRelease != nil {
+		environmentRevision = plan.SourceRelease.Compose
+	}
+	b, _ := json.Marshal([]any{input, p, next.ServicePorts, hostPort, plan.Previous, plan.NetworkAliases, plan.NetworkIDs, edits, plan.PreparedImage, environmentRevision})
 	sum := sha256.Sum256(b)
 	review := hex.EncodeToString(sum[:])
 	if preview {

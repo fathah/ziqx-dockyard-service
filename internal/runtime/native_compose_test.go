@@ -84,15 +84,21 @@ services:
   worker:
     image: busybox:latest
     profiles: [background]
+    environment:
+      TAG: explicit-worker-tag
     command: [sleep, infinity]
   reports:
     image: busybox:latest
+    env_file: reports.env
     profiles: [reports]
     command: [sleep, infinity]
 volumes:
   data: {}
 `
 	dotenv := "TAG=alpine\nPASSWORD='a$HOME${NOT_SET}$$'\nCOMPOSE_PROFILES=background\n"
+	if err := os.WriteFile(filepath.Join(projectDir(c, p.ID), "reports.env"), []byte("REPORT_ONLY=selected\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	r, err := d.PrepareNative(context.Background(), p, source, dotenv)
 	if err != nil {
 		t.Fatal(err)
@@ -121,6 +127,12 @@ volumes:
 		svc := object(object(doc["services"])[name])
 		if svc == nil || svc["profiles"] != nil {
 			t.Fatalf("profile service %s is missing or still gated", name)
+		}
+		if name == "worker" && (object(svc["environment"])["PASSWORD"] != "a$HOME${NOT_SET}$$" || object(svc["environment"])["TAG"] != "explicit-worker-tag") {
+			t.Fatalf("default .env not passed literally to %s", name)
+		}
+		if name == "reports" && (object(svc["environment"])["PASSWORD"] != nil || object(svc["environment"])["REPORT_ONLY"] != "selected") {
+			t.Fatal("explicit service env_file was overridden")
 		}
 	}
 	b, err := ComposeMirror(c, p, r)

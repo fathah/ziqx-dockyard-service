@@ -384,7 +384,7 @@ func (d Docker) PullServiceUpdate(ctx context.Context, p model.Project, plan *mo
 	image = strings.ReplaceAll(image, "$$", "$")
 	base := model.ServiceInstance{Name: plan.Service, Release: r}
 	if plan.PreparedImage != "" {
-		if !imageDigest(plan.PreparedImage) || plan.SourceRelease != nil {
+		if !imageDigest(plan.PreparedImage) {
 			return false, model.Fail("IMAGE_IDENTITY_UNKNOWN")
 		}
 		image = plan.PreparedImage

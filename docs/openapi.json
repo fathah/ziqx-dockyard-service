@@ -2219,7 +2219,7 @@
         "operationId": "previewServiceUpdate",
         "summary": "Review individual service update",
         "tags": ["Deployments"],
-        "description": "Requires server-wide compose.admin. Restart updates only the selected service. Seamless requires production, a routed app, a healthcheck and safe concurrent versions; it preserves databases and dependencies, switches the reviewed Caddy route, drains requests and stops only the previous app. Use the current full Compose release ID. Preview makes no live changes. Execute requires the preview review hash and returns a durable service_update job. Unchanged image IDs skip deployment. Unknown outcomes require local recovery.",
+        "description": "Requires server-wide compose.admin. Restart updates only the selected service. Seamless requires production, a routed app, a healthcheck and safe concurrent versions; it preserves databases and dependencies, switches the reviewed Caddy route, drains requests and stops only the previous app. Use the current full Compose release ID. Preview makes no live changes. Execute requires the preview review hash and returns a durable service_update job. The latest saved Configuration .env is applied to the selected container; other draft Compose edits require a configuration deployment. Unchanged image IDs skip deployment only when the resolved container environment is also unchanged. Reviews bind the resolved environment and require deploy.environment. Unknown outcomes require local recovery.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -2261,7 +2261,7 @@
             "description": "Scope or Compose administrator permission missing"
           }
         },
-        "x-required-scopes": ["deploy.execute"],
+        "x-required-scopes": ["deploy.environment", "deploy.execute"],
         "requestBody": {
           "required": true,
           "content": {
@@ -2285,7 +2285,7 @@
         "operationId": "updateService",
         "summary": "Pull and update selected service",
         "tags": ["Deployments"],
-        "description": "Requires server-wide compose.admin. Restart updates only the selected service. Seamless requires production, a routed app, a healthcheck and safe concurrent versions; it preserves databases and dependencies, switches the reviewed Caddy route, drains requests and stops only the previous app. Use the current full Compose release ID. Preview makes no live changes. Execute requires the preview review hash and returns a durable service_update job. Unchanged image IDs skip deployment. Unknown outcomes require local recovery.",
+        "description": "Requires server-wide compose.admin. Restart updates only the selected service. Seamless requires production, a routed app, a healthcheck and safe concurrent versions; it preserves databases and dependencies, switches the reviewed Caddy route, drains requests and stops only the previous app. Use the current full Compose release ID. Preview makes no live changes. Execute requires the preview review hash and returns a durable service_update job. The latest saved Configuration .env is applied to the selected container; other draft Compose edits require a configuration deployment. Unchanged image IDs skip deployment only when the resolved container environment is also unchanged. Reviews bind the resolved environment and require deploy.environment. Unknown outcomes require local recovery.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -2327,7 +2327,7 @@
             }
           }
         },
-        "x-required-scopes": ["deploy.execute"],
+        "x-required-scopes": ["deploy.environment", "deploy.execute"],
         "requestBody": {
           "required": true,
           "content": {

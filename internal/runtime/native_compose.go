@@ -77,7 +77,13 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 		return r, model.Fail("COMPOSE_VALIDATION_FAILED")
 	}
 	for _, raw := range object(paths["services"]) {
-		for _, entry := range array(object(raw)["env_file"]) {
+		svc := object(raw)
+		// The project's .env is also the default container environment. An
+		// explicit env_file keeps the service's own environment selection.
+		if svc["env_file"] == nil {
+			svc["env_file"] = []any{map[string]any{"path": envPath(d.Config, p.ID, env), "required": true}}
+		}
+		for _, entry := range array(svc["env_file"]) {
 			file := object(entry)
 			if path, ok := file["path"].(string); ok && filepath.Clean(path) == filepath.Join(d.workingDir(p), ".env") {
 				file["path"] = envPath(d.Config, p.ID, env)

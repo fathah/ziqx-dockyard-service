@@ -279,7 +279,7 @@ impl ServiceUpdate {
         && (self.mode != "restart" || (self.container_port.is_none() && self.readiness_path.is_empty()))
     }
     pub fn scopes(&self) -> &'static str {
-        if self.mode == "seamless" { "deploy.execute projects.write sites.write" } else { "deploy.execute" }
+        if self.mode == "seamless" { "deploy.environment deploy.execute projects.write sites.write" } else { "deploy.environment deploy.execute" }
     }
 }
 fn is_false(value: &bool) -> bool { !value }
@@ -817,11 +817,11 @@ mod tests {
         let base=serde_json::json!({"action":"service_update","project":"demo","data":{"expected_release_id":"rel-original","service":"postgres","mode":"restart","review_sha256":"a".repeat(64)}});
         let op=serde_json::from_value::<Mutation>(base.clone()).unwrap().plan().unwrap();
         assert_eq!(op.target,"/v1/projects/demo/service-update");
-        assert_eq!(op.scopes,"deploy.execute");
+        assert_eq!(op.scopes,"deploy.environment deploy.execute");
         assert!(!op.body.contains("env_file"));
         let mut seamless=base.clone();seamless["data"]["service"]=serde_json::json!("web");seamless["data"]["mode"]=serde_json::json!("seamless");seamless["data"]["container_port"]=serde_json::json!(3000);
         let op=serde_json::from_value::<Mutation>(seamless).unwrap().plan().unwrap();
-        assert_eq!(op.scopes,"deploy.execute projects.write sites.write");
+        assert_eq!(op.scopes,"deploy.environment deploy.execute projects.write sites.write");
         for (field,value) in [("service",serde_json::json!("../postgres")),("mode",serde_json::json!("all")),("review_sha256",serde_json::json!("")),("readiness_path",serde_json::json!("https://evil.test")),("container_port",serde_json::json!(5432))] {
             let mut bad=base.clone();bad["data"][field]=value;
             assert!(serde_json::from_value::<Mutation>(bad).unwrap().plan().is_err());

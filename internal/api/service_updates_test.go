@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -224,5 +226,63 @@ func TestEachAssignedServiceReviewsOnlyItsDomainsWithoutReservingHostPorts(t *te
 				t.Fatal("ephemeral candidate reserved a fixed host port", reserved, err)
 			}
 		})
+	}
+}
+
+// Mimics a planner whose private source revision changes with saved .env.
+type environmentServicePreparer struct{ *servicePreparer }
+
+func (n environmentServicePreparer) PrepareServiceEnvironment(_ context.Context, p model.Project, plan *model.ServiceUpdate) error {
+	_, env, ok := runtime.ReadDraft(n.config, p)
+	if ok {
+		sum := sha256.Sum256([]byte(env))
+		plan.SourceRelease = &model.Release{Compose: "cmp-" + hex.EncodeToString(sum[:]), Environment: "env-private"}
+	}
+	return nil
+}
+
+func TestServiceReviewBindsLatestSavedEnvironment(t *testing.T) {
+	a, d, _, send := apiFixture(t)
+	a.Engine.Config.Keys[0].Projects = []string{"*"}
+	a.Engine.Config.Keys[0].Scopes = append(a.Engine.Config.Keys[0].Scopes, "compose.admin")
+	a.Auth, _ = auth.New(a.Engine.Config)
+	a.Engine.Docker = environmentServicePreparer{&servicePreparer{bgPreparer: bgPreparer{d, a.Engine.Config}}}
+	p := model.Project{ID: "demo", AppID: "demo", Mode: "compose", Environment: model.Staging, State: "running", Active: "blue", Slots: map[string]model.Release{"blue": {ID: "rel-original"}}}
+	original := model.Job{ID: "original", ProjectID: p.ID, Status: "succeeded", Created: time.Now(), Input: model.Input{Project: &p}}
+	if err := a.Engine.Store.Accept(original, &p, "original", "original", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	runtime.SaveDraft(a.Engine.Config, p, "services: {}", "TOKEN=old\n")
+	input := serviceUpdateRequest{ExpectedRelease: "rel-original", Service: "web", Mode: "restart"}
+	raw, _ := json.Marshal(input)
+	if w := send("POST", "/v1/projects/demo/service-update-preview", string(raw), "deploy.execute", "no-env-scope"); w.Code != 403 {
+		t.Fatal("environment authority not required", w.Code)
+	}
+	scopes := "deploy.environment deploy.execute"
+	w := send("POST", "/v1/projects/demo/service-update-preview", string(raw), scopes, "review-env")
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var review struct {
+		Hash string `json:"review_sha256"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &review)
+	input.Review = review.Hash
+	raw, _ = json.Marshal(input)
+	runtime.SaveDraft(a.Engine.Config, p, "services: {}", "TOKEN=new\n")
+	w = send("POST", "/v1/projects/demo/service-update", string(raw), scopes, "stale-env-review")
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "SERVICE_REVIEW_CHANGED") {
+		t.Fatal("accepted stale .env review", w.Code, w.Body.String())
+	}
+	w = send("POST", "/v1/projects/demo/service-update-preview", string(raw), scopes, "review-new-env")
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	json.Unmarshal(w.Body.Bytes(), &review)
+	input.Review = review.Hash
+	raw, _ = json.Marshal(input)
+	w = send("POST", "/v1/projects/demo/service-update", string(raw), scopes, "accept-new-env")
+	if w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
 	}
 }

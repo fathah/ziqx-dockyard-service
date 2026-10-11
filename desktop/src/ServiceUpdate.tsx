@@ -234,7 +234,7 @@ export default function ServiceUpdate({
       </div>
       <div className="wizard-body">
         <p className="service-update-intro">
-          Pull the latest image for this service. Your other services, database
+          Pull the latest image and apply the saved .env for this service. Your other services, database
           and data volumes stay in place.
         </p>
         {!preview && (

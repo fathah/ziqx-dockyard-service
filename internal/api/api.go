@@ -1036,6 +1036,8 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 				dotenv := ""
 				if input.EnvFile != nil {
 					dotenv = *input.EnvFile
+				} else if _, saved, ok := runtime.ReadDraft(e.Config, p); ok {
+					dotenv = saved
 				} else if current, ok := p.Current(); ok {
 					b, readErr := os.ReadFile(filepath.Join(e.Config.ProjectsRoot, id, "env", current.Environment+".env"))
 					if readErr != nil {

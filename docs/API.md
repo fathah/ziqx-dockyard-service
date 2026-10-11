@@ -24,10 +24,10 @@ The agent defaults to `https://127.0.0.1:9123`; it can bind an explicitly config
 | PUT | `/v1/projects/{id}/routes` | `sites.write` | Replace assigned domain list; update ports while stopped |
 | POST | `/v1/projects/{id}/dns` | `dns.write` | Create a Cloudflare record for an already assigned subdomain |
 | POST | `/v1/projects/{id}/deploy` | `deploy.execute`; also `deploy.environment` when new environments supplied | Validate Compose YAML; full-stack deployment or `mode: seamless` configuration rollout (also requires `projects.write sites.write`) |
-| POST | `/v1/projects/{id}/service-update-preview` | `deploy.execute`; Seamless also needs `projects.write sites.write` | Review a selected service, immutable configuration, routes and network identities; no live mutation |
+| POST | `/v1/projects/{id}/service-update-preview` | `deploy.environment deploy.execute`; Seamless also needs `projects.write sites.write` | Review a selected service, immutable configuration, routes and network identities; no live mutation |
 | POST | `/v1/projects/{id}/image-status` | `deploy.read` | Start/poll a background GHCR metadata check; no image layers or containers changed |
 | POST | `/v1/projects/{id}/image-prepare` | `deploy.execute` and server-wide `compose.admin` | Start/poll a selected-service image download; containers and routes stay running |
-| POST | `/v1/projects/{id}/service-update` | Same as preview; server-wide `compose.admin` required | Pull and update only the reviewed service; skip unchanged image; preserve dependencies |
+| POST | `/v1/projects/{id}/service-update` | Same as preview; server-wide `compose.admin` required | Pull and update only the reviewed service; apply saved .env; skip only unchanged image and environment; preserve dependencies |
 | POST | `/v1/projects/{id}/rollback` | `deploy.rollback` | Activate a retained Compose/environment configuration |
 | POST | `/v1/projects/{id}/restart` | `deploy.execute` | Rolling in blue-green mode; downtime in single-slot mode |
 | POST | `/v1/projects/{id}/stop` | `deploy.stop` | Confirmed maintenance route, drain, then stop identified services |
@@ -53,7 +53,7 @@ After the create job succeeds:
 {"environment":"production","compose_yaml":"services:\n  web:\n    image: nginx:${TAG}\n    ports: [\"8080:80\"]\n","env_file":"TAG=alpine\n"}
 ```
 
-Docker Compose validates the YAML and `.env` inputs before admission. Each is limited to 64 KiB; signed JSON bodies must fit the 128 KiB request limit. Referenced files and build contexts must exist on the VPS. `env_file` contains raw dotenv contents; omission reuses the current snapshot. Compose-mode deployments always require `deploy.environment`. No template, mandatory `app` service, registry allowlist or image digest is required.
+Docker Compose validates the YAML and `.env` inputs before admission. Each is limited to 64 KiB; signed JSON bodies must fit the 128 KiB request limit. Referenced files and build contexts must exist on the VPS. `env_file` contains raw dotenv contents; omission reuses the saved Configuration `.env`, falling back to the deployed snapshot. Compose-mode deployments always require `deploy.environment`. No template, mandatory `app` service, registry allowlist or image digest is required.
 
 Optional `domains`, `route_service` and `route_port` on creation enable managed Caddy routing. Only compatible stateless production stacks support `zerodowntime: true`. See [Compose deployments](COMPOSE.md) for lifecycle, blue-green, persistent-data and rollback behavior. Older projects explicitly created with `template_id` retain the [legacy policy](LEGACY_COMPOSE.md).
 
@@ -91,7 +91,7 @@ Errors follow `{"error":{"code":"PORT_IN_USE","message":"The operation could not
 
 ## Individual service update request
 
-Preview and execute use `expected_release_id` (the current full Compose slot release), `service` and `mode` (`restart` or `seamless`). Seamless requires `container_port` and accepts `readiness_path`; restart omits both. Execute additionally sends the exact preview's `review_sha256`. No source files or environment values are transmitted. The review is bound to the project snapshot, previous image, actual Docker networks, routes and available ports. Changed reviews return `409 SERVICE_REVIEW_CHANGED`. Accepted jobs use action `service_update` and retain the full recovery plan privately; retries return the same job. GET services adds `updatable`, `seamless`, `container_ports` and `update_reason`, and shows the active service image/manifest from the recorded override.
+Preview and execute use `expected_release_id` (the current full Compose slot release), `service` and `mode` (`restart` or `seamless`). Seamless requires `container_port` and accepts `readiness_path`; restart omits both. Execute additionally sends the exact preview's `review_sha256`. No source files or environment values are transmitted. The latest saved Configuration `.env` is resolved against the deployed Compose file and applied to the selected container; other draft Compose edits require a full configuration deployment. The review is bound to the resolved environment, project snapshot, previous image, actual Docker networks, routes and available ports. Changed reviews return `409 SERVICE_REVIEW_CHANGED`. Accepted jobs use action `service_update` and retain the full recovery plan privately; retries return the same job. GET services adds `updatable`, `seamless`, `container_ports` and `update_reason`, and shows the active service image/manifest from the recorded override.
 
 From 0.7.22, seamless preview returns only the selected service's assigned domains, including explicit `service_routes`. Its `container_port` must match those routes (`409 SERVICE_ROUTE_MISMATCH` otherwise); routing several container ports requires controlled restart. The candidate records its own container port and readiness path, and Caddy generation resolves each domain through its selected service's current instance. Sibling instances and routes survive cutover, rollback and reconciliation. Free reserved service ports are reused; the pool grows if all entries are occupied by active replacements.
 

@@ -311,3 +311,44 @@ func TestNativeDeployConnectsDomains(t *testing.T) {
 		t.Fatal("domain connection not carried by the job", next)
 	}
 }
+
+func TestDeployWithoutEnvUsesLatestSavedConfiguration(t *testing.T) {
+	a, d, _, send := apiFixture(t)
+	a.Engine.Config.Keys[0].Projects = []string{"*"}
+	a.Engine.Config.Keys[0].Scopes = append(a.Engine.Config.Keys[0].Scopes, "compose.admin")
+	a.Auth, _ = auth.New(a.Engine.Config)
+	prep := nativePreparer{d, a.Engine.Config}
+	a.Engine.Docker = prep
+	p := model.Project{ID: "demo", AppID: "demo", Mode: "compose", Environment: model.Production, State: "running", Active: "blue", Slots: map[string]model.Release{}}
+	runtime.Compose(a.Engine.Config, p)
+	rel, err := prep.PrepareNative(context.Background(), p, "services: {}", "TOKEN=old\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel.ID = "rel-original"
+	p.Slots["blue"] = rel
+	p.Releases = []model.Release{rel}
+	original := model.Job{ID: "original", ProjectID: p.ID, Status: "succeeded", Created: time.Now(), Input: model.Input{Project: &p}}
+	if err = a.Engine.Store.Accept(original, &p, "original", "original", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = runtime.SaveDraft(a.Engine.Config, p, "services: saved draft", "TOKEN=new\n"); err != nil {
+		t.Fatal(err)
+	}
+	w := send("POST", "/v1/projects/demo/deploy", `{"environment":"production","compose_yaml":"services: {}","expected_release_id":"rel-original"}`, "deploy.environment deploy.execute", "deploy-saved-env")
+	if w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var accepted struct {
+		ID string `json:"job_id"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &accepted)
+	job, err := a.Engine.Store.Job(accepted.ID)
+	if err != nil || job.Input.Release == nil {
+		t.Fatal(err, w.Body.String())
+	}
+	env, err := os.ReadFile(filepath.Join(a.Engine.Config.ProjectsRoot, p.ID, "env", job.Input.Release.Environment+".env"))
+	if err != nil || string(env) != "TOKEN=new\n" {
+		t.Fatal("deployment reused stale environment", string(env), err)
+	}
+}
