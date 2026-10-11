@@ -34,8 +34,21 @@ func (e *Engine) setupRoute(ctx context.Context, j *model.Job, p *model.Project)
 		if err := e.Routes.Ensure(ctx, *p); err != nil {
 			return err
 		}
-		if err := e.Routes.DomainsAvailable(ctx, next.Domains, p.Domains); err != nil {
+		owned := append([]string{}, p.Domains...)
+		for _, edit := range j.Input.RouteEdits {
+			owned = append(owned, edit.Domains...)
+		}
+		if err := e.Routes.DomainsAvailable(ctx, next.Domains, owned); err != nil {
 			return err
+		}
+		if len(j.Input.RouteEdits) > 0 {
+			routes, ok := e.Routes.(routeImport)
+			if !ok {
+				return model.Fail("ROUTE_SETUP_UNAVAILABLE")
+			}
+			if err := routes.VerifyRouteImport(j.Input.RouteEdits); err != nil {
+				return err
+			}
 		}
 		return e.deploy(ctx, j, p)
 	}

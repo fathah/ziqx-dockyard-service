@@ -423,7 +423,7 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		visible := []model.Project{}
 		for _, project := range projects {
 			if p.Allows(project.ID) {
-				visible = append(visible, project)
+				visible = append(visible, publicProject(project))
 			}
 		}
 		write(w, 200, map[string]any{"projects": visible})
@@ -563,7 +563,7 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		return
 	}
 	if len(parts) == 2 {
-		write(w, 200, project)
+		write(w, 200, publicProject(project))
 		return
 	}
 	switch parts[2] {
@@ -584,7 +584,7 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 				health = "healthy"
 			}
 		}
-		write(w, 200, map[string]any{"project": project, "busy": busy, "route": route, "health": health, "downtime_expected": !project.ZeroDowntime, "public_tls_state": "unverified"})
+		write(w, 200, map[string]any{"project": publicProject(project), "busy": busy, "route": route, "health": health, "downtime_expected": !project.ZeroDowntime, "public_tls_state": "unverified"})
 	case "releases":
 		write(w, 200, map[string]any{"releases": project.Releases})
 	case "services":
@@ -1321,4 +1321,10 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 }
 func accepted(w http.ResponseWriter, j model.Job) {
 	write(w, 202, map[string]string{"job_id": j.ID, "project_id": j.ProjectID, "action": j.Action, "status": "queued"})
+}
+
+func publicProject(p model.Project) model.Project {
+	// Imported Caddy bodies can contain auth hashes or private header values.
+	p.CaddyRoutes = nil
+	return p
 }

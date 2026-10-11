@@ -1011,7 +1011,14 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
         review.push_str(&format!("\nService: {}\nUpdate: {}\nOther services and their data volumes remain running.", body.get("service").and_then(Value::as_str).unwrap_or(""), if body.get("mode").and_then(Value::as_str)==Some("seamless") { "Seamless traffic switch after health checks" } else { "Controlled restart of this service" }));
     }
     if op.action == "migrate" { review.push_str("\nAdopt the reviewed existing Compose stack into Dockyard. Containers, ports and Caddy routes stay in place. Future deployments use a single instance."); }
-    if op.action == "route-setup" { review.push_str("\nConnect the reviewed domains to this service. Reuse its published port when available; otherwise add a private local binding through a controlled deployment. Existing service domains are preserved."); }
+    if op.action == "route-setup" {
+        review.push_str("\nConnect the reviewed domains to this service. Any reviewed sites already in the main Caddyfile move into Dockyard management. Other domains in shared site blocks stay in the main Caddyfile. Reuse the published port when available; otherwise add a private binding through a controlled deployment.");
+        if body.get("replace_existing_rules").and_then(Value::as_bool) == Some(true) {
+            review.push_str("\nReplace existing custom site rules for these domains with a standard service route. Custom authentication, redirects, headers and certificate settings are removed.");
+        } else {
+            review.push_str("\nKeep imported site rules and change only the proxy destination. Existing service domains are preserved.");
+        }
+    }
     let sensitive = op.action != "create";
     let approved = native_task(&c, move || {
         let approved = native::with_prompt(|| {

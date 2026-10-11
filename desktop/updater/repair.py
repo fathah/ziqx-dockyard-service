@@ -166,19 +166,77 @@ def snippet(project):
     port = instance.get('port') or port
     routed = {name: route['host_port'] for route in routes for name in route['domains']}
     groups = [([name], routed.get(name, port)) for name in domains]
+    templates = {route['domain']: route for route in project.get('caddy_routes') or []}
     for names, upstream in groups:
         for name in names:
             if not re.fullmatch(r'[a-z0-9.-]{1,253}', name):
                 raise ValueError('A recorded route has an invalid domain.')
-            result += name + ' {\n'
+            imported = templates.get(name)
+            result += (imported['address'] if imported else name) + ' {\n'
             if project.get('state') != 'running':
                 result += '\theader Retry-After 30\n\trespond "Application unavailable" 503\n'
             elif not isinstance(upstream, int) or not 1 <= upstream <= 65535:
                 raise ValueError('A recorded route has no verified upstream port.')
             else:
-                result += '\treverse_proxy 127.0.0.1:' + str(upstream) + '\n'
+                if imported:
+                    body = imported['body'].replace('{dockyard.upstream}', '127.0.0.1:' + str(upstream))
+                    result += body + ('' if body.endswith('\n') else '\n')
+                else:
+                    result += '\treverse_proxy 127.0.0.1:' + str(upstream) + '\n'
             result += '}\n'
     return result.encode()
+
+
+def live_only_sites(saved, current):
+    """Recover complete plain HTTPS proxies or redirects, retaining their rules."""
+    missing = set(hosts(current)) - set(hosts(saved))
+    if not missing:
+        return '', []
+    found = {}
+    def proxy(handles):
+        if not isinstance(handles, list) or len(handles) != 1:
+            return None
+        handler = handles[0]
+        if not isinstance(handler, dict):
+            return None
+        if handler.get('handler') == 'reverse_proxy' and set(handler) == {'handler', 'upstreams'}:
+            upstreams = handler['upstreams']
+            if isinstance(upstreams, list) and len(upstreams) == 1 and set(upstreams[0]) == {'dial'}:
+                dial = upstreams[0]['dial']
+                if isinstance(dial, str) and re.fullmatch(r'(?:127\.0\.0\.1|localhost):[1-9][0-9]{0,4}', dial) and int(dial.rsplit(':', 1)[1]) <= 65535:
+                    return '\treverse_proxy ' + dial + '\n'
+        if handler.get('handler') == 'static_response' and set(handler) == {'handler', 'headers', 'status_code'}:
+            headers, status = handler['headers'], handler['status_code']
+            if isinstance(headers, dict) and set(headers) == {'Location'} and status in (301, 302, 303, 307, 308):
+                values = headers['Location']
+                if isinstance(values, list) and len(values) == 1 and isinstance(values[0], str):
+                    target = values[0]
+                    if target.startswith(('http://', 'https://', '/')) and not any(ord(c) < 32 for c in target):
+                        return '\tredir ' + json.dumps(target) + ' ' + str(status) + '\n'
+        if handler.get('handler') == 'subroute' and set(handler) == {'handler', 'routes'}:
+            routes = handler['routes']
+            if isinstance(routes, list) and len(routes) == 1 and set(routes[0]) <= {'handle', 'terminal'}:
+                return proxy(routes[0].get('handle'))
+        return None
+    servers = ((current.get('apps') or {}).get('http') or {}).get('servers') or {}
+    for server in servers.values():
+        if server.get('listen') != [':443']:
+            continue
+        for route in server.get('routes') or []:
+            match = route.get('match') or []
+            if len(match) != 1 or set(match[0]) != {'host'} or set(route) - {'match', 'handle', 'terminal'}:
+                continue
+            dial = proxy(route.get('handle'))
+            if not dial:
+                continue
+            for name in match[0]['host']:
+                if name in missing:
+                    if name in found or not re.fullmatch(r'[a-z0-9.-]{1,253}', name):
+                        raise ValueError('Running sites have ambiguous routes. No saved configuration was activated.')
+                    found[name] = dial
+    if set(found) != missing:
+        raise ValueError('Some running-only sites use custom rules that cannot be saved automatically. This repair will not remove them; no configuration was activated.')
+    return ''.join('\n' + name + ' {\n' + found[name] + '}\n' for name in sorted(found)), sorted(found)
 
 
 def plan(action):
@@ -283,7 +341,16 @@ def plan(action):
     changed = [label for key, label in sections.items() if (saved or {}).get(key) != (current or {}).get(key)]
     if {k: v for k, v in (saved or {}).items() if k not in sections} != {k: v for k, v in (current or {}).items() if k not in sections}:
         changed.append('Other Caddy settings')
+    preserved = []
+    if action == 'caddy_coherence' and saved_available and current is not None:
+        addition, preserved = live_only_sites(saved, current)
+        if addition:
+            files[caddyfile] = files.get(caddyfile, source).rstrip() + addition.encode()
+            changes.insert(0, 'Keep the existing running sites in the saved Caddyfile: ' + ', '.join(preserved) + '.')
+            snapshot['files'] = {str(path): data.hex() for path, data in files.items()}
+            digest = hashlib.sha256(json.dumps([action, snapshot], sort_keys=True).encode()).hexdigest()
     preview = {'action': action, 'review_sha256': digest, 'changes': changes, 'changed_sections': changed,
+               'preserved_domains': preserved,
                'reloads_caddy': action.startswith('caddy_') and action not in ('caddy_write', 'caddy_capability'),
                'saved_available': saved_available, 'live_available': current is not None,
                'saved_domains': sorted(hosts(saved)), 'live_domains': sorted(hosts(current))}
@@ -379,6 +446,9 @@ def apply(action, expected):
                 desired = json.loads(data) if ok else None
                 if desired is None:
                     raise ValueError('Caddy could not adapt the reviewed configuration.')
+                running = snapshot.get('live') or snapshot.get('legacy_live')
+                if running is not None and set(hosts(running)) - set(hosts(desired)):
+                    raise ValueError('This repair would remove existing running sites. The previous saved files were restored; Caddy was not reloaded.')
                 admin = config.get('caddy_admin_socket', '/run/caddy/admin.sock')
                 if not snapshot['active']['caddy']:
                     ok = run(['systemctl', 'start', 'caddy'])[0]

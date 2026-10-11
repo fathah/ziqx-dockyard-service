@@ -26,9 +26,17 @@ func (d *publishingRouteDocker) PortFree(_ context.Context, port int) (bool, err
 }
 
 func TestServiceDomainDeploymentDrainsAndChecksNewBindingBeforeStart(t *testing.T) {
-	for _, occupied := range []int{0, 3010} {
-		t.Run(map[int]string{0: "success", 3010: "port-taken"}[occupied], func(t *testing.T) {
-			e, j, docker, _, events := engineFixture(t, "blue")
+	for _, scenario := range []struct {
+		occupied int
+		transfer bool
+	}{{0, false}, {3010, false}, {0, true}, {3010, true}} {
+		occupied := scenario.occupied
+		name := map[int]string{0: "success", 3010: "port-taken"}[occupied]
+		if scenario.transfer {
+			name += "-move-global-site"
+		}
+		t.Run(name, func(t *testing.T) {
+			e, j, docker, routes, events := engineFixture(t, "blue")
 			e.Config.DrainSeconds = 0
 			previous, _ := e.Store.Project(j.ProjectID)
 			previous.Mode, previous.ZeroDowntime, previous.GreenPort = "compose", false, 0
@@ -54,6 +62,10 @@ func TestServiceDomainDeploymentDrainsAndChecksNewBindingBeforeStart(t *testing.
 				t.Fatal(err)
 			}
 			j.Action, j.Input = "route_setup", model.Input{Previous: &previous, Project: &next, Release: &release, RouteTarget: &model.PublishedRoute{Service: "api", ContainerPort: 3040, HostPort: 3010}}
+			if scenario.transfer {
+				j.Input.RouteEdits = []model.RouteEdit{{Path: "/etc/caddy/Caddyfile", Before: "reviewed site", After: "", Domains: []string{"api.example.com"}}}
+				e.Routes = &importingRoutes{routes}
+			}
 			if err = e.Store.Update(j, &previous); err != nil {
 				t.Fatal(err)
 			}
@@ -63,6 +75,9 @@ func TestServiceDomainDeploymentDrainsAndChecksNewBindingBeforeStart(t *testing.
 			done, _ := e.Store.Job(j.ID)
 			current, _ := e.Store.Project(j.ProjectID)
 			order := strings.Join(*events, ",")
+			if scenario.transfer && !strings.Contains(order, "import,route:,stop:blue") {
+				t.Fatal("manual site was not moved into maintenance before stopping its service", order)
+			}
 			if !strings.Contains(order, "route:,stop:blue") || strings.Contains(order, "pull") || !containsPort(d.ports, 3010) || occupied == 0 && !containsPort(d.ports, previous.BluePort) {
 				t.Fatal("unsafe binding deployment", done, order, d.ports)
 			}
@@ -99,6 +114,10 @@ type importingRoutes struct{ *fakeRoutes }
 
 func (*importingRoutes) VerifyRouteImport([]model.RouteEdit) error { return nil }
 func (r *importingRoutes) ImportRoutes(ctx context.Context, _ []model.RouteEdit, p model.Project) error {
+	*r.events = append(*r.events, "import")
+	if p.State != "running" {
+		return r.Set(ctx, p, "")
+	}
 	return r.Set(ctx, p, p.Active)
 }
 

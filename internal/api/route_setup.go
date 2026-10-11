@@ -19,6 +19,7 @@ import (
 )
 
 type routeSetupRequest struct {
+	ReplaceRules    bool     `json:"replace_existing_rules,omitempty"`
 	ExpectedRelease string   `json:"expected_release_id"`
 	Domains         []string `json:"domains"`
 	Service         string   `json:"service"`
@@ -107,6 +108,10 @@ func (a *API) routeSetup(w http.ResponseWriter, r *http.Request, principal auth.
 		fail(w, err, request)
 		return
 	}
+	if _, supported := e.Routes.(serviceRouteImporter); supported {
+		a.serviceRouteSetup(w, r, principal, input, p, current, fingerprint, preview, d)
+		return
+	}
 	legacy := p.Adoption != nil && len(p.Domains) == 0 && !p.ServiceMode && p.PublishedRoute == nil && len(p.ServiceRoutes) == 0 && (len(p.ExternalDomains) == 0 || sameDomains(input.Domains, p.ExternalDomains))
 	if !legacy {
 		a.serviceRouteSetup(w, r, principal, input, p, current, fingerprint, preview, d)
@@ -193,6 +198,10 @@ func (a *API) routeSetup(w http.ResponseWriter, r *http.Request, principal auth.
 	accepted(w, job)
 }
 
+type serviceRouteImporter interface {
+	PlanServiceRouteImport(context.Context, model.Project, []string, bool) (runtime.ServiceRouteImport, error)
+}
+
 func sameDomains(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
@@ -219,6 +228,7 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 	next := p
 	next.Domains = append([]string{}, p.Domains...)
 	next.ServiceRoutes = append([]model.ServiceRoute{}, p.ServiceRoutes...)
+	next.CaddyRoutes = append([]model.CaddyRoute{}, p.CaddyRoutes...)
 	primary := p.RouteService == input.Service && p.RoutePort == input.ContainerPort || p.PublishedRoute != nil && p.PublishedRoute.Service == input.Service && p.PublishedRoute.ContainerPort == input.ContainerPort
 	index := -1
 	for i, route := range p.ServiceRoutes {
@@ -260,7 +270,21 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 		fail(w, err, request)
 		return
 	}
-	if err := e.Routes.DomainsAvailable(r.Context(), input.Domains, p.Domains); err != nil {
+	var transfer runtime.ServiceRouteImport
+	if routes, supported := e.Routes.(serviceRouteImporter); supported {
+		var err error
+		transfer, err = routes.PlanServiceRouteImport(r.Context(), p, input.Domains, input.ReplaceRules)
+		if err != nil {
+			fail(w, err, request)
+			return
+		}
+		next.CaddyRoutes = append(next.CaddyRoutes, transfer.Templates...)
+	}
+	owned := append([]string{}, p.Domains...)
+	for _, route := range transfer.Existing {
+		owned = append(owned, route.Domains...)
+	}
+	if err := e.Routes.DomainsAvailable(r.Context(), input.Domains, owned); err != nil {
 		fail(w, err, request)
 		return
 	}
@@ -276,10 +300,6 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 	if err != nil {
 		if err.Error() != "BLUE_GREEN_ROUTE_TARGET_MISMATCH" || index >= 0 {
 			fail(w, err, request)
-			return
-		}
-		if len(p.ExternalDomains) > 0 {
-			problem(w, 409, "ADOPTED_ROUTES_PRESERVED", request)
 			return
 		}
 		port, err := e.AvailablePort(r.Context(), map[int]bool{})
@@ -318,6 +338,17 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 			next.ServiceRoutes = append(next.ServiceRoutes, route)
 		}
 	}
+	// A manual route stays external until this exact host is transferred.
+	next.ExternalDomains = nil
+	for _, name := range p.ExternalDomains {
+		moved := false
+		for _, owned := range next.Domains {
+			moved = moved || name == owned
+		}
+		if !moved {
+			next.ExternalDomains = append(next.ExternalDomains, name)
+		}
+	}
 	if err := next.ValidateTarget(); err != nil {
 		fail(w, err, request)
 		return
@@ -350,11 +381,11 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 	}
 	approved := input.Review
 	input.Review = ""
-	encoded, _ := json.Marshal([]any{input, p, next, upstream, release})
+	encoded, _ := json.Marshal([]any{input, p, next, upstream, release, transfer.Edits})
 	sum := sha256.Sum256(encoded)
 	review := hex.EncodeToString(sum[:])
 	if preview {
-		write(w, 200, map[string]any{"review_sha256": review, "domains": input.Domains, "service": input.Service, "container_port": input.ContainerPort, "upstream": upstream, "imports_routes": false, "containers_unchanged": release == nil})
+		write(w, 200, map[string]any{"review_sha256": review, "domains": input.Domains, "service": input.Service, "container_port": input.ContainerPort, "upstream": upstream, "imports_routes": len(transfer.Edits) > 0, "existing_routes": transfer.Existing, "containers_unchanged": release == nil})
 		return
 	}
 	if approved != review {
@@ -365,7 +396,7 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 		release.ID = state.NewID("rel-")
 		release.Created = time.Now().UTC()
 	}
-	job := model.Job{ID: state.NewID("job-"), ProjectID: p.ID, Action: "route_setup", Status: "queued", Phase: "accepted", Actor: principal.Actor, RequestID: request, Created: time.Now().UTC(), Input: model.Input{Project: &next, Previous: &p, Release: release, RouteTarget: &model.PublishedRoute{Service: input.Service, ContainerPort: input.ContainerPort, HostPort: hostPort}}}
+	job := model.Job{ID: state.NewID("job-"), ProjectID: p.ID, Action: "route_setup", Status: "queued", Phase: "accepted", Actor: principal.Actor, RequestID: request, Created: time.Now().UTC(), Input: model.Input{Project: &next, Previous: &p, Release: release, RouteEdits: transfer.Edits, RouteTarget: &model.PublishedRoute{Service: input.Service, ContainerPort: input.ContainerPort, HostPort: hostPort}}}
 	if err := e.Store.Accept(job, nil, principal.Idempotency, fingerprint, e.Config.MaxQueuedJobs, e.Config.MaxProjects); err != nil {
 		fail(w, err, request)
 		return

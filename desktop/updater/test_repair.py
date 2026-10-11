@@ -143,6 +143,54 @@ class RepairTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             repair.result_path('../config')
 
+    def test_imported_custom_rules_survive_generated_route_repair(self):
+        value = repair.snippet({'state': 'running', 'active_slot': 'blue', 'blue_port': 3001,
+                                'domains': ['api.example.com'],
+                                'service_routes': [{'domains': ['api.example.com'], 'host_port': 3002}],
+                                'caddy_routes': [{'domain': 'api.example.com', 'address': 'api.example.com',
+                                                  'body': '\n header X-Site yes\n reverse_proxy {dockyard.upstream}\n'}]})
+        self.assertIn(b'header X-Site yes', value)
+        self.assertIn(b'reverse_proxy 127.0.0.1:3002', value)
+        self.assertNotIn(b'{dockyard.upstream}', value)
+
+    def test_sync_keeps_running_only_plain_sites_in_main_caddyfile(self):
+        self.observed = {'apps': {'http': {'servers': {'srv0': {'listen': [':443'], 'routes': [
+            {'match': [{'host': ['ziqx.cc', 'www.ziqx.cc']}], 'handle': [{'handler': 'subroute', 'routes': [
+                {'handle': [{'handler': 'reverse_proxy', 'upstreams': [{'dial': '127.0.0.1:3000'}]}]}]}], 'terminal': True}
+        ]}}}}}
+        preview, _, files, _ = repair.plan('caddy_coherence')
+        self.assertEqual(preview['preserved_domains'], ['www.ziqx.cc', 'ziqx.cc'])
+        self.assertIn(b'ziqx.cc {\n\treverse_proxy 127.0.0.1:3000', files[self.caddyfile])
+        self.assertIn(b'app.example.com', files[self.caddyfile])
+        self.assertNotIn('stop', [call[1] for call in self.calls if call[0] == 'systemctl'])
+
+    def test_sync_refuses_to_erase_running_only_custom_site(self):
+        self.observed = {'apps': {'http': {'servers': {'srv0': {'listen': [':443'], 'routes': [
+            {'match': [{'host': ['ziqx.cc']}], 'handle': [{'handler': 'static_response', 'body': 'private'}]}
+        ]}}}}}
+        original = self.caddyfile.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'will not remove'):
+            repair.plan('caddy_coherence')
+        self.assertEqual(self.caddyfile.read_bytes(), original)
+
+    def test_sync_keeps_running_only_www_redirect(self):
+        current = {'apps': {'http': {'servers': {'srv0': {'listen': [':443'], 'routes': [
+            {'match': [{'host': ['www.ziqx.cc']}], 'handle': [{'handler': 'subroute', 'routes': [
+                {'handle': [{'handler': 'static_response', 'headers': {'Location': ['https://ziqx.cc{http.request.uri}']}, 'status_code': 301}]}]}], 'terminal': True}
+        ]}}}}}
+        source, names = repair.live_only_sites(self.saved, current)
+        self.assertEqual(names, ['www.ziqx.cc'])
+        self.assertIn('redir "https://ziqx.cc{http.request.uri}" 301', source)
+
+    def test_no_reload_repair_can_remove_running_sites(self):
+        self.observed = {'apps': {'http': {'servers': {'srv0': {'routes': [{'match': [{'host': ['ziqx.cc']}]}]}}}}}
+        original = self.caddyfile.read_bytes()
+        review = repair.main('caddy_import')
+        with self.assertRaisesRegex(ValueError, 'remove existing running sites'):
+            repair.main('caddy_import', review['review_sha256'])
+        self.assertEqual(self.caddyfile.read_bytes(), original)
+        self.assertFalse(any(call[1] == 'reload' for call in self.calls if call[0].endswith('caddy')))
+
 
 if __name__ == '__main__':
     unittest.main()

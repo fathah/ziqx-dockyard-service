@@ -13,6 +13,7 @@ import (
 
 	"github.com/ziqx/ziqx-dockyard-service/internal/auth"
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
+	"github.com/ziqx/ziqx-dockyard-service/internal/runtime"
 )
 
 type routeSetupDocker struct {
@@ -27,18 +28,24 @@ func (d *routeSetupDocker) PrepareServiceRoutes(ctx context.Context, p model.Pro
 }
 
 func TestServiceDomainsPreserveSiblingRoutesAndRecheckReview(t *testing.T) {
-	for _, mode := range []string{"published", "publish-new-port", "adopted-unpublished"} {
+	for _, mode := range []string{"published", "publish-new-port", "adopted-unpublished", "published-move", "publish-new-port-move"} {
 		t.Run(mode, func(t *testing.T) {
 			a, base, routes, send := apiFixture(t)
 			checked := &checkedRouteSetup{routesStub: routes}
 			a.Engine.Routes = checked
+			var transfer *serviceTransferRoutes
+			if strings.HasSuffix(mode, "-move") {
+				transfer = &serviceTransferRoutes{checkedRouteSetup: checked, source: "api.example.com {\n reverse_proxy localhost:8080\n}\n"}
+				a.Engine.Routes = transfer
+			}
 			a.Engine.Config.Keys[0].Projects = []string{"*"}
 			a.Engine.Config.Keys[0].Scopes = append(a.Engine.Config.Keys[0].Scopes, "compose.admin")
 			a.Auth, _ = auth.New(a.Engine.Config)
 			d := &routeSetupDocker{dockerStub: base, upstream: "127.0.0.1:3032"}
 			a.Engine.Docker = d
 			release := model.Release{ID: "rel-original", Compose: "cmp-original", Environment: "env-" + strings.Repeat("a", 32)}
-			if mode != "published" {
+			published := strings.HasPrefix(mode, "published")
+			if !published {
 				d.observeErr = model.Fail("BLUE_GREEN_ROUTE_TARGET_MISMATCH")
 				dir := filepath.Join(a.Engine.Config.ProjectsRoot, "demo")
 				os.MkdirAll(filepath.Join(dir, "compose"), 0700)
@@ -69,9 +76,10 @@ func TestServiceDomainsPreserveSiblingRoutesAndRecheckReview(t *testing.T) {
 			var review struct {
 				Hash      string `json:"review_sha256"`
 				Preserved bool   `json:"containers_unchanged"`
+				Imports   bool   `json:"imports_routes"`
 			}
 			json.Unmarshal(w.Body.Bytes(), &review)
-			if review.Preserved != (mode == "published") {
+			if review.Preserved != published || review.Imports != (transfer != nil) {
 				t.Fatal("deployment impact hidden", w.Body.String())
 			}
 			input.Review = review.Hash
@@ -82,6 +90,15 @@ func TestServiceDomainsPreserveSiblingRoutesAndRecheckReview(t *testing.T) {
 				t.Fatal("divergence accepted", w.Code)
 			}
 			checked.err = nil
+			if transfer != nil {
+				original := transfer.source
+				transfer.source += "# concurrent operator change\n"
+				stale := send("POST", "/v1/projects/demo/route-setup", string(raw), scopes, "stale-site")
+				if stale.Code != 409 || !strings.Contains(stale.Body.String(), "ROUTE_REVIEW_CHANGED") {
+					t.Fatal("changed site was moved", stale.Code, stale.Body.String())
+				}
+				transfer.source = original
+			}
 			w = send("POST", "/v1/projects/demo/route-setup", string(raw), scopes, "connect")
 			if w.Code != 202 {
 				t.Fatal(w.Code, w.Body.String())
@@ -90,6 +107,9 @@ func TestServiceDomainsPreserveSiblingRoutesAndRecheckReview(t *testing.T) {
 			json.Unmarshal(w.Body.Bytes(), &accepted)
 			accepted, _ = a.Engine.Store.Job(accepted.ID)
 			next := accepted.Input.Project
+			if transfer != nil && (len(accepted.Input.RouteEdits) != 1 || len(next.CaddyRoutes) != 1 || next.CaddyRoutes[0].Domain != "api.example.com") {
+				t.Fatal("transfer was not journaled", accepted.Input)
+			}
 			wantDomains := append(append([]string{}, p.Domains...), "api.example.com")
 			if strings.Join(next.Domains, ",") != strings.Join(wantDomains, ",") || next.BluePort != p.BluePort || next.RouteService != p.RouteService || len(next.ServiceRoutes) != 1 || next.ServiceRoutes[0].Service != "api" || next.ServiceRoutes[0].ContainerPort != 3040 {
 				t.Fatal("sibling route replaced", next)
@@ -103,6 +123,27 @@ func TestServiceDomainsPreserveSiblingRoutesAndRecheckReview(t *testing.T) {
 				t.Fatal("retry repeated planning")
 			}
 		})
+	}
+}
+
+type serviceTransferRoutes struct {
+	*checkedRouteSetup
+	source string
+}
+
+func (r *serviceTransferRoutes) PlanServiceRouteImport(context.Context, model.Project, []string, bool) (runtime.ServiceRouteImport, error) {
+	return runtime.ServiceRouteImport{
+		Edits:     []model.RouteEdit{{Path: "/etc/caddy/Caddyfile", Before: r.source, After: "", Domains: []string{"api.example.com"}}},
+		Templates: []model.CaddyRoute{{Domain: "api.example.com", Address: "api.example.com", Body: "\n reverse_proxy " + model.CaddyUpstream + "\n"}},
+		Existing:  []runtime.ExistingCaddyRoute{{Domains: []string{"api.example.com"}, PreviousUpstream: "localhost:8080", RemainingDomains: []string{}, RulesPreserved: true}},
+	}, nil
+}
+
+func TestPublicProjectDoesNotExposeImportedCaddyCredentials(t *testing.T) {
+	p := model.Project{ID: "demo", CaddyRoutes: []model.CaddyRoute{{Domain: "api.example.com", Body: "basic_auth { user private_hash }"}}}
+	data, _ := json.Marshal(publicProject(p))
+	if strings.Contains(string(data), "private_hash") || len(p.CaddyRoutes) != 1 {
+		t.Fatal("imported config exposed or erased", string(data))
 	}
 }
 

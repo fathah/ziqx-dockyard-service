@@ -7,7 +7,7 @@ export const repairLabels: Record<string, string> = {
   caddy_admin: "Repair private connection",
   caddy_import: "Add route import",
   caddy_sites: "Prepare route folder",
-  caddy_coherence: "Sync saved routes",
+  caddy_coherence: "Review route sync",
   caddy_validation: "Restore generated routes & validate",
   caddy_write: "Repair folder access",
   caddy_capability: "Repair socket access",
@@ -45,28 +45,39 @@ export default function ServerRepair({
             ))}
           </ul>
           {review.action.startsWith("caddy_") && (
-            <p className="muted">
-              Saved sites:{" "}
-              {review.saved_available === false
-                ? "could not be read"
-                : review.saved_domains.join(", ") || "none"}
-              <br />
-              Live sites:{" "}
-              {review.live_available === false
-                ? "could not be read"
-                : review.live_domains.join(", ") || "none"}
-              <br />
-              Different settings:{" "}
-              {review.live_available === false ||
-              review.saved_available === false
-                ? "could not be compared"
-                : review.changed_sections?.join(", ") || "none"}
-              <br />
-              {review.reloads_caddy
-                ? "The saved configuration becomes active. "
-                : ""}
-              Dockyard keeps a private backup.
-            </p>
+            <>
+              {review.preserved_domains?.length ? (
+                <p>
+                  Keep running sites: {review.preserved_domains.join(", ")}.
+                  These routes will be saved before Caddy reloads.
+                </p>
+              ) : null}
+              <details>
+                <summary>Configuration comparison</summary>
+                <p className="muted">
+                  Saved sites:{" "}
+                  {review.saved_available === false
+                    ? "could not be read"
+                    : review.saved_domains.join(", ") || "none"}
+                  <br />
+                  Live sites:{" "}
+                  {review.live_available === false
+                    ? "could not be read"
+                    : review.live_domains.join(", ") || "none"}
+                  <br />
+                  Different settings:{" "}
+                  {review.live_available === false ||
+                  review.saved_available === false
+                    ? "could not be compared"
+                    : review.changed_sections?.join(", ") || "none"}
+                  <br />
+                  {review.reloads_caddy
+                    ? "The saved configuration becomes active. "
+                    : ""}
+                  Dockyard keeps a private backup.
+                </p>
+              </details>
+            </>
           )}
           <div className="heading-actions">
             <Button

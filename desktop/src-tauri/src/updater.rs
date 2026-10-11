@@ -431,6 +431,8 @@ pub struct RepairPreview {
     pub changes: Vec<String>,
     pub saved_domains: Vec<String>,
     pub live_domains: Vec<String>,
+	#[serde(default)]
+	pub preserved_domains: Vec<String>,
     pub changed_sections: Vec<String>,
     pub reloads_caddy: bool,
     pub saved_available: bool,

@@ -259,9 +259,12 @@ impl ServiceUpdate {
         if self.mode == "seamless" { "deploy.execute projects.write sites.write" } else { "deploy.execute" }
     }
 }
+fn is_false(value: &bool) -> bool { !value }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RouteSetup {
+	#[serde(default, skip_serializing_if = "is_false")]
+	pub replace_existing_rules: bool,
     pub expected_release_id: String,
     pub domains: Vec<String>,
     pub service: String,
@@ -739,6 +742,9 @@ mod tests {
         let op=serde_json::from_value::<Mutation>(base.clone()).unwrap().plan().unwrap();
         assert_eq!(op.target,"/v1/projects/demo/route-setup");
         assert_eq!(op.scopes,"deploy.execute projects.write sites.write");
+        let mut replacement=base.clone();replacement["data"]["replace_existing_rules"]=serde_json::json!(true);
+        let replace_op=serde_json::from_value::<Mutation>(replacement).unwrap().plan().unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&replace_op.body).unwrap()["replace_existing_rules"],true);
         for (field,value) in [("service",serde_json::json!("../app")),("container_port",serde_json::json!(0)),("domains",serde_json::json!([])),("review_sha256",serde_json::json!(""))] {
             let mut bad=base.clone();bad["data"][field]=value;
             assert!(serde_json::from_value::<Mutation>(bad).unwrap().plan().is_err());

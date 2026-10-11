@@ -114,6 +114,7 @@ export type RepairReview = {
   changes: string[];
   saved_domains: string[];
   live_domains: string[];
+  preserved_domains?: string[];
   changed_sections: string[];
   reloads_caddy: boolean;
   saved_available: boolean;
@@ -174,6 +175,7 @@ export const previewServiceUpdate = (
 ) => invoke<ServiceUpdateReview>("preview_service_update", { project, data });
 
 export type RouteSetupInput = {
+  replace_existing_rules?: boolean;
   expected_release_id: string;
   domains: string[];
   service: string;
@@ -181,6 +183,12 @@ export type RouteSetupInput = {
   review_sha256?: string;
 };
 export type RouteSetupReview = {
+  existing_routes?: {
+    domains: string[];
+    previous_upstream?: string;
+    remaining_domains: string[];
+    rules_preserved: boolean;
+  }[];
   review_sha256: string;
   domains: string[];
   service: string;

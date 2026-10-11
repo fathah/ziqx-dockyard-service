@@ -415,6 +415,8 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 		p.RouteService, p.RoutePort = next.RouteService, next.RoutePort
 		p.Domains, p.BluePort = next.Domains, next.BluePort
 		p.ServiceRoutes = next.ServiceRoutes
+		p.CaddyRoutes = next.CaddyRoutes
+		p.ExternalDomains = next.ExternalDomains
 	}
 	if _, err := os.Stat(filepath.Join(e.Config.ProjectsRoot, p.ID, "env", r.Environment+".env")); err != nil {
 		return model.Fail("ENVIRONMENT_UNAVAILABLE")
@@ -468,7 +470,17 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 		if err := e.phase(j, "maintenance_intent"); err != nil {
 			return err
 		}
-		if err := e.Routes.Set(ctx, *p, ""); err != nil {
+		if j.Action == "route_setup" && len(j.Input.RouteEdits) > 0 {
+			routes, ok := e.Routes.(routeImport)
+			if !ok {
+				return model.Fail("ROUTE_SETUP_UNAVAILABLE")
+			}
+			maintenance := *p
+			maintenance.State = "stopped"
+			if err := routes.ImportRoutes(ctx, j.Input.RouteEdits, maintenance); err != nil {
+				return err
+			}
+		} else if err := e.Routes.Set(ctx, *p, ""); err != nil {
 			return err
 		}
 		p.State = "stopped"

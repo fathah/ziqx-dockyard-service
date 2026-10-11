@@ -120,6 +120,10 @@ func TestResponseSchemasMatchModels(t *testing.T) {
 		fields := 0
 		typ := reflect.TypeOf(value)
 		for i := 0; i < typ.NumField(); i++ {
+			// Private persisted Caddy bodies are redacted from public project reads.
+			if typ.Field(i).Tag.Get("api") == "private" {
+				continue
+			}
 			parts := strings.Split(typ.Field(i).Tag.Get("json"), ",")
 			if parts[0] == "-" {
 				continue

@@ -131,7 +131,17 @@ func bindingBytes(c config.Config, p model.Project, slot string, r model.Release
 func Snippet(p model.Project, slot string) []byte {
 	var b strings.Builder
 	for _, d := range p.Domains {
-		fmt.Fprintf(&b, "%s {\n", d)
+		var imported *model.CaddyRoute
+		for i := range p.CaddyRoutes {
+			if p.CaddyRoutes[i].Domain == d {
+				imported = &p.CaddyRoutes[i]
+			}
+		}
+		address := d
+		if imported != nil {
+			address = imported.Address
+		}
+		fmt.Fprintf(&b, "%s {\n", address)
 		if slot == "" {
 			b.WriteString("\theader Retry-After 30\n\trespond \"Application unavailable\" 503\n")
 		} else {
@@ -143,7 +153,14 @@ func Snippet(p model.Project, slot string) []byte {
 					}
 				}
 			}
-			fmt.Fprintf(&b, "\treverse_proxy 127.0.0.1:%d\n", port)
+			if imported != nil {
+				b.WriteString(strings.ReplaceAll(imported.Body, model.CaddyUpstream, fmt.Sprintf("127.0.0.1:%d", port)))
+				if !strings.HasSuffix(imported.Body, "\n") {
+					b.WriteByte('\n')
+				}
+			} else {
+				fmt.Fprintf(&b, "\treverse_proxy 127.0.0.1:%d\n", port)
+			}
 		}
 		b.WriteString("}\n")
 	}

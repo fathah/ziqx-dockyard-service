@@ -48,6 +48,14 @@ function explain(error: unknown) {
       "Saved and live Caddy routes differ. Review the repair below, then retry the connection.",
     DOMAIN_IN_USE:
       "This domain is already assigned to another service. Choose another hostname.",
+    SITE_NOT_MANAGED:
+      "Update the VPS service to enable transfers from the main Caddyfile. If it is already up to date, this domain is defined in another included file; Dockyard hasn't changed it.",
+    CADDY_ROUTE_PARSE_FAILED:
+      "Dockyard couldn't read the structure of the main Caddyfile. No files were changed.",
+    CADDY_ROUTE_AMBIGUOUS:
+      "This domain occurs more than once in the main Caddyfile. Dockyard hasn't changed any routes.",
+    CADDY_ROUTE_RULES_REVIEW_REQUIRED:
+      "This site has custom routing that cannot be retargeted automatically. You can review replacing its rules with a standard route to this service below.",
   };
   return (
     Object.entries(explanations).find(([code]) =>
@@ -129,6 +137,8 @@ export default function RouteSetup({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [replaceRules, setReplaceRules] = useState(false);
+  useEffect(() => setReplaceRules(false), [service, domains, port]);
   const [dns, setDNS] = useState<ServiceDNSInput>();
   const [dnsReview, setDNSReview] = useState<ServiceDNSReview>();
   const [dnsDone, setDNSDone] = useState("");
@@ -154,6 +164,7 @@ export default function RouteSetup({
     }
   }, [JSON.stringify(candidates), selected, port, portEdited]);
   const data: api.RouteSetupInput = {
+    ...(replaceRules ? { replace_existing_rules: true } : {}),
     expected_release_id: project.slots[project.active_slot ?? "blue"]?.id ?? "",
     domains: domains.split(/[\s,]+/).filter(Boolean),
     service,
@@ -348,7 +359,11 @@ export default function RouteSetup({
             onClick={() => void apply()}
           >
             <Fingerprint size={15} />
-            {busy ? "Connecting…" : "Connect"}
+            {busy
+              ? "Connecting…"
+              : review.imports_routes
+                ? "Move to this service"
+                : "Connect"}
           </Button>
         ) : (
           <Button
@@ -376,9 +391,20 @@ export default function RouteSetup({
           <p className="route-error" role="alert">
             {explain(error)}
           </p>
+          {error.includes("CADDY_ROUTE_RULES_REVIEW_REQUIRED") && (
+            <Button
+              type="button"
+              className="button small"
+              disabled={busy}
+              onClick={() => setReplaceRules(true)}
+            >
+              Review replacing existing rules
+            </Button>
+          )}
           {/STATE_DIVERGED|CADDY_|COMPOSE_ACCESS_REQUIRED|SCOPE_REQUIRED/.test(
             error,
           ) &&
+            !error.includes("CADDY_ROUTE_") &&
             !preview && (
               <ConnectionHealth
                 onReady={() => {
@@ -388,9 +414,8 @@ export default function RouteSetup({
                 disabled={busy}
               />
             )}
-          {/HTTP_404|ROUTE_SETUP_UNAVAILABLE/.test(error) && !preview && (
-            <ServerUpdater openOperations={openDeployments} />
-          )}
+          {/HTTP_404|ROUTE_SETUP_UNAVAILABLE|SITE_NOT_MANAGED/.test(error) &&
+            !preview && <ServerUpdater openOperations={openDeployments} />}
         </>
       )}
       {dnsDone && (
@@ -399,6 +424,49 @@ export default function RouteSetup({
           {error ? "Review and retry the Caddy connection." : ""}
         </p>
       )}
+      {replaceRules && (
+        <p className="alert warning">
+          Existing rules for the selected domains will be replaced with a
+          standard service route. Custom authentication, headers, redirects,
+          certificate settings and routing for those domains won't be retained.
+          <Button
+            type="button"
+            className="text-button"
+            disabled={busy}
+            onClick={() => setReplaceRules(false)}
+          >
+            Keep existing rules
+          </Button>
+        </p>
+      )}
+      {review?.existing_routes?.map((existing, i) => (
+        <div className="repair-review" key={i}>
+          <strong>Already in the main Caddyfile</strong>
+          <p>
+            {existing.domains.join(", ")}
+            {existing.previous_upstream
+              ? ` → ${existing.previous_upstream}`
+              : " · custom site rules"}
+          </p>
+          <p>
+            Move to {review.service}:{review.container_port}.{" "}
+            {existing.rules_preserved
+              ? "Existing site rules are kept; only the proxy destination changes."
+              : "Existing site rules are replaced with a standard service route."}
+          </p>
+          {existing.remaining_domains.length > 0 && (
+            <p>
+              Stays in the main Caddyfile:{" "}
+              {existing.remaining_domains.join(", ")}.
+            </p>
+          )}
+          <small>
+            Dockyard removes the selected domains from the main Caddyfile and
+            saves their routes in its managed file. The previous files are
+            recorded for recovery.
+          </small>
+        </div>
+      ))}
       {review && (
         <p className="route-review">
           <ShieldCheck size={14} />

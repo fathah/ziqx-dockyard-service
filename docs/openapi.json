@@ -4249,6 +4249,11 @@
           "container_port"
         ],
         "properties": {
+          "replace_existing_rules": {
+            "type": "boolean",
+            "default": false,
+            "description": "Explicitly replace the selected domains\u2019 existing main-Caddyfile rules with a standard service route. The default preserves site rules around a single local reverse proxy; unsupported custom routing requires a separate replacement review."
+          },
           "expected_release_id": {
             "type": "string",
             "minLength": 1
@@ -4291,6 +4296,38 @@
           "containers_unchanged"
         ],
         "properties": {
+          "existing_routes": {
+            "type": "array",
+            "description": "Safe metadata for sites found in the configured main Caddyfile. Raw site rules and credentials remain private to the server. Applying the reviewed job moves only these domains and preserves remaining hosts in shared blocks.",
+            "items": {
+              "type": "object",
+              "required": [
+                "domains",
+                "remaining_domains",
+                "rules_preserved"
+              ],
+              "properties": {
+                "domains": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "previous_upstream": {
+                  "type": "string"
+                },
+                "remaining_domains": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "rules_preserved": {
+                  "type": "boolean"
+                }
+              }
+            }
+          },
           "review_sha256": {
             "type": "string",
             "pattern": "^[a-f0-9]{64}$"

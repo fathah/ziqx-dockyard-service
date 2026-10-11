@@ -5,11 +5,14 @@ package runtime
 // matchers, or routing rules. The complete source is journaled before any write.
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -140,7 +143,22 @@ func (c Caddy) ImportRoutes(ctx context.Context, edits []model.RouteEdit, p mode
 		return err
 	}
 	path := filepath.Join(c.Config.CaddySites, p.ID+".caddy")
-	if _, err = os.Lstat(path); !os.IsNotExist(err) {
+	var managedBefore *string
+	serviceTransfer := len(edits) == 1 && len(edits[0].Domains) > 0
+	if serviceTransfer {
+		managedBefore = edits[0].ManagedBefore
+		data, _ := json.Marshal(previous)
+		hash := sha256.Sum256(data)
+		if edits[0].LiveSHA256 != hex.EncodeToString(hash[:]) {
+			return model.Fail("ROUTE_REVIEW_CHANGED")
+		}
+	}
+	if managedBefore != nil {
+		data, err := adoptionRead(c.Config.CaddySites, path, 2<<20)
+		if err != nil || string(data) != *managedBefore {
+			return model.Fail("ROUTE_REVIEW_CHANGED")
+		}
+	} else if _, err = os.Lstat(path); !os.IsNotExist(err) {
 		return model.Fail("BLUE_GREEN_ROUTE_REVIEW_REQUIRED")
 	}
 	restore := func() error {
@@ -148,6 +166,9 @@ func (c Caddy) ImportRoutes(ctx context.Context, edits []model.RouteEdit, p mode
 			if e := secure.Atomic(edit.Path, []byte(edit.Before), os.FileMode(edit.Mode)); e != nil {
 				return e
 			}
+		}
+		if managedBefore != nil {
+			return secure.Atomic(path, []byte(*managedBefore), 0644)
 		}
 		if e := os.Remove(path); e != nil && !os.IsNotExist(e) {
 			return e
@@ -160,6 +181,9 @@ func (c Caddy) ImportRoutes(ctx context.Context, edits []model.RouteEdit, p mode
 		}
 	}
 	if err = secure.Atomic(path, Snippet(p, importSlot(p)), 0644); err != nil {
+		if restore() != nil {
+			return model.Uncertain("CADDY_RESTORE_FAILED")
+		}
 		return model.Uncertain("CADDY_FILE_WRITE_FAILED")
 	}
 	expected, err := c.adapted(ctx)
@@ -173,7 +197,13 @@ func (c Caddy) ImportRoutes(ctx context.Context, edits []model.RouteEdit, p mode
 		y, _ := json.Marshal(expected)
 		json.Unmarshal(x, &a)
 		json.Unmarshal(y, &b)
-		if !routeEquivalent(a, b, p.Domains) {
+		var equivalent bool
+		if serviceTransfer {
+			equivalent = serviceRouteEquivalent(a, b, p.Domains, edits[0].Domains)
+		} else {
+			equivalent = routeEquivalent(a, b, p.Domains)
+		}
+		if !equivalent {
 			err = model.Fail("BLUE_GREEN_ROUTE_REVIEW_REQUIRED")
 		}
 	}
@@ -306,8 +336,103 @@ func (c Caddy) RestoreImportedRoutes(ctx context.Context, edits []model.RouteEdi
 }
 
 func importSlot(p model.Project) string {
-	if p.ServiceMode || p.PublishedRoute != nil {
+	if p.ServiceMode || p.PublishedRoute != nil || len(p.ServiceRoutes) > 0 || p.NativeCompose() && !p.ZeroDowntime {
+		if p.State != "running" && p.State != "" {
+			return ""
+		}
 		return p.Active
 	}
 	return "green"
+}
+
+// A site may share hosts with an unrelated site. Remove just the reviewed
+// hosts, retaining every other handler and setting. Caddy orders disjoint host
+// routes by address; canonicalize only host-only route groups for comparison.
+func serviceRouteEquivalent(a, b any, owned, transferred []string) bool {
+	normalize := func(v any) (any, map[string]int) {
+		data, _ := json.Marshal(v)
+		json.Unmarshal(data, &v)
+		count := map[string]int{}
+		var walk func(any) any
+		walk = func(v any) any {
+			switch n := v.(type) {
+			case []any:
+				out := []any{}
+				for _, item := range n {
+					m := object(item)
+					match := array(m["match"])
+					if len(match) == 1 && len(object(match[0])) == 1 && len(array(object(match[0])["host"])) > 0 {
+						remaining := []any{}
+						for _, h := range array(object(match[0])["host"]) {
+							name, _ := h.(string)
+							removed := false
+							for _, domain := range owned {
+								removed = removed || name == domain
+							}
+							if removed {
+								count[name]++
+							} else {
+								remaining = append(remaining, h)
+							}
+						}
+						if len(remaining) == 0 {
+							continue
+						}
+						// Split disjoint host groups to compare unchanged per-host rules.
+						for _, h := range remaining {
+							encoded, _ := json.Marshal(m)
+							var single map[string]any
+							json.Unmarshal(encoded, &single)
+							single["match"] = []any{map[string]any{"host": []any{h}}}
+							out = append(out, walk(single))
+						}
+					} else {
+						out = append(out, walk(item))
+					}
+				}
+				// Keep catch-all and non-host routes in their original positions.
+				for start := 0; start < len(out); {
+					isHost := func(x any) bool {
+						matches := array(object(x)["match"])
+						return len(matches) == 1 && len(object(matches[0])) == 1 && len(array(object(matches[0])["host"])) == 1
+					}
+					if !isHost(out[start]) {
+						start++
+						continue
+					}
+					end := start + 1
+					for end < len(out) && isHost(out[end]) {
+						end++
+					}
+					sort.Slice(out[start:end], func(i, j int) bool {
+						x, _ := json.Marshal(out[start+i])
+						y, _ := json.Marshal(out[start+j])
+						return string(x) < string(y)
+					})
+					start = end
+				}
+				return out
+			case map[string]any:
+				for key, value := range n {
+					n[key] = walk(value)
+				}
+				return n
+			}
+			return v
+		}
+		return walk(v), count
+	}
+	x, before := normalize(a)
+	y, after := normalize(b)
+	for _, name := range transferred {
+		if before[name] != 1 || after[name] != 1 {
+			return false
+		}
+	}
+	for _, name := range owned {
+		if before[name] > 1 || after[name] != 1 {
+			return false
+		}
+	}
+	return reflect.DeepEqual(x, y)
 }

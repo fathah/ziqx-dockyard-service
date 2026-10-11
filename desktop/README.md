@@ -4,10 +4,10 @@ A Tauri 2 desktop control room with a Rust API client and a bundled React interf
 
 ## Run on this Mac
 
-The latest local Apple Silicon app is in `releases/dockyard-service-domains/Dockyard.app`. It includes per-service domain connections, automatic container-port detection, Cloudflare subdomains with the enrolled server IP, and reviewed Caddy/Docker repairs. Its bundled VPS service is **0.7.20**; install it through **Server details → Updates**. From the repository root:
+The latest local Apple Silicon app is in `releases/dockyard-caddy-transfer/Dockyard.app`. It includes per-service domain connections, automatic container-port detection, Cloudflare subdomains with the enrolled server IP, and reviewed Caddy/Docker repairs. Its bundled VPS service is **0.7.21**; install it through **Server details → Updates**. From the repository root:
 
 ```sh
-open desktop/releases/dockyard-service-domains/Dockyard.app
+open desktop/releases/dockyard-caddy-transfer/Dockyard.app
 ```
 
 Quit any previously opened Dockyard instance first so the single-instance guard does not bring an older build to the foreground. This local artifact uses an ad-hoc signature; it is not notarized for distribution.
@@ -33,7 +33,7 @@ For development: `npm run desktop:dev`. For a browser-only visual preview: `npm 
 
 Use **Services → Connect domain** on a running Compose service. Dockyard fills the detected container port and keeps sibling services' domains. Choose **Use a domain**, or **Cloudflare subdomain** to select an account, domain and subdomain. The DNS review fills the record value from the enrolled VPS IP, creates an A/AAAA record, or reviews an existing record update. Matching records are reused on retries. An account can be connected from the same form; its token is entered through the secure native prompt.
 
-The connection review reuses an existing published binding where possible. A missing binding is published privately through a reviewed controlled deployment, preserving resolved inputs and images from individual service updates. These service routes require VPS Dockyard **0.7.20** or later; use **Server details → Updates** to install the bundled update. Whole-stack blue/green projects retain their existing route workflow.
+The connection review reuses an existing published binding where possible. A missing binding is published privately through a reviewed controlled deployment, preserving resolved inputs and images from individual service updates. These service routes require VPS Dockyard **0.7.21** or later; use **Server details → Updates** to install the bundled update. Whole-stack blue/green projects retain their existing route workflow.
 
 If review reports a Caddy problem, **Check & repair connection** shows the same repair buttons as **Server details → Access & health**. Review and approve the required repair with Touch ID, then review the domain again. Buttons cover the private admin connection/runtime directory, generated-route import and directory, saved/live route synchronization, folder/socket access, starting Caddy or Docker, and installing the Compose plugin. Repairs bind approval to the observed state, keep private backups, pause Dockyard admissions, validate Caddy, and verify the result. Missing-socket repair reviews a brief Caddy restart; permission repairs restart only Dockyard. Detached server workers finish even if the Mac disconnects.
 
@@ -134,15 +134,23 @@ Server `recovery_required` blocks API writes until local reconciliation; the API
 
 ## Configuring imported routes
 
-Imported Compose projects offer **Domains → Configure route** with VPS service
-0.7.4+. Review a service, its container port and the detected Caddy domains;
-Dockyard verifies the existing published port before Touch ID approval. Route
-setup keeps containers, volumes and Compose files in place. It imports only the
-complete reviewed plain site group, or creates a route when no domains were
-detected. Active/recovery jobs block setup. Domains → Caddy routes lists imported
-projects without managed domains, so route setup remains discoverable. See
-[existing-project migration](../docs/LEGACY_MIGRATION.md) for the port and recovery
-constraints.
+From VPS service **0.7.21**, the domain review reads the configured main
+Caddyfile before connecting a service. Existing sites offer **Move to this
+service**: the reviewed host is removed from the main file and added to the
+project's generated route file, while other hosts in a shared block remain
+unchanged. A single local reverse-proxy destination can be retargeted while
+keeping headers, authentication, matchers and other site rules. Custom routes
+that cannot be retargeted offer an explicit review to replace their rules with
+a standard service route. Source and live configuration hashes bind the review;
+original files are recorded privately in the durable job for recovery.
+
+Existing published bindings keep containers in place. Missing bindings require
+a reviewed controlled deployment. The transfer validates the combined Caddy
+configuration and checks that unrelated routes remain equivalent before reload.
+Imported rules are retained on future route generation and repair. Saved/live
+route repair preserves running-only plain HTTPS local-proxy sites and redirects; every reload
+repair refuses to remove existing running hostnames. Unsupported running-only
+custom sites block sync instead of being erased.
 
 ## Security boundaries and production signing
 

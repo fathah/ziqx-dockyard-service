@@ -85,13 +85,25 @@ mockIPC((command, payload: any) => {
       };
     case "preview_route_setup":
       if (diverged) throw new Error("HTTP_409: STATE_DIVERGED");
+      if (params.has("custom") && !payload.data.replace_existing_rules)
+        throw new Error("HTTP_409: CADDY_ROUTE_RULES_REVIEW_REQUIRED");
       return {
         review_sha256: "a".repeat(64),
         domains: payload.data.domains,
         service: payload.data.service,
         container_port: payload.data.container_port,
         upstream: "127.0.0.1:3041",
-        imports_routes: false,
+        imports_routes: params.has("move"),
+        existing_routes: params.has("move")
+          ? [
+              {
+                domains: payload.data.domains,
+                previous_upstream: "localhost:8080",
+                remaining_domains: ["www.ziqx.net"],
+                rules_preserved: !payload.data.replace_existing_rules,
+              },
+            ]
+          : [],
         containers_unchanged: !params.has("publish"),
       };
     case "server_access_check":

@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Release struct {
 	ID          string    `json:"id"`
@@ -26,6 +29,7 @@ type PublishedRoute struct {
 }
 
 type Project struct {
+	CaddyRoutes      []CaddyRoute               `json:"caddy_routes,omitempty" api:"private"`
 	ServiceRoutes    []ServiceRoute             `json:"service_routes,omitempty"`
 	PublishedRoute   *PublishedRoute            `json:"published_route,omitempty"`
 	ServiceInstances map[string]ServiceInstance `json:"service_instances,omitempty"`
@@ -54,6 +58,17 @@ type Project struct {
 	RecoveryDrain    bool                       `json:"recovery_drain_pending,omitempty"`
 }
 
+// CaddyRoute keeps reviewed site rules imported from the operator Caddyfile.
+// The upstream marker is rendered from the verified service binding, never
+// from a hostname or port supplied as arbitrary Caddy configuration.
+const CaddyUpstream = "{dockyard.upstream}"
+
+type CaddyRoute struct {
+	Domain  string `json:"domain"`
+	Address string `json:"address"`
+	Body    string `json:"body"`
+}
+
 // ServiceRoute assigns a group of hosts to a service's verified local binding.
 // Managed bindings are compiled into every future full-stack release.
 type ServiceRoute struct {
@@ -77,6 +92,13 @@ func ValidEnvironment(value string) bool {
 }
 
 func (p Project) ValidateTarget() error {
+	templates := map[string]bool{}
+	for _, route := range p.CaddyRoutes {
+		if !p.NativeCompose() || templates[route.Domain] || route.Domain == "" || route.Address == "" || strings.ContainsAny(route.Address, "\r\n\t {}") || len(route.Body) > 2<<20 || strings.Count(route.Body, CaddyUpstream) != 1 {
+			return Uncertain("CADDY_ROUTE_INVALID")
+		}
+		templates[route.Domain] = true
+	}
 	seen := map[string]bool{}
 	for _, route := range p.ServiceRoutes {
 		if !p.NativeCompose() || p.ZeroDowntime || route.Service == "" || route.ContainerPort < 1 || route.ContainerPort > 65535 || route.HostPort < 1 || route.HostPort > 65535 || len(route.Domains) == 0 {
@@ -138,10 +160,13 @@ func (p Project) Current() (Release, bool) {
 }
 
 type RouteEdit struct {
-	Mode   uint32 `json:"mode"`
-	Path   string `json:"path"`
-	Before string `json:"before"`
-	After  string `json:"after"`
+	LiveSHA256    string   `json:"live_sha256,omitempty"`
+	Domains       []string `json:"domains,omitempty"`
+	ManagedBefore *string  `json:"managed_before,omitempty"`
+	Mode          uint32   `json:"mode"`
+	Path          string   `json:"path"`
+	Before        string   `json:"before"`
+	After         string   `json:"after"`
 }
 
 type Input struct {
