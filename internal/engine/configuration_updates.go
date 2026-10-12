@@ -96,7 +96,22 @@ func (e *Engine) updateConfiguration(ctx context.Context, j *model.Job, p *model
 		if err := d.PromoteServiceUpdate(ctx, next, *plan); err != nil {
 			return err
 		}
-		if err := d.HealthyServiceUpdate(ctx, next, plan); err != nil {
+		// Network promotion may replace Docker's ephemeral host binding.
+		resolver, ok := e.Docker.(interface {
+			ResolveServiceRouteBindings(context.Context, *model.Project, *model.ServiceUpdate) error
+		})
+		if !ok {
+			return model.Uncertain("SERVICE_UPDATE_RECOVERY_REQUIRED")
+		}
+		if err := resolver.ResolveServiceRouteBindings(ctx, &next, plan); err != nil {
+			return model.Uncertain("SERVICE_UPDATE_RECOVERY_REQUIRED")
+		}
+		next.ServiceInstances[plan.Service] = plan.Instance
+		j.Input.Project = &next
+		if err := e.Store.Update(*j, nil); err != nil {
+			return model.Uncertain("STATE_WRITE_FAILED")
+		}
+		if err := d.HealthyServiceUpdate(ctx, next, *plan); err != nil {
 			return err
 		}
 	}
