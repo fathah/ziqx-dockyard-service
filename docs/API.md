@@ -29,9 +29,9 @@ The agent defaults to `https://127.0.0.1:9123`; it can bind an explicitly config
 | POST | `/v1/projects/{id}/image-prepare` | `deploy.execute` and server-wide `compose.admin` | Start/poll a selected-service image download; containers and routes stay running |
 | POST | `/v1/projects/{id}/service-update` | Same as preview; server-wide `compose.admin` required | Pull and update only the reviewed service; apply saved .env; skip only unchanged image and environment; preserve dependencies |
 | POST | `/v1/projects/{id}/rollback` | `deploy.rollback` | Activate a retained Compose/environment configuration |
-| POST | `/v1/projects/{id}/restart` | `deploy.execute` | Rolling in blue-green mode; downtime in single-slot mode |
+| POST | `/v1/projects/{id}/restart` | `deploy.execute`; also `deploy.environment` when applying a saved Compose `.env` | Rolling in blue-green mode; downtime in single-slot mode; 0.7.27+ applies the latest saved environment |
 | POST | `/v1/projects/{id}/stop` | `deploy.stop` | Confirmed maintenance route, drain, then stop identified services |
-| POST | `/v1/projects/{id}/start` | `deploy.lifecycle` | Restore the recorded release from stopped state |
+| POST | `/v1/projects/{id}/start` | `deploy.lifecycle`; also `deploy.environment` when applying a saved Compose `.env` | Restore the recorded release from stopped state; 0.7.27+ applies the latest saved environment |
 
 Mutations require `Content-Type: application/json`, stable `Idempotency-Key` and `X-Request-ID`, and have no query parameters. Retries must preserve actor, request ID, method, path, canonical scopes, and raw body, while refreshing timestamp/signature. The transport key may rotate. The identical stored acceptance envelope is returned even when the original job has completed; poll its job ID for the current outcome. Different content returns `409 IDEMPOTENCY_CONFLICT`; reusing a request ID under a different idempotency key returns `409 REQUEST_ID_CONFLICT`. The first version retains identity records until a planned archival mechanism is implemented.
 

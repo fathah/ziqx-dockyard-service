@@ -1256,7 +1256,24 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					}
 				}
 			}
-			if p.NativeCompose() && (p.RouteService != "" || p.PublishedRoute != nil || len(p.ServiceRoutes) > 0 || len(p.ServiceInstances) > 0) {
+			if p.NativeCompose() && action != "rollback" {
+				if _, _, saved := runtime.ReadDraft(e.Config, p); saved {
+					if !require(w, principal, "deploy.environment", id) {
+						return
+					}
+					preparer, ok := e.Docker.(runtime.NativeEnvironmentPreparer)
+					if !ok {
+						problem(w, 409, "COMPOSE_UNAVAILABLE", request)
+						return
+					}
+					release, err = runtime.PrepareRestartEnvironment(r.Context(), e.Config, preparer, p, release)
+					if err != nil {
+						fail(w, err, request)
+						return
+					}
+				}
+			}
+			if p.NativeCompose() {
 				if action == "rollback" {
 					release, err = runtime.RebindNativeRoute(e.Config, p, release)
 				} else {

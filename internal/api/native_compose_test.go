@@ -352,3 +352,62 @@ func TestDeployWithoutEnvUsesLatestSavedConfiguration(t *testing.T) {
 		t.Fatal("deployment reused stale environment", string(env), err)
 	}
 }
+
+func TestStartAndRestartQueueLatestSavedEnvironment(t *testing.T) {
+	for _, action := range []string{"start", "restart"} {
+		t.Run(action, func(t *testing.T) {
+			a, d, _, send := apiFixture(t)
+			a.Engine.Config.Keys[0].Projects = []string{"*"}
+			a.Engine.Config.Keys[0].Scopes = append(a.Engine.Config.Keys[0].Scopes, "compose.admin", "deploy.lifecycle")
+			a.Auth, _ = auth.New(a.Engine.Config)
+			prep := nativePreparer{d, a.Engine.Config}
+			a.Engine.Docker = prep
+			status := "running"
+			if action == "start" {
+				status = "stopped"
+			}
+			p := model.Project{ID: "demo", AppID: "demo", Mode: "compose", Environment: model.Production, State: status, Active: "blue", Slots: map[string]model.Release{}}
+			if err := runtime.Compose(a.Engine.Config, p); err != nil {
+				t.Fatal(err)
+			}
+			rel, err := prep.PrepareNative(context.Background(), p, "services: deployed", "TOKEN=old\n")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rel.ID = "rel-original"
+			p.Slots["blue"] = rel
+			p.Releases = []model.Release{rel}
+			original := model.Job{ID: "original", ProjectID: p.ID, Status: "succeeded", Created: time.Now(), Input: model.Input{Project: &p}}
+			if err = a.Engine.Store.Accept(original, &p, "original", "original", 10, 10); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = runtime.SaveDraft(a.Engine.Config, p, "unrelated draft Compose edits", "TOKEN=new\n"); err != nil {
+				t.Fatal(err)
+			}
+			path := "/v1/projects/demo/" + action
+			scope := "deploy.execute"
+			if action == "start" {
+				scope = "deploy.lifecycle"
+			}
+			if w := send("POST", path, `{}`, scope, "missing-env-scope"); w.Code != 403 {
+				t.Fatal("environment update was not authorized", w.Code, w.Body.String())
+			}
+			w := send("POST", path, `{}`, "deploy.environment "+scope, "latest-env")
+			if w.Code != 202 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			var accepted struct {
+				ID string `json:"job_id"`
+			}
+			json.Unmarshal(w.Body.Bytes(), &accepted)
+			job, err := a.Engine.Store.Job(accepted.ID)
+			if err != nil || job.Input.Release == nil {
+				t.Fatal(err, w.Body.String())
+			}
+			source, env, err := runtime.EditableConfiguration(a.Engine.Config, p, *job.Input.Release)
+			if err != nil || env != "TOKEN=new\n" || source != "services: deployed" {
+				t.Fatal("queued stale environment or draft Compose", err)
+			}
+		})
+	}
+}

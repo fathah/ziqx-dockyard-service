@@ -1,6 +1,6 @@
 {
   "source_commit": "local",
-  "version": "0.7.25",
-  "dockyard_sha256": "66a42d2455fa7e242870e9456a15927b086a0e0db71ed3f1d5583075ddb254ee",
-  "dockyardctl_sha256": "d91aeaa5876f48418c31c16e6829557b0cc9f13082402d78df229ed832d26a72"
+  "version": "0.7.27",
+  "dockyard_sha256": "07f1f70f9ce016783ff0ac5df9774ae6397545af9fcfcdc19499400e4953dc2f",
+  "dockyardctl_sha256": "3768118aa10e88c1adeb50cd9f0425a963d7901ad36e54c3c28798f5373886f2"
 }

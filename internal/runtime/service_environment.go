@@ -5,11 +5,74 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"path/filepath"
 	"reflect"
 
+	"github.com/ziqx/ziqx-dockyard-service/internal/config"
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
 	"github.com/ziqx/ziqx-dockyard-service/internal/secure"
 )
+
+type NativeEnvironmentPreparer interface {
+	PrepareNative(context.Context, model.Project, string, string) (model.Release, error)
+}
+
+// PrepareRestartEnvironment refreshes every service's environment from the saved
+// .env while retaining deployed Compose settings. Draft Compose edits are not
+// applied by Start/Restart. Rollback deliberately keeps its historical inputs.
+func PrepareRestartEnvironment(ctx context.Context, c config.Config, preparer NativeEnvironmentPreparer, p model.Project, current model.Release) (model.Release, error) {
+	_, dotenv, saved := ReadDraft(c, p)
+	if !saved {
+		return current, nil
+	}
+	source, _, err := EditableConfiguration(c, p, current)
+	if err != nil {
+		return current, err
+	}
+	resolved, err := preparer.PrepareNative(ctx, p, source, dotenv)
+	if err != nil {
+		return current, err
+	}
+	_, oldBytes, err := nativeRelease(c, p, current)
+	if err != nil {
+		return current, err
+	}
+	_, newBytes, err := nativeRelease(c, p, resolved)
+	if err != nil {
+		return current, err
+	}
+	var old, next map[string]any
+	if json.Unmarshal(oldBytes, &old) != nil || json.Unmarshal(newBytes, &next) != nil {
+		return current, model.Fail("COMPOSE_CONFIG_DIVERGED")
+	}
+	for name, raw := range object(old["services"]) {
+		svc := object(raw)
+		candidate := object(object(next["services"])[name])
+		if svc == nil || candidate == nil {
+			return current, model.Fail("COMPOSE_CONFIG_DIVERGED")
+		}
+		if candidate["environment"] == nil {
+			delete(svc, "environment")
+		} else {
+			svc["environment"] = candidate["environment"]
+		}
+	}
+	old["x-dockyard-env-sha256"] = next["x-dockyard-env-sha256"]
+	b, err := json.MarshalIndent(old, "", "  ")
+	if err != nil || len(b) > 2<<20 {
+		return current, model.Fail("COMPOSE_LIMIT")
+	}
+	sum := sha256.Sum256(b)
+	current.Compose = "cmp-" + hex.EncodeToString(sum[:])
+	current.Environment = resolved.Environment
+	if err = secure.Atomic(composeRevisionPath(c, p.ID, current.Compose), b, 0600); err != nil {
+		return current, err
+	}
+	if err = secure.Atomic(filepath.Join(projectDir(c, p.ID), "source", current.Compose+".yml"), []byte(source), 0600); err != nil {
+		return current, err
+	}
+	return current, nil
+}
 
 // PrepareServiceEnvironment applies the latest saved .env to just the reviewed
 // service. Draft Compose edits still require a configuration deployment.

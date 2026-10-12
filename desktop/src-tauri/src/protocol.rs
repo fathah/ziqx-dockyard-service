@@ -497,14 +497,14 @@ impl Mutation {
                 "POST",
                 project,
                 "start",
-                "deploy.lifecycle",
+                "deploy.environment deploy.lifecycle",
                 Ok("{}".into()),
             ),
             Self::Restart { project } => (
                 "POST",
                 project,
                 "restart",
-                "deploy.execute",
+                "deploy.environment deploy.execute",
                 Ok("{}".into()),
             ),
             Self::Stop {
@@ -758,6 +758,13 @@ mod tests {
         }
         .plan()
         .is_err());
+    }
+    #[test]
+    fn start_and_restart_authorize_saved_environment() {
+        let start = Mutation::Start { project: "demo".into() }.plan().unwrap();
+        assert_eq!(start.scopes, "deploy.environment deploy.lifecycle");
+        let restart = Mutation::Restart { project: "demo".into() }.plan().unwrap();
+        assert_eq!(restart.scopes, "deploy.environment deploy.execute");
     }
     #[test]
     fn signature_matches_go_fixture() {
