@@ -134,6 +134,20 @@ func (e *Engine) updateService(ctx context.Context, j *model.Job, p *model.Proje
 	if err := d.PromoteServiceUpdate(ctx, next, *plan); err != nil {
 		return err
 	}
+	// Reconnecting the last network can assign a new ephemeral host port.
+	// Journal the verified binding before checking health or switching routes.
+	if resolver, ok := e.Docker.(interface {
+		ResolveServiceRouteBindings(context.Context, *model.Project, *model.ServiceUpdate) error
+	}); ok {
+		if err := resolver.ResolveServiceRouteBindings(ctx, &next, plan); err != nil {
+			return model.Uncertain("SERVICE_UPDATE_RECOVERY_REQUIRED")
+		}
+		next.ServiceInstances[plan.Service] = plan.Instance
+		j.Input.Project = &next
+		if err := e.Store.Update(*j, nil); err != nil {
+			return model.Uncertain("STATE_WRITE_FAILED")
+		}
+	}
 	if err := d.HealthyServiceUpdate(ctx, next, *plan); err != nil {
 		return err
 	}

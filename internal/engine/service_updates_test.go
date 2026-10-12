@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -19,6 +20,95 @@ type updatingDocker struct {
 }
 
 type resolvingServiceDocker struct{ *updatingDocker }
+
+// Model Docker reassigning an automatic port when network aliases are promoted.
+type rebindingServiceDocker struct {
+	*updatingDocker
+	ports        map[string]int
+	failResolve  bool
+	checkJournal func(model.ServiceUpdate)
+}
+
+func (d *rebindingServiceDocker) ResolveServiceRouteBindings(_ context.Context, _ *model.Project, plan *model.ServiceUpdate) error {
+	*d.events = append(*d.events, "resolve-service-binding:"+plan.Instance.Name)
+	if d.failResolve && d.ports[plan.Instance.Name] >= 48000 {
+		return model.Fail("SERVICE_ROUTE_BINDING_UNAVAILABLE")
+	}
+	if d.ports[plan.Instance.Name] == 0 {
+		d.ports[plan.Instance.Name] = 47000 + len(d.ports)
+	}
+	plan.Instance.Port = d.ports[plan.Instance.Name]
+	return nil
+}
+
+func (d *rebindingServiceDocker) PromoteServiceUpdate(ctx context.Context, p model.Project, plan model.ServiceUpdate) error {
+	d.ports[plan.Instance.Name] += 1000
+	return d.updatingDocker.PromoteServiceUpdate(ctx, p, plan)
+}
+
+func (d *rebindingServiceDocker) HealthyServiceUpdate(ctx context.Context, p model.Project, plan model.ServiceUpdate) error {
+	if plan.Instance.Port != d.ports[plan.Instance.Name] || p.ServiceInstances[plan.Service].Port != plan.Instance.Port {
+		return model.Uncertain("CONTAINER_BINDING_DIVERGED")
+	}
+	d.checkJournal(plan)
+	return d.updatingDocker.HealthyServiceUpdate(ctx, p, plan)
+}
+
+func TestNetworkPromotionJournalsReassignedPortBeforeHealthAndCutover(t *testing.T) {
+	for _, configuration := range []bool{false, true} {
+		for _, failResolve := range []bool{false, true} {
+			name := map[bool]string{false: "service", true: "configuration"}[configuration] + map[bool]string{false: "/success", true: "/binding unavailable"}[failResolve]
+			t.Run(name, func(t *testing.T) {
+				fixture := assignedServiceFixture
+				if configuration {
+					fixture = configurationFixture
+				}
+				e, j, base, routes, events := fixture(t)
+				before := routes.live
+				d := &rebindingServiceDocker{updatingDocker: base, ports: map[string]int{}, failResolve: failResolve}
+				d.checkJournal = func(plan model.ServiceUpdate) {
+					stored, err := e.Store.Job(j.ID)
+					if err != nil || stored.Input.Project.ServiceInstances[plan.Service].Port != plan.Instance.Port {
+						t.Fatal("health check preceded binding journal", stored, err, plan)
+					}
+					plans := stored.Input.ConfigurationUpdates
+					if !configuration {
+						plans = []model.ServiceUpdate{*stored.Input.ServiceUpdate}
+					}
+					for _, saved := range plans {
+						if saved.Service == plan.Service && saved.Instance.Port != plan.Instance.Port {
+							t.Fatal("recovery plan retained stale port", saved, plan)
+						}
+					}
+				}
+				e.Docker = d
+				e.execute(context.Background(), j)
+				done, _ := e.Store.Job(j.ID)
+				p, _ := e.Store.Project(j.ProjectID)
+				if failResolve {
+					if done.Status != "recovery_required" || done.Error != "SERVICE_UPDATE_RECOVERY_REQUIRED" || routes.live != before || len(routes.writes) != 0 || strings.Contains(strings.Join(*events, ","), "stop-service:") {
+						t.Fatal("failed discovery switched traffic or discarded recovery evidence", done, routes.live, *events)
+					}
+					return
+				}
+				if done.Status != "succeeded" {
+					t.Fatal(done, *events)
+				}
+				for instance, port := range d.ports {
+					found := false
+					for _, active := range p.ServiceInstances {
+						if active.Name == instance && active.Port == port {
+							found = true
+						}
+					}
+					if !found || !strings.Contains(routes.live, "127.0.0.1:"+fmt.Sprint(port)) {
+						t.Fatal("cutover used stale binding", p, routes.live, d.ports)
+					}
+				}
+			})
+		}
+	}
+}
 
 func (d *resolvingServiceDocker) ResolveServiceRouteBindings(_ context.Context, p *model.Project, plan *model.ServiceUpdate) error {
 	*d.events = append(*d.events, "resolve-service-binding")

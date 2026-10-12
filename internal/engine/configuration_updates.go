@@ -91,8 +91,9 @@ func (e *Engine) updateConfiguration(ctx context.Context, j *model.Job, p *model
 	if err := e.phase(j, "service_network_intent"); err != nil {
 		return err
 	}
-	for _, plan := range j.Input.ConfigurationUpdates {
-		if err := d.PromoteServiceUpdate(ctx, next, plan); err != nil {
+	for i := range j.Input.ConfigurationUpdates {
+		plan := &j.Input.ConfigurationUpdates[i]
+		if err := d.PromoteServiceUpdate(ctx, next, *plan); err != nil {
 			return err
 		}
 		if err := d.HealthyServiceUpdate(ctx, next, plan); err != nil {
