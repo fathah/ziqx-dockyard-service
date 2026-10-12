@@ -1,6 +1,7 @@
 package model
 
 import (
+	"regexp"
 	"strings"
 	"time"
 )
@@ -29,6 +30,7 @@ type PublishedRoute struct {
 }
 
 type Project struct {
+	StorageFolder    string                     `json:"storage_folder,omitempty" api:"private"`
 	CaddyRoutes      []CaddyRoute               `json:"caddy_routes,omitempty" api:"private"`
 	ServiceRoutes    []ServiceRoute             `json:"service_routes,omitempty"`
 	PublishedRoute   *PublishedRoute            `json:"published_route,omitempty"`
@@ -92,6 +94,9 @@ func ValidEnvironment(value string) bool {
 }
 
 func (p Project) ValidateTarget() error {
+	if p.StorageFolder != "" && (!p.NativeCompose() || !regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`).MatchString(p.StorageFolder)) {
+		return Uncertain("PROJECT_TARGET_INVALID")
+	}
 	templates := map[string]bool{}
 	for _, route := range p.CaddyRoutes {
 		if !p.NativeCompose() || templates[route.Domain] || route.Domain == "" || route.Address == "" || strings.ContainsAny(route.Address, "\r\n\t {}") || len(route.Body) > 2<<20 || strings.Count(route.Body, CaddyUpstream) != 1 {

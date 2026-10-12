@@ -108,6 +108,9 @@ func (s Scanner) projects(ctx context.Context, v *model.Inventory, managed []mod
 	known := map[string]model.Project{}
 	for _, p := range managed {
 		known[p.ID] = p
+		if p.StorageFolder != "" {
+			known[p.StorageFolder] = p
+		}
 		if p.Adoption != nil {
 			known[p.Adoption.SourceName] = p
 		}

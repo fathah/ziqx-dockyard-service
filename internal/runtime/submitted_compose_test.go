@@ -197,11 +197,11 @@ func TestComposeRevisionsKeepSlotsIndependent(t *testing.T) {
 	f := &composeRecorder{c: c, p: p}
 	d := Docker{Config: c, Runner: f}
 	// An operator mirror change cannot select or mutate the live slot's file.
-	os.WriteFile(filepath.Join(projectDir(c, p.ID), "compose.yml"), []byte("mirror"), 0600)
+	os.WriteFile(filepath.Join(projectDir(c, p), "compose.yml"), []byte("mirror"), 0600)
 	if err := d.Start(context.Background(), p, "green"); err != nil {
 		t.Fatal(err)
 	}
-	if f.calls[0][6] != composeRevisionPath(c, p.ID, green.Compose) || strings.Contains(strings.Join(f.calls[0], " "), "--no-deps") {
+	if f.calls[0][6] != composeRevisionPath(c, p, green.Compose) || strings.Contains(strings.Join(f.calls[0], " "), "--no-deps") {
 		t.Fatal("candidate uses wrong file or ignores dependencies")
 	}
 	_, b, err := ReleaseCompose(c, p, blue)
@@ -217,7 +217,7 @@ func TestComposeRevisionsKeepSlotsIndependent(t *testing.T) {
 		}
 	}
 	calls := len(f.calls)
-	os.WriteFile(composeRevisionPath(c, p.ID, green.Compose), []byte("tampered"), 0600)
+	os.WriteFile(composeRevisionPath(c, p, green.Compose), []byte("tampered"), 0600)
 	if err := d.Start(context.Background(), p, "green"); err == nil || len(f.calls) != calls {
 		t.Fatal("executed tampered Compose")
 	}
@@ -319,7 +319,7 @@ func TestCachedServicesCannotBypassManifestIntegrity(t *testing.T) {
 	}
 	f := &composeRecorder{c: c, p: p}
 	d := Docker{Config: c, Runner: f, Store: s}
-	if err = os.Remove(composeRevisionPath(c, p.ID, r.Compose)); err != nil {
+	if err = os.Remove(composeRevisionPath(c, p, r.Compose)); err != nil {
 		t.Fatal(err)
 	}
 	if services, err := d.services(p, r); err != nil || len(services) != 2 {

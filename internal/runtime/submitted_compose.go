@@ -256,14 +256,14 @@ func ParseCompose(c config.Config, p model.Project, source string) (ComposePlan,
 	return plan, nil
 }
 
-func composeRevisionPath(c config.Config, id, revision string) string {
-	return filepath.Join(projectDir(c, id), "compose", revision+".yml")
+func composeRevisionPath(c config.Config, p model.Project, revision string) string {
+	return filepath.Join(projectDir(c, p), "compose", revision+".yml")
 }
 
 // PrepareCompose stores only our normalized, policy-enforced Compose model.
 // Every service environment is outside durable job/audit metadata.
 func PrepareCompose(c config.Config, p model.Project, plan ComposePlan, environment string) (string, error) {
-	dir := filepath.Join(projectDir(c, p.ID), "compose")
+	dir := filepath.Join(projectDir(c, p), "compose")
 	if err := secure.PrivateDir(dir); err != nil {
 		return "", err
 	}
@@ -283,7 +283,7 @@ func PrepareCompose(c config.Config, p model.Project, plan ComposePlan, environm
 		if name != "app" {
 			delete(compiled, "ports")
 			// Each revision owns a private directory of companion env files.
-			companionDir := filepath.Join(projectDir(c, p.ID), "env", environment)
+			companionDir := filepath.Join(projectDir(c, p), "env", environment)
 			if err := secure.PrivateDir(companionDir); err != nil {
 				return "", err
 			}
@@ -334,15 +334,15 @@ func PrepareCompose(c config.Config, p model.Project, plan ComposePlan, environm
 	}
 	h := sha256.Sum256(b)
 	revision := "cmp-" + hex.EncodeToString(h[:])
-	if err := secure.Atomic(composeRevisionPath(c, p.ID, revision), b, 0600); err != nil {
+	if err := secure.Atomic(composeRevisionPath(c, p, revision), b, 0600); err != nil {
 		return "", err
 	}
 	// Older projects used compose.yml directly. Preserve their verified legacy
 	// file before activation updates the operator-facing compose.yml mirror.
-	legacy := filepath.Join(projectDir(c, p.ID), "compose.legacy.yml")
+	legacy := filepath.Join(projectDir(c, p), "compose.legacy.yml")
 	if _, err := os.Lstat(legacy); os.IsNotExist(err) {
 		want, err := composeBytes(c, p)
-		actual, readErr := os.ReadFile(filepath.Join(projectDir(c, p.ID), "compose.yml"))
+		actual, readErr := os.ReadFile(filepath.Join(projectDir(c, p), "compose.yml"))
 		if err != nil || readErr != nil || !bytes.Equal(want, actual) {
 			return "", model.Uncertain("COMPOSE_CONFIG_DIVERGED")
 		}
@@ -372,9 +372,9 @@ func ReleaseCompose(c config.Config, p model.Project, r model.Release) (string, 
 	}
 	if r.Compose == "" {
 		want, err := composeBytes(c, p)
-		path := filepath.Join(projectDir(c, p.ID), "compose.legacy.yml")
+		path := filepath.Join(projectDir(c, p), "compose.legacy.yml")
 		if _, statErr := os.Lstat(path); os.IsNotExist(statErr) {
-			path = filepath.Join(projectDir(c, p.ID), "compose.yml")
+			path = filepath.Join(projectDir(c, p), "compose.yml")
 		}
 		actual, readErr := os.ReadFile(path)
 		if err != nil || readErr != nil || !bytes.Equal(want, actual) {
@@ -385,7 +385,7 @@ func ReleaseCompose(c config.Config, p model.Project, r model.Release) (string, 
 	if !composeRevision.MatchString(r.Compose) {
 		return "", nil, model.Uncertain("COMPOSE_CONFIG_DIVERGED")
 	}
-	path := composeRevisionPath(c, p.ID, r.Compose)
+	path := composeRevisionPath(c, p, r.Compose)
 	f, err := os.Open(path)
 	if err != nil {
 		return "", nil, model.Uncertain("COMPOSE_CONFIG_DIVERGED")

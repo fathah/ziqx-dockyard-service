@@ -209,7 +209,7 @@ func (d Docker) serviceCommand(ctx context.Context, p model.Project, instance mo
 	if err != nil {
 		return process.Result{}, err
 	}
-	f, err := os.CreateTemp(projectDir(d.Config, p.ID), ".service-binding-*")
+	f, err := os.CreateTemp(projectDir(d.Config, p), ".service-binding-*")
 	if err != nil {
 		return process.Result{}, err
 	}
@@ -221,7 +221,7 @@ func (d Docker) serviceCommand(ctx context.Context, p model.Project, instance mo
 	}
 	argv := d.args(p, p.Active, args...)
 	argv[6], argv[8] = path, f.Name()
-	return d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), argv)
+	return d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), argv)
 }
 
 func (d Docker) inspectServiceInstance(ctx context.Context, p model.Project, instance model.ServiceInstance) (Container, error) {
@@ -231,7 +231,7 @@ func (d Docker) inspectServiceInstance(ctx context.Context, p model.Project, ins
 	if err != nil || result.Truncated || len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" {
 		return zero, model.Fail("CONTAINER_UNAVAILABLE")
 	}
-	result, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"inspect", "--type", "container", id})
+	result, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"inspect", "--type", "container", id})
 	var cs []Container
 	if err != nil || result.Truncated || json.Unmarshal(result.Output, &cs) != nil || len(cs) != 1 {
 		return zero, model.Fail("DOCKER_UNAVAILABLE")
@@ -393,7 +393,7 @@ func (d Docker) PullServiceUpdate(ctx context.Context, p model.Project, plan *mo
 			return false, model.Fail("IMAGE_PULL_FAILED")
 		}
 	}
-	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"image", "inspect", image})
+	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"image", "inspect", image})
 	var images []struct {
 		ID     string `json:"Id"`
 		Config struct {
@@ -475,11 +475,11 @@ func (d Docker) PullServiceUpdate(ctx context.Context, p model.Project, plan *mo
 	}
 	sum := sha256.Sum256(b)
 	revision := "cmp-" + hex.EncodeToString(sum[:])
-	entries, err := os.ReadDir(projectDir(d.Config, p.ID) + "/compose")
+	entries, err := os.ReadDir(projectDir(d.Config, p) + "/compose")
 	if err != nil || len(entries) >= 500 {
 		return false, model.Fail("COMPOSE_LIMIT")
 	}
-	if err = secure.Atomic(composeRevisionPath(d.Config, p.ID, revision), b, 0600); err != nil {
+	if err = secure.Atomic(composeRevisionPath(d.Config, p, revision), b, 0600); err != nil {
 		return false, err
 	}
 	plan.Instance.Release.Compose = revision
@@ -562,7 +562,7 @@ func (d Docker) PromoteServiceUpdate(ctx context.Context, p model.Project, plan 
 		if connection, ok := c.NetworkSettings.Networks[name]; !ok || connection.NetworkID != plan.NetworkIDs[name] {
 			return model.Uncertain("SERVICE_NETWORK_CHANGED")
 		}
-		if _, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"network", "disconnect", plan.NetworkIDs[name], c.ID}); err != nil {
+		if _, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"network", "disconnect", plan.NetworkIDs[name], c.ID}); err != nil {
 			return model.Fail("SERVICE_NETWORK_PROMOTION_FAILED")
 		}
 		args := []string{"network", "connect"}
@@ -570,7 +570,7 @@ func (d Docker) PromoteServiceUpdate(ctx context.Context, p model.Project, plan 
 			args = append(args, "--alias", alias)
 		}
 		args = append(args, plan.NetworkIDs[name], c.ID)
-		if _, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), args); err != nil {
+		if _, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), args); err != nil {
 			return model.Fail("SERVICE_NETWORK_PROMOTION_FAILED")
 		}
 	}

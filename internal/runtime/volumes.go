@@ -24,7 +24,7 @@ func (d Docker) checkVolumes(ctx context.Context, p model.Project, slot string, 
 	project := "dy-" + d.Config.ServerID + "-" + p.ID + "-" + slot
 	for key := range document.Volumes {
 		name := project + "_" + key
-		result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"volume", "ls", "--filter", "name=" + name, "--format", "{{.Name}}"})
+		result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"volume", "ls", "--filter", "name=" + name, "--format", "{{.Name}}"})
 		if err != nil || result.Truncated {
 			return model.Fail("DOCKER_UNAVAILABLE")
 		}
@@ -38,7 +38,7 @@ func (d Docker) checkVolumes(ctx context.Context, p model.Project, slot string, 
 			}
 			continue
 		}
-		result, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"volume", "inspect", name})
+		result, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"volume", "inspect", name})
 		var volumes []struct {
 			Name, Driver, Scope string
 			Labels              map[string]string

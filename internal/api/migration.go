@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -166,9 +165,9 @@ func (a *API) adopt(w http.ResponseWriter, r *http.Request, principal auth.Princ
 			}
 		}
 	}
-	dir := filepath.Join(e.Config.ProjectsRoot, id)
-	if err = os.Mkdir(dir, 0700); err != nil {
-		problem(w, 409, "PROJECT_DIRECTORY_EXISTS", principal.RequestID)
+	dir, err := runtime.CreateAdoptedProjectDirectory(e.Config, p)
+	if err != nil {
+		fail(w, err, principal.RequestID)
 		return
 	}
 	acceptedProject := false

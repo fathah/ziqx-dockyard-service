@@ -14,7 +14,7 @@ import (
 // A draft is the operator's last saved Compose file and .env, kept verbatim
 // (not validated) so edits survive a failed or not-yet-run deployment.
 func draftDir(c config.Config, p model.Project) string {
-	return filepath.Join(projectDir(c, p.ID), "draft")
+	return filepath.Join(projectDir(c, p), "draft")
 }
 
 func draftSHA(compose, env string) string {

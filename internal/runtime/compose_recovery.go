@@ -105,7 +105,7 @@ func (d Docker) ObserveCompose(ctx context.Context, p model.Project) (*model.Rel
 
 func (d Docker) recoveryContainers(ctx context.Context, p model.Project) ([]Container, error) {
 	// Include orphans: Compose ps for a candidate can hide services from the old release.
-	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"ps", "--all", "--quiet", "--no-trunc", "--filter", "label=com.docker.compose.project=" + d.composeName(p, "blue")})
+	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"ps", "--all", "--quiet", "--no-trunc", "--filter", "label=com.docker.compose.project=" + d.composeName(p, "blue")})
 	if err != nil || result.Truncated {
 		return nil, model.Fail("DOCKER_UNAVAILABLE")
 	}
@@ -123,7 +123,7 @@ func (d Docker) recoveryContainers(ctx context.Context, p model.Project) ([]Cont
 	if len(ids) == 0 {
 		return []Container{}, nil
 	}
-	result, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), append([]string{"inspect", "--type", "container"}, ids...))
+	result, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), append([]string{"inspect", "--type", "container"}, ids...))
 	var containers []Container
 	if err != nil || result.Truncated || json.Unmarshal(result.Output, &containers) != nil || len(containers) != len(ids) {
 		return nil, model.Fail("DOCKER_UNAVAILABLE")
@@ -143,7 +143,7 @@ func (d Docker) recoveryHashes(ctx context.Context, p model.Project, r model.Rel
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.CreateTemp(projectDir(d.Config, p.ID), ".recovery-binding-*")
+	f, err := os.CreateTemp(projectDir(d.Config, p), ".recovery-binding-*")
 	if err != nil {
 		return nil, model.Fail("PROJECT_FILES_FAILED")
 	}
@@ -155,7 +155,7 @@ func (d Docker) recoveryHashes(ctx context.Context, p model.Project, r model.Rel
 	}
 	args := d.args(p, "blue", "config", "--hash", "*")
 	args[6], args[8] = path, f.Name()
-	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), args)
+	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), args)
 	if err != nil || result.Truncated {
 		return nil, model.Uncertain("COMPOSE_RECOVERY_HASH_UNAVAILABLE")
 	}

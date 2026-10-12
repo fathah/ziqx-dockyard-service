@@ -51,8 +51,8 @@ func TestFailureKeepsRedactedDockerTail(t *testing.T) {
 	c := config.Config{ProjectsRoot: t.TempDir()}
 	d := Docker{Config: c}
 	p := model.Project{ID: "demo"}
-	os.MkdirAll(filepath.Join(projectDir(c, p.ID), "env"), 0700)
-	os.WriteFile(filepath.Join(projectDir(c, p.ID), "env", "env-1.env"), []byte("DB_PASSWORD=hunter2hunter2\n"), 0600)
+	os.MkdirAll(filepath.Join(projectDir(c, p), "env"), 0700)
+	os.WriteFile(filepath.Join(projectDir(c, p), "env", "env-1.env"), []byte("DB_PASSWORD=hunter2hunter2\n"), 0600)
 	stderr := strings.Repeat("noise\n", 40) + "Error: bind for 0.0.0.0:3000 failed: port is already allocated (password hunter2hunter2)"
 	err := d.failure(p, "CONTAINER_START_FAILED", process.Result{Stderr: []byte(stderr)})
 	var f *model.Fault

@@ -69,7 +69,7 @@ func TestAdoptionPreservesResourcesAndBindsApproval(t *testing.T) {
 		t.Fatal("unstable plan", err)
 	}
 	p := model.Project{ID: "existing-abc", Mode: "compose", Adoption: &plan.Identity}
-	os.Mkdir(projectDir(d.Config, p.ID), 0700)
+	os.Mkdir(projectDir(d.Config, p), 0700)
 	release, err := d.PrepareNative(ctx, p, plan.Source, plan.Dotenv)
 	if err != nil {
 		t.Fatal(err)

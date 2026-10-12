@@ -30,7 +30,7 @@ func (d Docker) nativeContainers(ctx context.Context, p model.Project, slot stri
 			return nil, model.Uncertain("CONTAINER_OWNERSHIP_UNKNOWN")
 		}
 	}
-	result, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), append([]string{"inspect", "--type", "container"}, ids...))
+	result, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), append([]string{"inspect", "--type", "container"}, ids...))
 	var containers []Container
 	if err != nil || result.Truncated || json.Unmarshal(result.Output, &containers) != nil || len(containers) != len(ids) {
 		return nil, model.Fail("DOCKER_UNAVAILABLE")

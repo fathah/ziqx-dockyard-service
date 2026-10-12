@@ -104,6 +104,9 @@ func (a *API) blueGreen(w http.ResponseWriter, r *http.Request, principal auth.P
 		return
 	}
 	next := p
+	if p.Adoption != nil {
+		next.StorageFolder = p.Adoption.SourceName
+	}
 	next.Adoption = nil
 	next.ExternalDomains = nil
 	next.ZeroDowntime = true

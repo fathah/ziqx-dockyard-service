@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -93,6 +95,12 @@ func TestPublishedRouteLimitsSeamlessUpdatesToItsWebsiteService(t *testing.T) {
 	d, p, _ := runtimeServiceFixture(t)
 	p.RouteService = ""
 	p.Adoption = &model.Adoption{SourceName: "legacy", ComposeProject: "legacy"}
+	if err := os.Mkdir(filepath.Join(d.Config.ProjectsRoot, "legacy"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := ConsolidateAdoptedProjectDirectory(d.Config, p); err != nil {
+		t.Fatal(err)
+	}
 	p.PublishedRoute = &model.PublishedRoute{Service: "web", ContainerPort: 3000, HostPort: 3031}
 	p.BluePort = 3031
 	options, err := ServiceUpdateOptions(d.Config, p)

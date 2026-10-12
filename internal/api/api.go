@@ -1039,7 +1039,7 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 				} else if _, saved, ok := runtime.ReadDraft(e.Config, p); ok {
 					dotenv = saved
 				} else if current, ok := p.Current(); ok {
-					b, readErr := os.ReadFile(filepath.Join(e.Config.ProjectsRoot, id, "env", current.Environment+".env"))
+					b, readErr := os.ReadFile(runtime.EnvironmentPath(e.Config, p, current.Environment))
 					if readErr != nil {
 						fail(w, model.Fail("ENVIRONMENT_UNAVAILABLE"), request)
 						return
@@ -1409,5 +1409,6 @@ func accepted(w http.ResponseWriter, j model.Job) {
 func publicProject(p model.Project) model.Project {
 	// Imported Caddy bodies can contain auth hashes or private header values.
 	p.CaddyRoutes = nil
+	p.StorageFolder = ""
 	return p
 }

@@ -89,8 +89,12 @@ type serviceEnvironmentComposeRunner struct {
 }
 
 func (r serviceEnvironmentComposeRunner) Run(ctx context.Context, binary, dir string, args []string) (process.Result, error) {
-	if args[0] == "compose" && len(args) > 9 && (args[9] == "config" || args[9] == "--profile") {
-		return r.compose.Run(ctx, binary, dir, args)
+	if args[0] == "compose" {
+		for _, arg := range args {
+			if arg == "config" {
+				return r.compose.Run(ctx, binary, dir, args)
+			}
+		}
 	}
 	return r.serviceRunner.Run(ctx, binary, dir, args)
 }
@@ -140,6 +144,112 @@ func TestServiceEnvironmentRefreshWithRealComposeAndUnchangedImage(t *testing.T)
 			env := object(object(object(doc["services"])[plan.Instance.Name])["environment"])
 			if env["ZIQX_CORE_INTERNAL_URL"] != "https://ziqx.cc" || env["REMOVED"] != nil {
 				t.Fatal("replacement retained old environment")
+			}
+		})
+	}
+}
+
+func TestAdoptedEnvironmentUsesOriginalRulesInsteadOfFrozenValues(t *testing.T) {
+	if os.Getenv("DOCKYARD_COMPOSE_TEST") != "1" {
+		t.Skip("real Compose parser opt-in")
+	}
+	binary, err := exec.LookPath("docker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	home, _ := os.UserHomeDir()
+	for _, mode := range []string{"restart", "seamless"} {
+		t.Run(mode, func(t *testing.T) {
+			d, p, runner := runtimeServiceFixture(t)
+			d.Config.DockerBinary = binary
+			d.Runner = serviceEnvironmentComposeRunner{runner, process.Exec{Timeout: 20 * time.Second, Limit: 2 << 20, DockerConfig: filepath.Join(home, ".docker")}}
+			source := "services:\n  web:\n    image: busybox:latest\n    env_file: .env\n    environment:\n      ZIQX_CORE_INTERNAL_URL: ${ZIQX_CORE_INTERNAL_URL}\n      LITERAL: '$$HOME'\n    healthcheck:\n      test: [CMD, 'true']\n    networks: [default]\nnetworks:\n  default:\n    name: original_default\n"
+			original := filepath.Join(d.Config.ProjectsRoot, "original-app")
+			if err := os.Mkdir(original, 0700); err != nil {
+				t.Fatal(err)
+			}
+			configFile := filepath.Join(original, "compose.yml")
+			if err := os.WriteFile(configFile, []byte(source), 0600); err != nil {
+				t.Fatal(err)
+			}
+			oldEnv := "ZIQX_CORE_INTERNAL_URL=http://host.docker.internal:2999\nREMOVED=old\n"
+			if err := os.WriteFile(filepath.Join(original, ".env"), []byte(oldEnv), 0600); err != nil {
+				t.Fatal(err)
+			}
+			// Simulate an old adoption baseline, with inline values already resolved.
+			frozen := strings.ReplaceAll(source, "${ZIQX_CORE_INTERNAL_URL}", "http://host.docker.internal:2999")
+			frozen = strings.ReplaceAll(frozen, "    env_file: .env\n", "")
+			old, err := d.PrepareNative(context.Background(), p, frozen, oldEnv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old.ID = "rel-adopted"
+			p.Slots["blue"] = old
+			p.Releases = []model.Release{old}
+			p.Adoption = &model.Adoption{SourceName: "original-app", ComposeProject: "dy-vps-01-demo-blue", ConfigFiles: []string{configFile}}
+			if err := ConsolidateAdoptedProjectDirectory(d.Config, p); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := SaveDraft(d.Config, p, frozen, "ZIQX_CORE_INTERNAL_URL=https://ziqx.cc\n"); err != nil {
+				t.Fatal(err)
+			}
+			check := func(release model.Release, service string) {
+				_, b, err := nativeRelease(d.Config, p, release)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var doc map[string]any
+				json.Unmarshal(b, &doc)
+				env := object(object(object(doc["services"])[service])["environment"])
+				if env["ZIQX_CORE_INTERNAL_URL"] != "https://ziqx.cc" || env["REMOVED"] != nil || env["LITERAL"] != "$$HOME" {
+					t.Fatal("adopted environment retained frozen values or interpolated a literal", env)
+				}
+			}
+			full, err := PrepareRestartEnvironment(context.Background(), d.Config, d, p, old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(full, "web")
+			runner.image = runner.containers["web"].Image
+			plan, err := d.PlanServiceUpdate(context.Background(), p, "web", mode, 3000, 3010, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := d.PrepareServiceEnvironment(context.Background(), p, &plan); err != nil {
+				t.Fatal(err)
+			}
+			plan.PreparedImage = runner.image
+			if changed, err := d.PullServiceUpdate(context.Background(), p, &plan); err != nil || !changed {
+				t.Fatal("adopted same-image env update skipped", changed, err)
+			}
+			check(plan.Instance.Release, plan.Instance.Name)
+			if b, err := os.ReadFile(configFile); err != nil || string(b) != source {
+				t.Fatal("overwrote original Compose rules")
+			}
+			// A later full deployment can change the environment rules. Restarts
+			// must then use that deployed source, rather than resurrecting old rules.
+			newSource := strings.ReplaceAll(source, "${ZIQX_CORE_INTERNAL_URL}", "${NEW_INTERNAL_URL}")
+			deployed, err := d.PrepareNative(context.Background(), p, newSource, "NEW_INTERNAL_URL=https://first.example.com\n")
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.Slots["blue"] = deployed
+			p.Releases = append(p.Releases, deployed)
+			if _, err := SaveDraft(d.Config, p, newSource, "NEW_INTERNAL_URL=https://second.example.com\n"); err != nil {
+				t.Fatal(err)
+			}
+			updated, err := PrepareRestartEnvironment(context.Background(), d.Config, d, p, deployed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, b, err := nativeRelease(d.Config, p, updated)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var doc map[string]any
+			json.Unmarshal(b, &doc)
+			if object(object(object(doc["services"])["web"])["environment"])["ZIQX_CORE_INTERNAL_URL"] != "https://second.example.com" {
+				t.Fatal("restart ignored newly deployed environment rules")
 			}
 		})
 	}

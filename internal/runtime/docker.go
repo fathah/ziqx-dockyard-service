@@ -31,10 +31,10 @@ type Container struct {
 	Image  string `json:"Image"`
 	Config struct {
 		ExposedPorts map[string]json.RawMessage `json:"ExposedPorts"`
-		Image       string            `json:"Image"`
-		Env         []string          `json:"Env"`
-		Labels      map[string]string `json:"Labels"`
-		Healthcheck struct {
+		Image        string                     `json:"Image"`
+		Env          []string                   `json:"Env"`
+		Labels       map[string]string          `json:"Labels"`
+		Healthcheck  struct {
 			Test []string `json:"Test"`
 		} `json:"Healthcheck"`
 	} `json:"Config"`
@@ -65,13 +65,10 @@ func (d Docker) composeName(p model.Project, slot string) string {
 	return "dy-" + d.Config.ServerID + "-" + p.ID + "-" + slot
 }
 func (d Docker) workingDir(p model.Project) string {
-	if p.Adoption != nil {
-		return filepath.Join(d.Config.ProjectsRoot, p.Adoption.SourceName)
-	}
-	return projectDir(d.Config, p.ID)
+	return ProjectWorkingDirectory(d.Config, p)
 }
 func (d Docker) args(p model.Project, slot string, args ...string) []string {
-	base := []string{"compose", "--project-name", d.composeName(p, slot), "--project-directory", d.workingDir(p), "--file", filepath.Join(projectDir(d.Config, p.ID), "compose.yml"), "--env-file", bindingPath(d.Config, p.ID, slot)}
+	base := []string{"compose", "--project-name", d.composeName(p, slot), "--project-directory", d.workingDir(p), "--file", filepath.Join(projectDir(d.Config, p), "compose.yml"), "--env-file", bindingPath(d.Config, p, slot)}
 	return append(base, args...)
 }
 func (d Docker) command(ctx context.Context, p model.Project, slot string, args ...string) (process.Result, error) {
@@ -81,14 +78,14 @@ func (d Docker) command(ctx context.Context, p model.Project, slot string, args 
 	}
 	argv := d.args(p, slot, args...)
 	argv[6] = path
-	return d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), argv)
+	return d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), argv)
 }
 func (d Docker) releaseCommand(ctx context.Context, p model.Project, r model.Release, code string, args ...string) error {
 	path, _, err := ReleaseCompose(d.Config, p, r)
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(projectDir(d.Config, p.ID), ".compose-binding-*")
+	f, err := os.CreateTemp(projectDir(d.Config, p), ".compose-binding-*")
 	if err != nil {
 		return model.Fail("PROJECT_FILES_FAILED")
 	}
@@ -103,7 +100,7 @@ func (d Docker) releaseCommand(ctx context.Context, p model.Project, r model.Rel
 		argv[2] = "dy-" + d.Config.ServerID + "-" + p.ID + "-validation"
 	}
 	argv[6], argv[8] = path, f.Name()
-	res, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), argv)
+	res, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), argv)
 	if err != nil {
 		var fault *model.Fault
 		if errors.As(err, &fault) {
@@ -194,7 +191,7 @@ func (d Docker) inspectService(ctx context.Context, p model.Project, slot, servi
 			return c, model.Fail("CONTAINER_UNAVAILABLE")
 		}
 	}
-	res, e = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"inspect", "--type", "container", id})
+	res, e = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"inspect", "--type", "container", id})
 	var containers []Container
 	if e != nil || res.Truncated || json.Unmarshal(res.Output, &containers) != nil || len(containers) != 1 {
 		return c, model.Fail("DOCKER_UNAVAILABLE")
@@ -237,9 +234,9 @@ func (d Docker) Healthy(ctx context.Context, p model.Project, slot string, r mod
 				return model.Uncertain("CONTAINER_OWNERSHIP_UNKNOWN")
 			}
 		}
-		envFile := envPath(d.Config, p.ID, r.Environment)
+		envFile := envPath(d.Config, p, r.Environment)
 		if name != "app" {
-			envFile = filepath.Join(projectDir(d.Config, p.ID), "env", r.Environment, name+".env")
+			envFile = filepath.Join(projectDir(d.Config, p), "env", r.Environment, name+".env")
 		}
 		variables, err := os.ReadFile(envFile)
 		if err != nil {
@@ -291,7 +288,7 @@ func (d Docker) Healthy(ctx context.Context, p model.Project, slot string, r mod
 		if len(mounts) != 0 {
 			return model.Uncertain("CONTAINER_MOUNT_DIVERGED")
 		}
-		res, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"image", "inspect", "--format", "{{.Id}}", image})
+		res, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"image", "inspect", "--format", "{{.Id}}", image})
 		if err != nil || res.Truncated || strings.TrimSpace(string(res.Output)) != c.Image {
 			return model.Uncertain("IMAGE_IDENTITY_UNKNOWN")
 		}
@@ -440,7 +437,7 @@ func (d Docker) services(p model.Project, r model.Release) (map[string]runtimeSe
 // secrets lists every retained environment value for redaction, including
 // inactive and rolled-back releases.
 func (d Docker) secrets(p model.Project) ([]string, error) {
-	envRoot := filepath.Join(projectDir(d.Config, p.ID), "env")
+	envRoot := filepath.Join(projectDir(d.Config, p), "env")
 	var files []string
 	err := filepath.WalkDir(envRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil || entry.Type()&os.ModeSymlink != 0 {

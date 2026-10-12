@@ -17,6 +17,47 @@ type NativeEnvironmentPreparer interface {
 	PrepareNative(context.Context, model.Project, string, string) (model.Release, error)
 }
 
+// Adoption baselines freeze resolved values for ownership checks. Re-resolve
+// environment from the original Compose rules, so those baseline values cannot
+// override a newer saved .env. Callers merge only environment into the baseline.
+func (d Docker) EnvironmentSource(ctx context.Context, p model.Project, current model.Release) (string, string, error) {
+	source, dotenv, err := EditableConfiguration(d.Config, p, current)
+	if err != nil || p.Adoption == nil {
+		return source, dotenv, err
+	}
+	// Once a configuration deployment supplies different Compose rules, those
+	// become authoritative. Only the original frozen adoption baseline needs
+	// its environment rules recovered from the preserved source files.
+	if len(p.Releases) > 0 {
+		if baseline, err := ComposeMirror(d.Config, p, p.Releases[0]); err == nil && string(baseline) != source {
+			return source, dotenv, nil
+		}
+	}
+	dir := d.workingDir(p)
+	if err := adoptedSourceDirectory(d.Config, p); err != nil {
+		return "", "", err
+	}
+	if len(p.Adoption.ConfigFiles) == 0 || len(p.Adoption.ConfigFiles) > 16 {
+		return "", "", model.Fail("MIGRATION_SOURCE_UNSAFE")
+	}
+	args := []string{"compose", "--project-name", p.Adoption.ComposeProject, "--project-directory", dir}
+	for _, file := range p.Adoption.ConfigFiles {
+		if _, err := adoptionRead(dir, file, 64<<10); err != nil {
+			return "", "", err
+		}
+		args = append(args, "--file", file)
+	}
+	args = append(args, "config", "--format", "json", "--no-interpolate", "--no-env-resolution")
+	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, dir, args)
+	if err != nil || result.Truncated || len(result.Output) > 64<<10 {
+		return "", "", model.Fail("COMPOSE_VALIDATION_FAILED")
+	}
+	// Keep interpolation references and literal-dollar escapes intact for the
+	// normal resolution passes against the saved .env.
+	source = string(result.Output)
+	return source, dotenv, nil
+}
+
 // PrepareRestartEnvironment refreshes every service's environment from the saved
 // .env while retaining deployed Compose settings. Draft Compose edits are not
 // applied by Start/Restart. Rollback deliberately keeps its historical inputs.
@@ -28,6 +69,14 @@ func PrepareRestartEnvironment(ctx context.Context, c config.Config, preparer Na
 	source, _, err := EditableConfiguration(c, p, current)
 	if err != nil {
 		return current, err
+	}
+	if resolver, ok := preparer.(interface {
+		EnvironmentSource(context.Context, model.Project, model.Release) (string, string, error)
+	}); ok {
+		source, _, err = resolver.EnvironmentSource(ctx, p, current)
+		if err != nil {
+			return current, err
+		}
 	}
 	resolved, err := preparer.PrepareNative(ctx, p, source, dotenv)
 	if err != nil {
@@ -65,10 +114,10 @@ func PrepareRestartEnvironment(ctx context.Context, c config.Config, preparer Na
 	sum := sha256.Sum256(b)
 	current.Compose = "cmp-" + hex.EncodeToString(sum[:])
 	current.Environment = resolved.Environment
-	if err = secure.Atomic(composeRevisionPath(c, p.ID, current.Compose), b, 0600); err != nil {
+	if err = secure.Atomic(composeRevisionPath(c, p, current.Compose), b, 0600); err != nil {
 		return current, err
 	}
-	if err = secure.Atomic(filepath.Join(projectDir(c, p.ID), "source", current.Compose+".yml"), []byte(source), 0600); err != nil {
+	if err = secure.Atomic(filepath.Join(projectDir(c, p), "source", current.Compose+".yml"), []byte(source), 0600); err != nil {
 		return current, err
 	}
 	return current, nil
@@ -78,7 +127,7 @@ func PrepareRestartEnvironment(ctx context.Context, c config.Config, preparer Na
 // service. Draft Compose edits still require a configuration deployment.
 func (d Docker) PrepareServiceEnvironment(ctx context.Context, p model.Project, plan *model.ServiceUpdate) error {
 	current, _ := p.Current()
-	source, dotenv, err := EditableConfiguration(d.Config, p, current)
+	source, dotenv, err := d.EnvironmentSource(ctx, p, current)
 	if err != nil {
 		return err
 	}
@@ -150,7 +199,7 @@ func (d Docker) PrepareServiceEnvironment(ctx context.Context, p model.Project, 
 	}
 	sum := sha256.Sum256(b)
 	release.Compose = "cmp-" + hex.EncodeToString(sum[:])
-	if err = secure.Atomic(composeRevisionPath(d.Config, p.ID, release.Compose), b, 0600); err != nil {
+	if err = secure.Atomic(composeRevisionPath(d.Config, p, release.Compose), b, 0600); err != nil {
 		return err
 	}
 	plan.SourceRelease = &release

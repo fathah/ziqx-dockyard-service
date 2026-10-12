@@ -104,8 +104,11 @@ func TestAdoptionIsScopedDurableAndDoesNotRestartStack(t *testing.T) {
 	if err != nil || p.State != "running" || p.Adoption == nil || p.ZeroDowntime {
 		t.Fatal(p, err)
 	}
-	if _, err := os.Stat(filepath.Join(a.Engine.Config.ProjectsRoot, id, "blue.env")); err != nil {
+	if _, err := os.Stat(filepath.Join(source, ".dockyard", "blue.env")); err != nil {
 		t.Fatal("missing active slot binding", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.Engine.Config.ProjectsRoot, id)); !os.IsNotExist(err) {
+		t.Fatal("adoption created a second project directory")
 	}
 	services, err := a.Engine.Store.Services(id)
 	if err != nil || len(services) != 1 {
@@ -121,7 +124,37 @@ func TestAdoptionIsScopedDurableAndDoesNotRestartStack(t *testing.T) {
 	if err != nil || !inv.Projects[0].Managed {
 		t.Fatal("inventory not adopted", err)
 	}
+	// Simulate a VPS upgraded from the old two-folder layout. Startup must
+	// consolidate its saved files without changing project/container identity.
+	if err = os.Rename(filepath.Join(source, ".dockyard"), filepath.Join(a.Engine.Config.ProjectsRoot, id)); err != nil {
+		t.Fatal(err)
+	}
 	if err = a.Engine.Initialize(); err != nil {
 		t.Fatal("restart lost adoption", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.Engine.Config.ProjectsRoot, id)); !os.IsNotExist(err) {
+		t.Fatal("startup kept the duplicate directory")
+	}
+	if _, err := os.Stat(filepath.Join(source, ".dockyard", "blue.env")); err != nil {
+		t.Fatal("startup lost adopted bindings", err)
+	}
+	// If another project prevents startup, keep the previous binary's layout
+	// usable for updater rollback rather than leaving half an upgrade behind.
+	if err := os.Rename(filepath.Join(source, ".dockyard"), filepath.Join(a.Engine.Config.ProjectsRoot, id)); err != nil {
+		t.Fatal(err)
+	}
+	broken := model.Project{ID: "zz-broken", AppID: "zz-broken", Mode: "compose", Environment: model.Production, State: "running", Active: "blue", Slots: map[string]model.Release{"blue": {ID: "rel-bad", Compose: "cmp-bad", Environment: "env-bad"}}}
+	badJob := model.Job{ID: "job-broken", ProjectID: broken.ID, Status: "succeeded", Created: time.Now(), Input: model.Input{Project: &broken}}
+	if err := a.Engine.Store.Accept(badJob, &broken, "broken", "broken", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Engine.Initialize(); err == nil {
+		t.Fatal("invalid project did not fail startup")
+	}
+	if _, err := os.Stat(filepath.Join(a.Engine.Config.ProjectsRoot, id, "blue.env")); err != nil {
+		t.Fatal("failed startup did not restore the old layout", err)
+	}
+	if _, err := os.Stat(filepath.Join(source, ".dockyard")); !os.IsNotExist(err) {
+		t.Fatal("failed startup left a partial relocation")
 	}
 }

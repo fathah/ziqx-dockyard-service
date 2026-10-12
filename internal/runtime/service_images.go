@@ -79,7 +79,7 @@ func (d Docker) CheckServiceImages(ctx context.Context, p model.Project) ([]Imag
 			continue
 		}
 		status.CurrentImage = c.Image
-		local, e := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"image", "inspect", c.Image})
+		local, e := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"image", "inspect", c.Image})
 		var platform []struct {
 			ID           string `json:"Id"`
 			OS           string `json:"Os"`
@@ -93,7 +93,7 @@ func (d Docker) CheckServiceImages(ctx context.Context, p model.Project) ([]Imag
 		}
 		raw, found := manifests[refs[name]]
 		if !found {
-			result, e := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"manifest", "inspect", "--verbose", refs[name]})
+			result, e := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"manifest", "inspect", "--verbose", refs[name]})
 			if e != nil || result.Truncated {
 				status.Error = "REGISTRY_CHECK_FAILED"
 				statuses = append(statuses, status)
@@ -188,7 +188,7 @@ func (d Docker) PrepareServiceImage(ctx context.Context, p model.Project, servic
 	if _, err = d.serviceCommand(ctx, p, model.ServiceInstance{Name: service, Release: r}, "pull", service); err != nil {
 		return "", model.Fail("IMAGE_PULL_FAILED")
 	}
-	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"image", "inspect", image})
+	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"image", "inspect", image})
 	var images []struct {
 		ID string `json:"Id"`
 	}

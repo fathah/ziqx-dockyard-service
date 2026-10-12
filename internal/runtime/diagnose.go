@@ -18,7 +18,7 @@ func (d Docker) explainStart(ctx context.Context, p model.Project, slot string) 
 	if w == nil {
 		return
 	}
-	res, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"ps", "--all", "--quiet", "--no-trunc", "--filter", "label=com.docker.compose.project=" + d.composeName(p, slot)})
+	res, err := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"ps", "--all", "--quiet", "--no-trunc", "--filter", "label=com.docker.compose.project=" + d.composeName(p, slot)})
 	if err != nil {
 		return
 	}
@@ -26,7 +26,7 @@ func (d Docker) explainStart(ctx context.Context, p model.Project, slot string) 
 	if len(ids) == 0 || len(ids) > 50 {
 		return
 	}
-	res, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), append([]string{"inspect", "--type", "container"}, ids...))
+	res, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), append([]string{"inspect", "--type", "container"}, ids...))
 	if err != nil {
 		return
 	}
@@ -84,7 +84,7 @@ func (d Docker) explainStart(ctx context.Context, p model.Project, slot string) 
 			}
 			fmt.Fprintf(w, "Healthcheck (exit %d): %s\n", last.ExitCode, output)
 		}
-		logs, _ := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p.ID), []string{"logs", "--tail", "40", c.ID})
+		logs, _ := d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"logs", "--tail", "40", c.ID})
 		if out := strings.TrimSpace(string(logs.Output) + string(logs.Stderr)); out != "" {
 			fmt.Fprintf(w, "Last log lines:\n%s\n", out)
 		}

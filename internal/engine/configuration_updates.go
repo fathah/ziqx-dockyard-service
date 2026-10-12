@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"reflect"
 	"time"
 
@@ -163,14 +162,14 @@ func (e *Engine) updateConfiguration(ctx context.Context, j *model.Job, p *model
 func (e *Engine) configurationMirrors(j *model.Job, p model.Project) {
 	r := *j.Input.Release
 	runtime.ClearDraft(e.Config, p, j.Input.DraftSHA)
-	if b, err := os.ReadFile(filepath.Join(e.Config.ProjectsRoot, p.ID, "env", r.Environment+".env")); err != nil {
+	if b, err := os.ReadFile(runtime.EnvironmentPath(e.Config, p, r.Environment)); err != nil {
 		j.Warning = "ENVIRONMENT_MIRROR_FAILED"
-	} else if err := secure.Atomic(filepath.Join(e.Config.ProjectsRoot, p.ID, ".env"), b, 0600); err != nil {
+	} else if err := secure.Atomic(runtime.ProjectMirrorPath(e.Config, p, ".env"), b, 0600); err != nil {
 		j.Warning = "ENVIRONMENT_MIRROR_FAILED"
 	}
 	if b, err := runtime.ComposeMirror(e.Config, p, r); err != nil {
 		j.Warning = "COMPOSE_MIRROR_FAILED"
-	} else if err := secure.Atomic(filepath.Join(e.Config.ProjectsRoot, p.ID, "compose.yml"), b, 0600); err != nil {
+	} else if err := secure.Atomic(runtime.ProjectMirrorPath(e.Config, p, "compose.yml"), b, 0600); err != nil {
 		j.Warning = "COMPOSE_MIRROR_FAILED"
 	}
 }

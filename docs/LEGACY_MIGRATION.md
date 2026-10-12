@@ -1,17 +1,25 @@
 # Existing-project migration
 
-After a successful deployment, Dockyard writes operator copies of `compose.yml`
-and `.env` under `/docker/<managed-project-id>`. Imported projects retain their
-original Compose working directory for build contexts and relative files, but
-deployment uses verified release snapshots in the managed folder. Original
-Compose files under `/docker/<source-name>` are preserved. Check the managed
-folder when verifying edits; `COMPOSE_MIRROR_FAILED` or `ENVIRONMENT_MIRROR_FAILED`
+From VPS service **0.7.28**, imported projects use one application folder:
+`/docker/<source-name>`. Private revisions, saved drafts, slot bindings and the
+deployed Compose mirror live under its `.dockyard` subdirectory. The original
+Compose files, build contexts, data and working directory stay in place; the
+active `.env` mirror is written in the application folder after deployment.
+On startup, Dockyard moves the previous `/docker/existing-<hash>` metadata
+directory into the original folder's `.dockyard` and regenerates absolute slot
+bindings. Project IDs, job history, container identities, mounts and routes are
+retained. A conflicting destination is never overwritten. New migrations do
+not create a second top-level directory. `COMPOSE_MIRROR_FAILED` or `ENVIRONMENT_MIRROR_FAILED`
 means a copy could not be written after activation, while containers use the
 immutable release files.
 
 The desktop configuration editor reads the saved release snapshot. Editing a
 VPS Compose file or running `docker compose up -d` outside Dockyard does not
-import those edits or update Dockyard's recorded deployment state. A failed
+import those edits or update Dockyard's recorded deployment state. Environment
+updates resolve the original Compose environment rules against the latest saved
+`.env`, including older adoption baselines that froze resolved inline values.
+Only environment changes are merged into service updates and Start/Restart;
+other Compose changes require a configuration deployment. A failed
 deployment does not activate the candidate or replace the operator copies.
 
 With VPS service 0.7.4+, open the project's **Domains → Configure route** to
@@ -44,7 +52,7 @@ Service 0.4.0 supports in-place adoption of existing Compose projects. It does n
 
 1. `GET /v1/inventory/{id}/migration` inspects live containers and resolves Docker Compose configuration. It verifies one project name, working directory and consistent source files; detects a shared project identity or unmatched services; and returns a review hash. Secrets remain on the VPS.
 2. The desktop shows the plan and requests Touch ID. `POST /v1/inventory/{id}/migrate` requires the review hash, `projects.write`, `deploy.environment`, server-wide project access and the credential's `compose.admin` capability.
-3. The server rechecks the plan, saves private immutable Compose/environment snapshots under `/docker/<inventory-id>`, and atomically accepts the project and metadata job into SQLite. Exact original container IDs and Compose labels establish ownership before those containers gain Dockyard labels on a later deployment. The job does not start, stop, replace or relabel containers, write original source files, or alter Caddy.
+3. The server rechecks the plan, saves private immutable Compose/environment snapshots under `/docker/<source-name>/.dockyard`, and atomically accepts the project and metadata job into SQLite. Exact original container IDs and Compose labels establish ownership before those containers gain Dockyard labels on a later deployment. The job does not start, stop, replace or relabel containers, write original source files, or alter Caddy.
 4. The project becomes managed. Deploy, rollback, start, restart, stop and redacted logs use the original Compose project identity. Resolved volume and network names, published ports and working directory are retained. Metadata-only adoption jobs safely resume after daemon interruption.
 
 Adopted stacks use a single deployment instance. Future deployments/restarts may interrupt service, and rolling back configuration does not undo database changes. Caddy routes remain in the original Caddyfile and are displayed as preserved routes; editing them through generated project snippets is disabled. This is not blue-green conversion or a database backup.

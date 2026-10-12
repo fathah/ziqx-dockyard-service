@@ -149,7 +149,7 @@ func TestServiceCandidateKeepsDatabaseAndUsesExistingNetwork(t *testing.T) {
 			t.Fatal("touched database", call)
 		}
 	}
-	if original, _, err := nativeRelease(d.Config, p, p.Slots["blue"]); err != nil || original == composeRevisionPath(d.Config, p.ID, plan.Instance.Release.Compose) {
+	if original, _, err := nativeRelease(d.Config, p, p.Slots["blue"]); err != nil || original == composeRevisionPath(d.Config, p, plan.Instance.Release.Compose) {
 		t.Fatal("overwrote full source", original, err)
 	}
 }

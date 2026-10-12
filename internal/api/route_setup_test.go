@@ -61,6 +61,12 @@ func TestServiceDomainsPreserveSiblingRoutesAndRecheckReview(t *testing.T) {
 			if mode == "adopted-unpublished" {
 				p.Adoption = &model.Adoption{SourceName: "tasks", ComposeProject: "tasks"}
 				p.Domains, p.RouteService, p.RoutePort, p.BluePort = nil, "", 0, 0
+				if err := os.Mkdir(filepath.Join(a.Engine.Config.ProjectsRoot, "tasks"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := runtime.ConsolidateAdoptedProjectDirectory(a.Engine.Config, p); err != nil {
+					t.Fatal(err)
+				}
 			}
 			job := model.Job{ID: "original", ProjectID: p.ID, Status: "succeeded", Created: time.Now(), Input: model.Input{Project: &p}}
 			if err := a.Engine.Store.Accept(job, &p, "original", "original", 10, 10); err != nil {

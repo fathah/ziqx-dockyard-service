@@ -75,7 +75,18 @@ func (e *Engine) Notify() {
 	}
 }
 
-func (e *Engine) Initialize() error {
+func (e *Engine) Initialize() (result error) {
+	var relocated []model.Project
+	defer func() {
+		if result == nil {
+			return
+		}
+		for i := len(relocated) - 1; i >= 0; i-- {
+			if err := runtime.RestoreLegacyProjectDirectory(e.Config, relocated[i]); err != nil {
+				result = errors.Join(result, err)
+			}
+		}
+	}()
 	if err := e.Store.InterruptRunning(); err != nil {
 		return err
 	}
@@ -85,6 +96,14 @@ func (e *Engine) Initialize() error {
 	}
 	for _, p := range ps {
 		if err := p.ValidateTarget(); err != nil {
+			return err
+		}
+		if p.Adoption != nil {
+			if _, err := os.Lstat(filepath.Join(e.Config.ProjectsRoot, p.ID)); err == nil {
+				relocated = append(relocated, p)
+			}
+		}
+		if err := runtime.ConsolidateAdoptedProjectDirectory(e.Config, p); err != nil {
 			return err
 		}
 		for _, instance := range p.ServiceInstances {
@@ -424,7 +443,7 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 		p.CaddyRoutes = next.CaddyRoutes
 		p.ExternalDomains = next.ExternalDomains
 	}
-	if _, err := os.Stat(filepath.Join(e.Config.ProjectsRoot, p.ID, "env", r.Environment+".env")); err != nil {
+	if _, err := os.Stat(runtime.EnvironmentPath(e.Config, *p, r.Environment)); err != nil {
 		return model.Fail("ENVIRONMENT_UNAVAILABLE")
 	}
 	old := p.Active
@@ -571,15 +590,15 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 	}
 	// Operator-facing .env mirrors only the successfully activated revision.
 	// Containers always use their immutable slot revision, never this mirror.
-	if b, readErr := os.ReadFile(filepath.Join(e.Config.ProjectsRoot, p.ID, "env", r.Environment+".env")); readErr != nil {
+	if b, readErr := os.ReadFile(runtime.EnvironmentPath(e.Config, *p, r.Environment)); readErr != nil {
 		j.Warning = "ENVIRONMENT_MIRROR_FAILED"
-	} else if writeErr := secure.Atomic(filepath.Join(e.Config.ProjectsRoot, p.ID, ".env"), b, 0600); writeErr != nil {
+	} else if writeErr := secure.Atomic(runtime.ProjectMirrorPath(e.Config, *p, ".env"), b, 0600); writeErr != nil {
 		j.Warning = "ENVIRONMENT_MIRROR_FAILED"
 	}
 	// The running slots use immutable files; this is only an operator mirror.
 	if b, readErr := runtime.ComposeMirror(e.Config, *p, r); readErr != nil {
 		j.Warning = "COMPOSE_MIRROR_FAILED"
-	} else if writeErr := secure.Atomic(filepath.Join(e.Config.ProjectsRoot, p.ID, "compose.yml"), b, 0600); writeErr != nil {
+	} else if writeErr := secure.Atomic(runtime.ProjectMirrorPath(e.Config, *p, "compose.yml"), b, 0600); writeErr != nil {
 		j.Warning = "COMPOSE_MIRROR_FAILED"
 	}
 	if old != "" && old != slot {

@@ -96,7 +96,7 @@ volumes:
   data: {}
 `
 	dotenv := "TAG=alpine\nPASSWORD='a$HOME${NOT_SET}$$'\nCOMPOSE_PROFILES=background\n"
-	if err := os.WriteFile(filepath.Join(projectDir(c, p.ID), "reports.env"), []byte("REPORT_ONLY=selected\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(projectDir(c, p), "reports.env"), []byte("REPORT_ONLY=selected\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	r, err := d.PrepareNative(context.Background(), p, source, dotenv)
@@ -139,7 +139,7 @@ volumes:
 	if err != nil || string(b) != source {
 		t.Fatal("source not preserved", err)
 	}
-	if err := os.WriteFile(envPath(c, p.ID, r.Environment), []byte("tampered"), 0600); err != nil {
+	if err := os.WriteFile(envPath(c, p, r.Environment), []byte("tampered"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := ReleaseCompose(c, p, r); err == nil {

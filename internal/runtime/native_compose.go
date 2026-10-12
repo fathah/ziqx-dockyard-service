@@ -26,7 +26,7 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	if len(source) == 0 || len(source) > 64<<10 || len(dotenv) > 64<<10 || strings.ContainsRune(source+dotenv, 0) {
 		return r, model.Fail("COMPOSE_INPUT_INVALID")
 	}
-	dir := projectDir(d.Config, p.ID)
+	dir := projectDir(d.Config, p)
 	for _, sub := range []string{"env", "compose", "source"} {
 		path := filepath.Join(dir, sub)
 		if err := secure.PrivateDir(path); err != nil {
@@ -45,10 +45,10 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	saved := false
 	defer func() {
 		if !saved {
-			os.Remove(envPath(d.Config, p.ID, env))
+			os.Remove(envPath(d.Config, p, env))
 		}
 	}()
-	if err := secure.Atomic(envPath(d.Config, p.ID, env), []byte(dotenv), 0600); err != nil {
+	if err := secure.Atomic(envPath(d.Config, p, env), []byte(dotenv), 0600); err != nil {
 		return r, err
 	}
 	f, err := os.CreateTemp(dir, ".compose-review-*.yml")
@@ -64,7 +64,7 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	// A Dockyard flavor deploys the whole supplied stack, including services
 	// behind Compose profiles. Keep this explicit in both resolution passes.
 	args := d.args(p, "blue", "--profile", "*", "config", "--format", "json", "--no-env-resolution")
-	args[6], args[8] = f.Name(), envPath(d.Config, p.ID, env)
+	args[6], args[8] = f.Name(), envPath(d.Config, p, env)
 	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, dir, args)
 	if err != nil || result.Truncated {
 		// Docker's message (with known .env values redacted) says what to fix.
@@ -81,12 +81,12 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 		// The project's .env is also the default container environment. An
 		// explicit env_file keeps the service's own environment selection.
 		if svc["env_file"] == nil {
-			svc["env_file"] = []any{map[string]any{"path": envPath(d.Config, p.ID, env), "required": true}}
+			svc["env_file"] = []any{map[string]any{"path": envPath(d.Config, p, env), "required": true}}
 		}
 		for _, entry := range array(svc["env_file"]) {
 			file := object(entry)
 			if path, ok := file["path"].(string); ok && filepath.Clean(path) == filepath.Join(d.workingDir(p), ".env") {
-				file["path"] = envPath(d.Config, p.ID, env)
+				file["path"] = envPath(d.Config, p, env)
 			}
 		}
 	}
@@ -133,7 +133,7 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	}
 	h = sha256.Sum256(b)
 	revision := "cmp-" + hex.EncodeToString(h[:])
-	if err := secure.Atomic(composeRevisionPath(d.Config, p.ID, revision), b, 0600); err != nil {
+	if err := secure.Atomic(composeRevisionPath(d.Config, p, revision), b, 0600); err != nil {
 		return r, err
 	}
 	if err := secure.Atomic(filepath.Join(dir, "source", revision+".yml"), []byte(source), 0600); err != nil {
@@ -284,7 +284,7 @@ func nativeRelease(c config.Config, p model.Project, r model.Release) (string, [
 	if !composeRevision.MatchString(r.Compose) {
 		return "", nil, model.Uncertain("COMPOSE_CONFIG_DIVERGED")
 	}
-	path := composeRevisionPath(c, p.ID, r.Compose)
+	path := composeRevisionPath(c, p, r.Compose)
 	f, err := os.Open(path)
 	if err != nil {
 		return "", nil, model.Uncertain("COMPOSE_CONFIG_DIVERGED")
@@ -302,7 +302,7 @@ func nativeRelease(c config.Config, p model.Project, r model.Release) (string, [
 	if !strings.HasPrefix(r.Environment, "env-") || len(r.Environment) != 36 || strings.ContainsAny(r.Environment, "/\\.") {
 		return "", nil, model.Uncertain("ENVIRONMENT_IDENTITY_UNKNOWN")
 	}
-	env, err := os.ReadFile(envPath(c, p.ID, r.Environment))
+	env, err := os.ReadFile(envPath(c, p, r.Environment))
 	h = sha256.Sum256(env)
 	if err != nil || doc["x-dockyard-env-sha256"] != hex.EncodeToString(h[:]) {
 		return "", nil, model.Uncertain("ENVIRONMENT_IDENTITY_UNKNOWN")
@@ -333,7 +333,7 @@ func ComposeMirror(c config.Config, p model.Project, r model.Release) ([]byte, e
 	if json.Unmarshal(b, &doc) != nil {
 		return nil, model.Fail("COMPOSE_CONFIG_DIVERGED")
 	}
-	source, err := os.ReadFile(filepath.Join(projectDir(c, p.ID), "source", r.Compose+".yml"))
+	source, err := os.ReadFile(filepath.Join(projectDir(c, p), "source", r.Compose+".yml"))
 	h := sha256.Sum256(source)
 	if err != nil || doc["x-dockyard-source-sha256"] != hex.EncodeToString(h[:]) {
 		return nil, model.Fail("COMPOSE_CONFIG_DIVERGED")
@@ -352,7 +352,7 @@ func EditableConfiguration(c config.Config, p model.Project, r model.Release) (s
 	if err != nil {
 		return "", "", err
 	}
-	env, err := os.ReadFile(envPath(c, p.ID, r.Environment))
+	env, err := os.ReadFile(envPath(c, p, r.Environment))
 	var doc map[string]any
 	if err != nil || json.Unmarshal(compiled, &doc) != nil || len(source) > 64<<10 || len(env) > 64<<10 {
 		return "", "", model.Fail("CONFIGURATION_UNAVAILABLE")
@@ -422,10 +422,10 @@ func rebindNativeRoute(c config.Config, p model.Project, r model.Release, preser
 	}
 	h := sha256.Sum256(b)
 	revision := "cmp-" + hex.EncodeToString(h[:])
-	if err = secure.Atomic(composeRevisionPath(c, p.ID, revision), b, 0600); err != nil {
+	if err = secure.Atomic(composeRevisionPath(c, p, revision), b, 0600); err != nil {
 		return r, err
 	}
-	if err = secure.Atomic(filepath.Join(projectDir(c, p.ID), "source", revision+".yml"), source, 0600); err != nil {
+	if err = secure.Atomic(filepath.Join(projectDir(c, p), "source", revision+".yml"), source, 0600); err != nil {
 		return r, err
 	}
 	r.Compose = revision

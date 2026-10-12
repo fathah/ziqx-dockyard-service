@@ -14,19 +14,19 @@ import (
 	"strings"
 )
 
-func projectDir(c config.Config, id string) string { return filepath.Join(c.ProjectsRoot, id) }
-func envPath(c config.Config, id, revision string) string {
-	return filepath.Join(projectDir(c, id), "env", revision+".env")
+func projectDir(c config.Config, p model.Project) string { return ProjectDirectory(c, p) }
+func envPath(c config.Config, p model.Project, revision string) string {
+	return filepath.Join(projectDir(c, p), "env", revision+".env")
 }
-func bindingPath(c config.Config, id, slot string) string {
-	return filepath.Join(projectDir(c, id), slot+".env")
+func bindingPath(c config.Config, p model.Project, slot string) string {
+	return filepath.Join(projectDir(c, p), slot+".env")
 }
 
 func ReadEnvironment(c config.Config, id, revision string) (map[string]string, error) {
 	if !regexp.MustCompile(`^env-[0-9a-f]{32}$`).MatchString(revision) {
 		return nil, model.Fail("ENVIRONMENT_UNAVAILABLE")
 	}
-	b, err := os.ReadFile(envPath(c, id, revision))
+	b, err := os.ReadFile(envPath(c, model.Project{ID: id}, revision))
 	if err != nil || len(b) > 128<<10 {
 		return nil, model.Fail("ENVIRONMENT_UNAVAILABLE")
 	}
@@ -45,7 +45,7 @@ func ReadEnvironment(c config.Config, id, revision string) (map[string]string, e
 }
 
 func Environment(c config.Config, id string, variables map[string]string) (string, error) {
-	dir := filepath.Join(projectDir(c, id), "env")
+	dir := filepath.Join(projectDir(c, model.Project{ID: id}), "env")
 	if e := secure.PrivateDir(dir); e != nil {
 		return "", e
 	}
@@ -68,7 +68,7 @@ func Environment(c config.Config, id string, variables map[string]string) (strin
 		fmt.Fprintf(&b, "%s=%s\n", k, variables[k])
 	}
 	idRev := state.NewID("env-")
-	if e := secure.Atomic(envPath(c, id, idRev), []byte(b.String()), 0600); e != nil {
+	if e := secure.Atomic(envPath(c, model.Project{ID: id}, idRev), []byte(b.String()), 0600); e != nil {
 		return "", e
 	}
 	return idRev, nil
@@ -95,13 +95,13 @@ func composeBytes(c config.Config, p model.Project) ([]byte, error) {
 }
 func Compose(c config.Config, p model.Project) error {
 	if p.NativeCompose() {
-		return secure.PrivateDir(projectDir(c, p.ID))
+		return secure.PrivateDir(projectDir(c, p))
 	}
 	b, e := composeBytes(c, p)
 	if e != nil {
 		return e
 	}
-	dir := projectDir(c, p.ID)
+	dir := projectDir(c, p)
 	if e = secure.PrivateDir(dir); e != nil {
 		return e
 	}
@@ -116,16 +116,16 @@ func Binding(c config.Config, p model.Project, slot string, r model.Release) err
 			return err
 		}
 	}
-	env := envPath(c, p.ID, r.Environment)
+	env := envPath(c, p, r.Environment)
 	if _, e := os.Lstat(env); e != nil {
 		return e
 	}
 	b := bindingBytes(c, p, slot, r)
-	return secure.Atomic(bindingPath(c, p.ID, slot), []byte(b), 0600)
+	return secure.Atomic(bindingPath(c, p, slot), []byte(b), 0600)
 }
 
 func bindingBytes(c config.Config, p model.Project, slot string, r model.Release) []byte {
-	return []byte(fmt.Sprintf("DOCKYARD_COMPOSE_PROJECT=dy-%s-%s-%s\nDOCKYARD_IMAGE=%s\nDOCKYARD_PORT=%d\nDOCKYARD_ENV=%s\nDOCKYARD_ENV_DIR=%s\n", c.ServerID, p.ID, slot, r.Image, p.Port(slot), envPath(c, p.ID, r.Environment), filepath.Join(projectDir(c, p.ID), "env", r.Environment)))
+	return []byte(fmt.Sprintf("DOCKYARD_COMPOSE_PROJECT=dy-%s-%s-%s\nDOCKYARD_IMAGE=%s\nDOCKYARD_PORT=%d\nDOCKYARD_ENV=%s\nDOCKYARD_ENV_DIR=%s\n", c.ServerID, p.ID, slot, r.Image, p.Port(slot), envPath(c, p, r.Environment), filepath.Join(projectDir(c, p), "env", r.Environment)))
 }
 
 func Snippet(p model.Project, slot string) []byte {

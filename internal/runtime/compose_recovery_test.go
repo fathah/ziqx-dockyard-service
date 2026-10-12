@@ -54,7 +54,7 @@ func recoveryFixture(t *testing.T) (Docker, model.Project, *recoveryRunner) {
 		t.Fatal(err)
 	}
 	p := model.Project{ID: "existing-abc", Mode: "compose", Adoption: &plan.Identity, Active: "blue", State: "stopped"}
-	os.Mkdir(projectDir(d.Config, p.ID), 0700)
+	os.Mkdir(projectDir(d.Config, p), 0700)
 	old, err := d.PrepareNative(context.Background(), p, plan.Source, plan.Dotenv)
 	if err != nil {
 		t.Fatal(err)
