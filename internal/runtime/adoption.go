@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -181,14 +182,50 @@ func (d Docker) PlanAdoption(ctx context.Context, name string) (AdoptionPlan, er
 	if len(seen) != len(services) {
 		return plan, model.Fail("MIGRATION_SERVICE_MISMATCH")
 	}
-	// Resolved paths, resource names and environment are frozen for the baseline.
+	// Prefer the original environment rules, so later .env edits apply. Keep
+	// resolved values frozen only when the rules don't reproduce this config.
 	plan.Source = string(result.Output)
+	if rules, ok := d.adoptionRules(ctx, project, dir, files, doc); ok {
+		plan.Source = rules
+		plan.Identity.EnvironmentRules = true
+	}
 	plan.Services = len(services)
 	identity, _ := json.Marshal(plan.Identity)
 	digest.Write(identity)
+	digest.Write(result.Output)
+	digest.Write([]byte{0})
 	digest.Write([]byte(plan.Source))
 	digest.Write([]byte(plan.Dotenv))
 	digest.Write([]byte(plan.State))
 	plan.SHA256 = hex.EncodeToString(digest.Sum(nil))
 	return plan, nil
+}
+
+// adoptionRules returns the source Compose model with interpolation and
+// env_file references intact. It is used only if resolving it against the
+// folder's .env, as every deployment does, reproduces the resolved config.
+func (d Docker) adoptionRules(ctx context.Context, project, dir string, files []string, resolved map[string]any) (string, bool) {
+	args := []string{"compose", "--project-name", project, "--project-directory", dir}
+	for _, file := range files {
+		args = append(args, "--file", file)
+	}
+	result, err := d.Runner.Run(ctx, d.Config.DockerBinary, dir, append(args, "config", "--format", "json", "--no-interpolate", "--no-env-resolution"))
+	if err != nil || result.Truncated || len(result.Output) > 64<<10 || !json.Valid(result.Output) {
+		return "", false
+	}
+	tmp, err := os.MkdirTemp("", "dockyard-adoption-")
+	if err != nil {
+		return "", false
+	}
+	defer os.RemoveAll(tmp)
+	rules := filepath.Join(tmp, "compose.json")
+	if os.WriteFile(rules, result.Output, 0600) != nil {
+		return "", false
+	}
+	check, err := d.Runner.Run(ctx, d.Config.DockerBinary, dir, []string{"compose", "--project-name", project, "--project-directory", dir, "--file", rules, "config", "--format", "json"})
+	var again map[string]any
+	if err != nil || check.Truncated || json.Unmarshal(check.Output, &again) != nil || !reflect.DeepEqual(again, resolved) {
+		return "", false
+	}
+	return string(result.Output), true
 }

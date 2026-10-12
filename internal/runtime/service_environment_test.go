@@ -205,6 +205,33 @@ func TestAdoptedEnvironmentUsesOriginalRulesInsteadOfFrozenValues(t *testing.T) 
 					t.Fatal("adopted environment retained frozen values or interpolated a literal", env)
 				}
 			}
+			// The configuration editor offers recovered rules, so deploying a
+			// .env-only edit replaces the frozen value.
+			editable, _, err := d.EnvironmentSource(context.Background(), p, old)
+			if err != nil || strings.Contains(editable, "host.docker.internal") || !strings.Contains(editable, "${ZIQX_CORE_INTERNAL_URL}") || !strings.Contains(editable, "original_default") {
+				t.Fatal("editor kept frozen environment or lost baseline settings", err, editable)
+			}
+			edited, err := d.PrepareNative(context.Background(), p, editable, "ZIQX_CORE_INTERNAL_URL=https://ziqx.cc\n")
+			if err != nil {
+				t.Fatal(err)
+			}
+			check(edited, "web")
+			// The desktop editor reformats the baseline, so earlier configuration
+			// deployments saved the same frozen values as different text.
+			reformatted := strings.Replace(frozen, "services:\n", "# edited in the desktop\nservices:\n", 1)
+			redeployed, err := d.PrepareNative(context.Background(), p, reformatted, oldEnv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			later := p
+			later.Releases = []model.Release{old, redeployed}
+			editable, _, err = d.EnvironmentSource(context.Background(), later, redeployed)
+			if err != nil || strings.Contains(editable, "host.docker.internal") || !strings.Contains(editable, "${ZIQX_CORE_INTERNAL_URL}") {
+				t.Fatal("reformatted baseline kept frozen environment", err, editable)
+			}
+			if draft, err := d.RestoreAdoptedEnvironment(context.Background(), later, reformatted); err != nil || strings.Contains(draft, "host.docker.internal") {
+				t.Fatal("draft kept frozen environment", err, draft)
+			}
 			full, err := PrepareRestartEnvironment(context.Background(), d.Config, d, p, old)
 			if err != nil {
 				t.Fatal(err)

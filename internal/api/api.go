@@ -474,7 +474,21 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 			return
 		}
 		current, exists := project.Current()
+		// Imported projects' frozen inline values would override any .env edit;
+		// the editor offers the original environment rules instead.
+		restore := func(source string) (string, error) {
+			if d, ok := e.Docker.(interface {
+				RestoreAdoptedEnvironment(context.Context, model.Project, string) (string, error)
+			}); ok {
+				return d.RestoreAdoptedEnvironment(r.Context(), project, source)
+			}
+			return source, nil
+		}
 		if compose, dotenv, ok := runtime.ReadDraft(e.Config, project); ok {
+			// A draft is the operator's text; keep it if it can't be parsed.
+			if source, err := restore(compose); err == nil {
+				compose = source
+			}
 			// release_id stays the deployed release, so a deploy still detects
 			// someone else's newer release.
 			write(w, 200, map[string]any{"release_id": current.ID, "compose_yaml": compose, "env_file": dotenv, "draft": true})
@@ -485,6 +499,9 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 			return
 		}
 		source, dotenv, err := runtime.EditableConfiguration(e.Config, project, current)
+		if err == nil {
+			source, err = restore(source)
+		}
 		if err != nil {
 			fail(w, err, p.RequestID)
 			return
@@ -1092,7 +1109,17 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					fail(w, model.Fail("COMPOSE_UNAVAILABLE"), request)
 					return
 				}
-				release, prepareErr := preparer.PrepareNative(r.Context(), target, input.Compose, dotenv)
+				composeSource := input.Compose
+				if restorer, ok := preparer.(interface {
+					RestoreAdoptedEnvironment(context.Context, model.Project, string) (string, error)
+				}); ok {
+					composeSource, err = restorer.RestoreAdoptedEnvironment(r.Context(), p, composeSource)
+					if err != nil {
+						fail(w, err, request)
+						return
+					}
+				}
+				release, prepareErr := preparer.PrepareNative(r.Context(), target, composeSource, dotenv)
 				if prepareErr != nil {
 					fail(w, prepareErr, request)
 					return

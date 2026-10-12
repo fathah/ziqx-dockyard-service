@@ -15,11 +15,19 @@ immutable release files.
 
 The desktop configuration editor reads the saved release snapshot. Editing a
 VPS Compose file or running `docker compose up -d` outside Dockyard does not
-import those edits or update Dockyard's recorded deployment state. Environment
+import those edits or update Dockyard's recorded deployment state. From 0.7.29,
+an import saves the Compose model with `${VAR}` and `env_file` references intact,
+alongside the folder's `.env`, after checking that resolving them reproduces the
+reviewed configuration exactly; otherwise resolved values are frozen as before.
+Editing `.env` then applies on Deploy, Start/Restart and service updates. Environment
 updates resolve the original Compose environment rules against the latest saved
-`.env`, including older adoption baselines that froze resolved inline values.
+`.env`, including older (or frozen) adoption baselines with resolved inline values.
 Only environment changes are merged into service updates and Start/Restart;
-other Compose changes require a configuration deployment. A failed
+other Compose changes require a configuration deployment. From 0.7.29, the configuration
+editor (including a saved draft) shows the original `environment`/`env_file`
+rules, for example `${VAR}`, for every service whose environment still equals
+the frozen adoption values, even after earlier redeployments of that text, so a
+`.env`-only edit applies on Deploy. Other settings stay as last deployed. A failed
 deployment does not activate the candidate or replace the operator copies.
 
 With VPS service 0.7.4+, open the project's **Domains → Configure route** to

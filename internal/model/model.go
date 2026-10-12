@@ -19,6 +19,9 @@ type Adoption struct {
 	ComposeProject string   `json:"compose_project"`
 	ConfigFiles    []string `json:"config_files"`
 	ContainerIDs   []string `json:"container_ids"`
+	// EnvironmentRules marks a baseline saved with ${VAR} references intact.
+	// Older adoptions froze resolved values and need their rules recovered.
+	EnvironmentRules bool `json:"environment_rules,omitempty"`
 }
 
 // PublishedRoute pins an existing Compose binding when only its Caddy route
