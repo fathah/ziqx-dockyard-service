@@ -353,7 +353,7 @@ func TestDeployWithoutEnvUsesLatestSavedConfiguration(t *testing.T) {
 	}
 }
 
-func TestStartAndRestartQueueLatestSavedEnvironment(t *testing.T) {
+func TestStartAndRestartQueueLatestSavedConfiguration(t *testing.T) {
 	for _, action := range []string{"start", "restart"} {
 		t.Run(action, func(t *testing.T) {
 			a, d, _, send := apiFixture(t)
@@ -381,7 +381,7 @@ func TestStartAndRestartQueueLatestSavedEnvironment(t *testing.T) {
 			if err = a.Engine.Store.Accept(original, &p, "original", "original", 10, 10); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = runtime.SaveDraft(a.Engine.Config, p, "unrelated draft Compose edits", "TOKEN=new\n"); err != nil {
+			if _, err = runtime.SaveDraft(a.Engine.Config, p, "services: drafted", "TOKEN=new\n"); err != nil {
 				t.Fatal(err)
 			}
 			path := "/v1/projects/demo/" + action
@@ -405,8 +405,8 @@ func TestStartAndRestartQueueLatestSavedEnvironment(t *testing.T) {
 				t.Fatal(err, w.Body.String())
 			}
 			source, env, err := runtime.EditableConfiguration(a.Engine.Config, p, *job.Input.Release)
-			if err != nil || env != "TOKEN=new\n" || source != "services: deployed" {
-				t.Fatal("queued stale environment or draft Compose", err)
+			if err != nil || env != "TOKEN=new\n" || source != "services: drafted" || job.Input.DraftSHA == "" {
+				t.Fatal("queued stale environment or Compose file", err, source, env)
 			}
 		})
 	}

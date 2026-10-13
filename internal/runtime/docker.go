@@ -113,10 +113,12 @@ func (d Docker) releaseCommand(ctx context.Context, p model.Project, r model.Rel
 func (d Docker) Validate(ctx context.Context, p model.Project, r model.Release) error {
 	return d.releaseCommand(ctx, p, r, "COMPOSE_INVALID", "config", "--quiet")
 }
+
+// Pull fetches the newest image for every tag in the release, so deploy, start
+// and restart never reuse a stale local copy of a moving tag such as :latest.
+// Compose skips build-only services and tolerates pull failures for buildable
+// ones; other failures stop the job before any container changes.
 func (d Docker) Pull(ctx context.Context, p model.Project, r model.Release) error {
-	if p.NativeCompose() {
-		return nil
-	} // Compose up honors image/build/pull_policy.
 	return d.releaseCommand(ctx, p, r, "IMAGE_PULL_FAILED", "pull")
 }
 func (d Docker) Start(ctx context.Context, p model.Project, slot string) error {

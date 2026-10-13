@@ -19,6 +19,41 @@ type NativeEnvironmentPreparer interface {
 	PrepareNative(context.Context, model.Project, string, string) (model.Release, error)
 }
 
+// PrepareLatestNative builds a full-stack release for Start/Restart from the
+// newest saved configuration: the draft Compose file and .env when one is
+// saved, otherwise the current release's source and .env. Image references are
+// resolved again from the Compose file, so the stack runs the images the pull
+// step just fetched rather than ones pinned by earlier individual updates. The
+// returned hash identifies the applied draft ("" when none was saved).
+func PrepareLatestNative(ctx context.Context, c config.Config, preparer NativeEnvironmentPreparer, p model.Project, current model.Release) (model.Release, string, error) {
+	source, dotenv, saved := ReadDraft(c, p)
+	sha := ""
+	var err error
+	if saved {
+		sha = draftSHA(source, dotenv)
+		if restorer, ok := preparer.(interface {
+			RestoreAdoptedEnvironment(context.Context, model.Project, string) (string, error)
+		}); ok {
+			if source, err = restorer.RestoreAdoptedEnvironment(ctx, p, source); err != nil {
+				return current, "", err
+			}
+		}
+	} else if resolver, ok := preparer.(interface {
+		EnvironmentSource(context.Context, model.Project, model.Release) (string, string, error)
+	}); ok {
+		if source, dotenv, err = resolver.EnvironmentSource(ctx, p, current); err != nil {
+			return current, "", err
+		}
+	} else if source, dotenv, err = EditableConfiguration(c, p, current); err != nil {
+		return current, "", err
+	}
+	release, err := preparer.PrepareNative(ctx, p, source, dotenv)
+	if err != nil {
+		return current, "", err
+	}
+	return release, sha, nil
+}
+
 // Adoption baselines freeze resolved values for ownership checks, so their
 // inline environment would override every newer saved .env. EnvironmentSource
 // restores the original environment/env_file rules for each service that still

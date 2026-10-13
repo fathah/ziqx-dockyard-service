@@ -1283,9 +1283,16 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					}
 				}
 			}
-			if p.NativeCompose() && action != "rollback" {
-				if _, _, saved := runtime.ReadDraft(e.Config, p); saved {
-					if !require(w, principal, "deploy.environment", id) {
+			if p.NativeCompose() {
+				if action == "rollback" {
+					if release, err = runtime.RebindNativeRoute(e.Config, p, release); err != nil {
+						fail(w, err, request)
+						return
+					}
+				} else {
+					// Start/Restart run the newest saved Compose file and .env
+					// (the draft, if any) with freshly pulled images.
+					if _, _, saved := runtime.ReadDraft(e.Config, p); saved && !require(w, principal, "deploy.environment", id) {
 						return
 					}
 					preparer, ok := e.Docker.(runtime.NativeEnvironmentPreparer)
@@ -1293,22 +1300,15 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 						problem(w, 409, "COMPOSE_UNAVAILABLE", request)
 						return
 					}
-					release, err = runtime.PrepareRestartEnvironment(r.Context(), e.Config, preparer, p, release)
+					release, j.Input.DraftSHA, err = runtime.PrepareLatestNative(r.Context(), e.Config, preparer, p, release)
 					if err != nil {
 						fail(w, err, request)
 						return
 					}
-				}
-			}
-			if p.NativeCompose() {
-				if action == "rollback" {
-					release, err = runtime.RebindNativeRoute(e.Config, p, release)
-				} else {
-					release, err = runtime.RebindNativeServices(e.Config, p, release)
-				}
-				if err != nil {
-					fail(w, err, request)
-					return
+					if err = e.Docker.Validate(r.Context(), p, release); err != nil {
+						fail(w, err, request)
+						return
+					}
 				}
 				if err = runtime.IndexCompose(e.Config, e.Store, p, release); err != nil {
 					fail(w, err, request)
