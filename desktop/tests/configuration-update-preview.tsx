@@ -2,13 +2,32 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
+import { Toaster } from "react-hot-toast";
 import ProjectConfiguration from "../src/ProjectConfiguration";
 import type { Project } from "../src/types";
 import "../src/style.css";
+import "../src/macos.css";
 
 const source =
   'services:\n  web:\n    image: example/app:latest\n    environment:\n      APP_MESSAGE: ${APP_MESSAGE}\n    ports: ["3000:3000"]\n    healthcheck:\n      test: [CMD, curl, -f, http://localhost:3000/health]\n  database:\n    image: postgres:17\n    volumes: [data:/var/lib/postgresql/data]\nvolumes:\n  data: {}\n';
-mockIPC((command) => {
+let portState = "available";
+let portReads = 0;
+mockIPC((command, payload: any) => {
+  if (command === "read_api" && payload.read.kind === "port") {
+    if (payload.read.count !== 3)
+      throw new Error("Expected three port suggestions");
+    if (portState === "error") throw new Error("HTTP_503: DOCKER_UNAVAILABLE");
+    if (portState === "older server")
+      throw new Error("HTTP_400: REQUEST_INVALID");
+    if (portState === "exhausted")
+      throw new Error("HTTP_409: PORT_POOL_EXHAUSTED");
+    const start = 3016 + 3 * portReads++;
+    return {
+      port: start,
+      ports: portState === "limited" ? [start] : [start, start + 1, start + 2],
+      reserved: false,
+    };
+  }
   if (command === "read_api")
     return { release_id: "rel-current", compose_yaml: source, draft: true };
   if (command === "read_env" || command === "import_env") {
@@ -43,6 +62,21 @@ function Fixture() {
     <main style={{ maxWidth: 1100, margin: "24px auto", padding: 24 }}>
       <p>TEST FIXTURE · simulated configuration · no server access</p>
       <p role="status">{result}</p>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {["available", "limited", "error", "older server", "exhausted"].map(
+          (state) => (
+            <button
+              key={state}
+              onClick={() => {
+                portState = state;
+                setResult(`Next port refresh: ${state}`);
+              }}
+            >
+              Simulate {state}
+            </button>
+          ),
+        )}
+      </div>
       <ProjectConfiguration
         project={project}
         preview={false}
@@ -61,6 +95,7 @@ function Fixture() {
           );
         }}
       />
+      <Toaster />
     </main>
   );
 }

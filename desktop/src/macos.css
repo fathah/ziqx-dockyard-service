@@ -5,10 +5,7 @@
  */
 :root {
   font-family:
-    -apple-system,
-    BlinkMacSystemFont,
-    "SF Pro Text",
-    "Helvetica Neue",
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
     sans-serif;
   font-size: 13px;
   color: #1d1d1f;
@@ -1387,13 +1384,94 @@ label small,
   height: 13px;
 }
 
-/* .env secret generator */
+/* .env utilities */
+.env-utilities {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 10px;
+  container-type: inline-size;
+}
 .secret-generator {
   margin-top: 10px;
   padding: 10px 12px;
   background: #fafafa;
   border: 1px solid var(--separator);
   border-radius: 8px;
+}
+.env-utilities .secret-generator {
+  margin-top: 0;
+  min-width: 0;
+}
+.available-ports {
+  min-width: 0;
+  padding: 10px 12px;
+  background: #fafafa;
+  border: 1px solid var(--separator);
+  border-radius: 8px;
+}
+.available-ports-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+.available-ports-head > svg {
+  color: var(--accent-mac);
+  flex-shrink: 0;
+}
+.available-ports-head strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label);
+}
+.available-ports-head > .icon-button {
+  margin-left: auto;
+}
+.available-ports-values {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 28px;
+  margin-top: 8px;
+}
+.available-ports-values .port-suggestion {
+  padding: 4px 8px;
+  gap: 6px;
+}
+.port-suggestion code {
+  color: var(--label);
+  font-size: 12px;
+}
+.available-ports-note,
+.available-ports-message,
+.available-ports-error {
+  font-size: 11px;
+  color: var(--secondary);
+}
+.available-ports-note {
+  margin-left: auto;
+}
+.available-ports-error {
+  color: #b23a32;
+}
+@container (max-width: 1000px) {
+  .env-utilities .secret-generator-head > span {
+    display: none;
+  }
+}
+@container (max-width: 650px) {
+  .available-ports-note {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+@media (max-width: 700px) {
+  .env-utilities {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .secret-generator-head {
   display: flex;

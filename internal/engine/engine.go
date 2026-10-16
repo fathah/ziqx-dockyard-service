@@ -645,26 +645,47 @@ func (e *Engine) resolveRouteBindings(ctx context.Context, j *model.Job, p *mode
 }
 
 func (e *Engine) AvailablePort(ctx context.Context, exclude map[int]bool) (int, error) {
+	ports, err := e.AvailablePorts(ctx, 1, exclude)
+	if err != nil {
+		return 0, err
+	}
+	return ports[0], nil
+}
+
+// AvailablePorts reports up to count distinct available ports in ascending order.
+// These checks are advisory: callers that allocate ports must still reserve them
+// under the admission lock. An empty pool retains the single-port error contract.
+func (e *Engine) AvailablePorts(ctx context.Context, count int, exclude map[int]bool) ([]int, error) {
+	if count < 1 || count > 3 {
+		return nil, model.Fail("REQUEST_INVALID")
+	}
+	ports := make([]int, 0, count)
 	for port := e.Config.PortMin; port <= e.Config.PortMax; port++ {
 		if !e.Config.PortAllowed(port) || exclude[port] {
 			continue
 		}
 		reserved, err := e.Store.Reserved(port, "")
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if reserved {
 			continue
 		}
 		free, err := e.Docker.PortFree(ctx, port)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if free {
-			return port, nil
+			ports = append(ports, port)
+			if len(ports) == count {
+				return ports, nil
+			}
 		}
 	}
-	return 0, model.Fail("PORT_POOL_EXHAUSTED")
+	if len(ports) == 0 {
+		return nil, model.Fail("PORT_POOL_EXHAUSTED")
+	}
+	return ports, nil
 }
 
 // Reconcile is a local root operation while the daemon is stopped. It never

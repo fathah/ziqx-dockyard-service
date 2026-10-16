@@ -119,7 +119,10 @@ pub enum Read {
     Audit {
         after: u64,
     },
-    Port {},
+    Port {
+        #[serde(default)]
+        count: Option<u8>,
+    },
     Project {
         project: String,
         view: String,
@@ -151,7 +154,9 @@ impl Read {
             Self::Migration { project } if id(project) && project.starts_with("existing-") =>
                 (format!("/v1/inventory/{project}/migration"), "deploy.read"),
             Self::Audit { after } => (format!("/v1/audit?after={after}"), "deploy.read"),
-            Self::Port {} => ("/v1/ports/next".into(), "projects.write"),
+            Self::Port { count: None } => ("/v1/ports/next".into(), "projects.write"),
+            Self::Port { count: Some(count) } if (1..=3).contains(count) =>
+                (format!("/v1/ports/next?count={count}"), "projects.write"),
             Self::Project { project, view } if id(project) && matches!(view.as_str(), "status" | "releases" | "services" | "domains") =>
                 (format!("/v1/projects/{project}/{view}"), "deploy.read"),
             Self::Logs { project, service, slot, tail, since } if id(project) && service_name(service)
@@ -692,6 +697,23 @@ mod tests {
         }
         .target()
         .is_err());
+    }
+    #[test]
+    fn port_suggestions_preserve_legacy_target_and_bound_count() {
+        let legacy: Read = serde_json::from_str(r#"{"kind":"port"}"#).unwrap();
+        assert_eq!(legacy.target().unwrap(), ("/v1/ports/next".into(), "projects.write"));
+        for count in 1..=3 {
+            let read: Read = serde_json::from_value(serde_json::json!({"kind":"port", "count":count})).unwrap();
+            assert_eq!(read.target().unwrap(), (format!("/v1/ports/next?count={count}"), "projects.write"));
+        }
+        for count in [0, 4, 255] {
+            let read: Read = serde_json::from_value(serde_json::json!({"kind":"port", "count":count})).unwrap();
+            assert!(read.target().is_err());
+        }
+        for count in [serde_json::json!(-1), serde_json::json!(256), serde_json::json!("3"), serde_json::json!(1.5)] {
+            assert!(serde_json::from_value::<Read>(serde_json::json!({"kind":"port", "count":count})).is_err());
+        }
+        assert!(serde_json::from_str::<Read>(r#"{"kind":"port","count":3,"start":3000}"#).is_err());
     }
     #[test]
     fn configuration_requires_secret_scope_and_preserves_edit_revision() {

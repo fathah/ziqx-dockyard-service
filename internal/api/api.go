@@ -281,18 +281,31 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		if !require(w, p, "projects.write", "") {
 			return
 		}
-		if _, err := query(r); err != nil {
+		q, err := query(r, "count")
+		if err != nil {
 			fail(w, err, p.RequestID)
 			return
 		}
+		count := 1
+		if value, exists := q["count"]; exists {
+			if value != "1" && value != "2" && value != "3" {
+				problem(w, 400, "REQUEST_INVALID", p.RequestID)
+				return
+			}
+			count, _ = strconv.Atoi(value)
+		}
 		e.Admission.Lock()
-		port, err := e.AvailablePort(r.Context(), map[int]bool{})
+		ports, err := e.AvailablePorts(r.Context(), count, nil)
 		e.Admission.Unlock()
 		if err != nil {
 			fail(w, err, p.RequestID)
 			return
 		}
-		write(w, 200, map[string]any{"port": port, "reserved": false})
+		response := map[string]any{"port": ports[0], "reserved": false}
+		if _, exists := q["count"]; exists {
+			response["ports"] = ports
+		}
+		write(w, 200, response)
 		return
 	}
 	if len(parts) == 2 && parts[0] == "requests" {

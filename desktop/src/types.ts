@@ -142,7 +142,8 @@ export type Pending = {
   job_id?: string;
 } | null;
 export type Read =
-  | { kind: "projects" | "inventory" | "port" }
+  | { kind: "projects" | "inventory" }
+  | { kind: "port"; count?: number }
   | { kind: "migration" | "configuration"; project: string }
   | { kind: "audit"; after: number }
   | {

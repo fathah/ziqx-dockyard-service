@@ -106,7 +106,7 @@ func main() {
 			json.NewEncoder(w).Encode(map[string]any{"projects": []any{}})
 		case "/v1/projects/demo/restart":
 			requests++
-			if string(body) != "{}" || r.Header.Get("X-Deploy-Scopes") != "deploy.execute" {
+			if string(body) != "{}" || r.Header.Get("X-Deploy-Scopes") != "deploy.environment deploy.execute" {
 				w.WriteHeader(400)
 				json.NewEncoder(w).Encode(map[string]string{"code": "BAD_BODY"})
 				return

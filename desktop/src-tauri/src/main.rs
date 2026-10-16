@@ -26,7 +26,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager, State};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Semaphore};
 use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Serialize, Deserialize)]
@@ -154,6 +154,7 @@ struct Inner {
 struct Control {
     generation: Arc<AtomicU64>,
     inner: Arc<Mutex<Inner>>,
+    read_gate: Arc<Semaphore>,
     native_prompt: Arc<AtomicBool>,
     provider_gate: Arc<Mutex<()>>,
     setup: Arc<Mutex<Option<setup::Plan>>>,
@@ -170,6 +171,9 @@ impl Control {
                 session: None,
                 profile: None,
             })),
+            // The private tunnel admits four TCP connections. Keep one slot
+            // available for commands, which remain serialized by `inner`.
+            read_gate: Arc::new(Semaphore::new(3)),
             native_prompt: Arc::new(AtomicBool::new(false)),
             provider_gate: Arc::new(Mutex::new(())),
             setup: Arc::new(Mutex::new(None)),
@@ -406,6 +410,9 @@ fn client(e: &Enrollment) -> Result<(reqwest::Client, Zeroizing<Vec<u8>>), Strin
     ))
 }
 async fn send(s: &Session, op: &Operation) -> Result<Value, String> {
+    send_request(signed_request(s, op)?, op).await
+}
+fn signed_request(s: &Session, op: &Operation) -> Result<reqwest::RequestBuilder, String> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| "Check your Mac clock")?
@@ -433,6 +440,9 @@ async fn send(s: &Session, op: &Operation) -> Result<Value, String> {
             .header("Content-Type", "application/json")
             .body(op.body.clone());
     }
+    Ok(request)
+}
+async fn send_request(request: reqwest::RequestBuilder, op: &Operation) -> Result<Value, String> {
     let mut response = request.send().await.map_err(|error| {
         if error.is_connect() {
             "CONNECTION_UNAVAILABLE: could not connect to Dockyard on the VPS. Check that Dockyard is running and the tunnel and certificate are valid.".to_string()
@@ -775,10 +785,44 @@ async fn check_domain_https(
 }
 #[tauri::command]
 async fn read_api(c: State<'_, Control>, read: Read) -> Result<Value, String> {
+    // Bound waiting for a read slot or serialized write as well as HTTP itself.
+    tokio::time::timeout(
+        Duration::from_secs(35),
+        read_api_with(&c, read, |request, op| async move {
+            send_request(request, &op).await
+        }),
+    )
+    .await
+    .map_err(|_| {
+        "READ_TIMEOUT: the server took too long to respond. Try reading again.".to_string()
+    })?
+}
+async fn read_api_with<F, Fut>(c: &Control, read: Read, send: F) -> Result<Value, String>
+where
+    F: FnOnce(reqwest::RequestBuilder, Operation) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
     let op = read_op(&read)?;
-    let mut inner = c.inner.lock().await;
-    let s = session(&mut inner)?;
-    let mut data = send(s, &op).await?;
+    let generation = c.generation.load(Ordering::SeqCst);
+    let _permit = c.read_gate.acquire().await.map_err(|_| "SESSION_LOCKED")?;
+    let request = {
+        let mut inner = c.inner.lock().await;
+        let s = session(&mut inner)?;
+        if s.generation != generation {
+            return Err("SESSION_LOCKED".into());
+        }
+        // The owned request retains the HTTP client and signature, without
+        // copying the enrollment or HMAC key into an in-flight read.
+        signed_request(s, &op)?
+    };
+    if generation != c.generation.load(Ordering::SeqCst) {
+        return Err("SESSION_LOCKED".into());
+    }
+    let result = send(request, op).await;
+    if generation != c.generation.load(Ordering::SeqCst) {
+        return Err("SESSION_LOCKED".into());
+    }
+    let mut data = result?;
     if matches!(&read, Read::Configuration { .. }) {
         // Compose opens freely; environment secrets need read_env (Touch ID).
         if let Some(Value::String(env)) = data.get_mut("env_file") {
@@ -789,10 +833,12 @@ async fn read_api(c: State<'_, Control>, read: Read) -> Result<Value, String> {
             obj.insert("env_locked".into(), Value::Bool(true));
         }
     }
-    if s.generation != c.generation.load(Ordering::SeqCst) {
-        return Err("SESSION_LOCKED".into());
-    }
     if let Read::Job { job } = read {
+        let mut inner = c.inner.lock().await;
+        let s = session(&mut inner)?;
+        if s.generation != generation {
+            return Err("SESSION_LOCKED".into());
+        }
         if s.saved
             .pending
             .as_ref()
@@ -1601,6 +1647,192 @@ mod transport_tests {
             client,
             secret,
         }
+    }
+    async fn read_test_control() -> Control {
+        let c = Control::new();
+        c.inner.lock().await.session = Some(Session {
+            generation: 0,
+            client: reqwest::Client::new(),
+            secret: Zeroizing::new(vec![42; 32]),
+            api_origin: "https://127.0.0.1:9123".into(),
+            _tunnel: None,
+            saved: Saved {
+                enrollment: Enrollment {
+                    name: "Read test".into(),
+                    origin: "https://127.0.0.1:9123".into(),
+                    server_id: "vps-01".into(),
+                    key_id: "desktop-01".into(),
+                    actor_id: "owner".into(),
+                    server_ca_pem: String::new(),
+                    server_certificate_sha256: "a".repeat(64),
+                    client_identity_pem: String::new(),
+                    hmac_base64: String::new(),
+                    ssh: None,
+                },
+                pending: None,
+                jobs: vec![],
+                setup: None,
+            },
+        });
+        c
+    }
+    #[test]
+    fn slow_logs_do_not_block_other_reads_or_session_access() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let c = read_test_control().await;
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let (resume_tx, resume_rx) = tokio::sync::oneshot::channel();
+            let slow_control = c.clone();
+            let slow = tokio::spawn(async move {
+                read_api_with(
+                    &slow_control,
+                    Read::Logs {
+                        project: "demo".into(),
+                        service: "api".into(),
+                        slot: "active".into(),
+                        tail: 200,
+                        since: "30m".into(),
+                    },
+                    |_, _| async move {
+                        started_tx.send(()).unwrap();
+                        resume_rx.await.unwrap();
+                        Ok(json!({"logs":"ready"}))
+                    },
+                )
+                .await
+            });
+            started_rx.await.unwrap();
+            let projects = tokio::time::timeout(
+                Duration::from_secs(1),
+                read_api_with(&c, Read::Projects {}, |_, _| async {
+                    Ok(json!({"projects":[]}))
+                }),
+            )
+            .await
+            .expect("a slow log response blocked the project read")
+            .unwrap();
+            assert!(projects["projects"].is_array());
+            assert!(c.inner.try_lock().is_ok());
+            resume_tx.send(()).unwrap();
+            assert_eq!(slow.await.unwrap().unwrap()["logs"], "ready");
+        });
+    }
+    #[test]
+    fn fourth_read_waits_for_a_tunnel_slot_without_holding_session_mutex() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let c = read_test_control().await;
+            let release = Arc::new(Semaphore::new(0));
+            let (started_tx, mut started_rx) = tokio::sync::mpsc::channel(4);
+            let mut reads = Vec::new();
+            for _ in 0..3 {
+                let control = c.clone();
+                let started = started_tx.clone();
+                let release = release.clone();
+                reads.push(tokio::spawn(async move {
+                    read_api_with(&control, Read::Projects {}, |_, _| async move {
+                        started.send(()).await.unwrap();
+                        release.acquire().await.unwrap().forget();
+                        Ok(json!({"projects":[]}))
+                    })
+                    .await
+                }));
+            }
+            for _ in 0..3 {
+                tokio::time::timeout(Duration::from_secs(1), started_rx.recv())
+                    .await
+                    .expect("three read slots should run independently")
+                    .unwrap();
+            }
+            let fourth_control = c.clone();
+            let fourth = tokio::spawn(async move {
+                read_api_with(&fourth_control, Read::Projects {}, |_, _| async move {
+                    started_tx.send(()).await.unwrap();
+                    Ok(json!({"projects":[]}))
+                })
+                .await
+            });
+            tokio::task::yield_now().await;
+            assert!(!fourth.is_finished());
+            assert!(started_rx.try_recv().is_err());
+            assert!(c.inner.try_lock().is_ok());
+            release.add_permits(1);
+            tokio::time::timeout(Duration::from_secs(1), started_rx.recv())
+                .await
+                .expect("the queued read did not start after a slot was released")
+                .unwrap();
+            assert!(fourth.await.unwrap().unwrap()["projects"].is_array());
+            release.add_permits(2);
+            for read in reads {
+                assert!(read.await.unwrap().is_ok());
+            }
+        });
+    }
+    #[test]
+    fn queued_reads_cannot_switch_to_a_newly_unlocked_session() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let c = read_test_control().await;
+            let occupied = c.read_gate.acquire_many(3).await.unwrap();
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let control = c.clone();
+            let queued = tokio::spawn(async move {
+                started_tx.send(()).unwrap();
+                read_api_with(&control, Read::Projects {}, |_, _| async {
+                    panic!("a read from the old session reached the transport");
+                })
+                .await
+            });
+            started_rx.await.unwrap();
+            let generation = c.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            c.inner.lock().await.session.as_mut().unwrap().generation = generation;
+            drop(occupied);
+            assert_eq!(queued.await.unwrap().unwrap_err(), "SESSION_LOCKED");
+        });
+    }
+    #[test]
+    fn revoked_reads_cannot_return_data_or_clear_pending_jobs() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let c = read_test_control().await;
+            c.inner.lock().await.session.as_mut().unwrap().saved.pending =
+                Some(Pending {
+                    attempted: true,
+                    operation: Mutation::Restart {
+                        project: "demo".into(),
+                    }
+                    .plan()
+                    .unwrap(),
+                    job_id: Some("job-test".into()),
+                    sent_at: None,
+                });
+            let result = read_api_with(
+                &c,
+                Read::Job {
+                    job: "job-test".into(),
+                },
+                |_, _| async {
+                    c.generation.fetch_add(1, Ordering::SeqCst);
+                    Ok(json!({"status":"succeeded"}))
+                },
+            )
+            .await;
+            assert_eq!(result.unwrap_err(), "SESSION_LOCKED");
+            assert!(c.inner.lock().await.session.as_ref().unwrap().saved.pending.is_some());
+        });
     }
     #[test]
     #[ignore = "starts a disposable loopback TLS server; run with --ignored"]

@@ -557,9 +557,9 @@
     "/v1/ports/next": {
       "get": {
         "operationId": "getNextPort",
-        "summary": "Find the next available port",
+        "summary": "Find the next available ports",
         "tags": ["Projects"],
-        "description": "Advisory check of durable reservations, Docker published ports and host listeners. Does not reserve a port.",
+        "description": "Advisory check of allowed ports, durable reservations, Docker published ports and host listeners. Does not reserve ports. Without count, returns the original single-port response. With count, includes up to that many distinct ports in ascending order; an empty pool returns PORT_POOL_EXHAUSTED.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -578,6 +578,17 @@
           },
           {
             "$ref": "#/components/parameters/RequestID"
+          },
+          {
+            "name": "count",
+            "in": "query",
+            "description": "Maximum suggestions to return. When present, the response includes the ports list, which may contain fewer entries if the pool is nearly exhausted.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3,
+              "default": 1
+            }
           }
         ],
         "responses": {
@@ -3466,6 +3477,18 @@
             "type": "integer",
             "minimum": 1024,
             "maximum": 65535
+          },
+          "ports": {
+            "type": "array",
+            "description": "Included when count is supplied. Distinct available ports in ascending order, with port equal to the first item.",
+            "items": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 65535
+            },
+            "minItems": 1,
+            "maxItems": 3,
+            "uniqueItems": true
           },
           "reserved": {
             "type": "boolean",

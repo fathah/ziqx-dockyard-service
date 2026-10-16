@@ -17,6 +17,7 @@ import CodeEditor, { type CodeEditorHandle } from "./CodeEditor";
 import { composeForEditor, lintCompose } from "./composeLint";
 import { addHealthcheck, suggestHealthcheck } from "./composeHealthcheck";
 import SecretGenerator from "./SecretGenerator";
+import AvailablePorts from "./AvailablePorts";
 import Select from "./Select";
 import { detectComposeRoutes, suggestComposeRoute } from "./composeRoute";
 import type { Project } from "./types";
@@ -573,7 +574,12 @@ export default function ProjectConfiguration({
               An empty .env clears saved values.
             </p>
           )}
-          {file === "env" && envLoaded && <SecretGenerator />}
+          {file === "env" && envLoaded && (
+            <div className="env-utilities">
+              <SecretGenerator />
+              <AvailablePorts preview={preview} />
+            </div>
+          )}
           {routeMissing && (
             <div className="route-fix" role="group" aria-label="Domain traffic">
               <span>

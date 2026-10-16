@@ -178,6 +178,21 @@ The local artifact has a sealed ad-hoc signature, **not Developer ID notarizatio
 
 ## Validation
 
+Container log reads run independently of other API reads and have a 35-second
+deadline including native request waiting. The Logs panel shows failures and empty
+results explicitly, allows retries after a timeout, and discards replies after
+filter changes or session locking. Service choices follow the selected instance.
+For a local fixture covering success, errors, empty output, stalled requests and
+late replies, run Vite and open `/tests/logs-preview.html`; all requests are mocked.
+
+The Configuration `.env` tab puts the secret generator and next-three-port checker
+on one row. Click a suggested port to copy it, or refresh to check again. Suggestions
+use the VPS allowed range, skip reserved and occupied ports, and remain unreserved.
+The port utility requires VPS service **0.7.32+**, bundled with this desktop build;
+install it through **Server details → Updates**. The local
+`/tests/configuration-update-preview.html` fixture covers copying, refresh, partial
+availability and server errors without accessing a VPS.
+
 ```sh
 cd desktop
 npm run build

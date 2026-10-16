@@ -56,6 +56,7 @@ import ProjectConfiguration, {
 } from "./ProjectConfiguration";
 import ProjectLogo, { ProjectLogoScope } from "./ProjectLogo";
 import ProjectHeader, { ProjectSummary } from "./ProjectHeader";
+import ProjectLogs from "./ProjectLogs";
 import ServiceUpdate from "./ServiceUpdate";
 import useServiceImages from "./useServiceImages";
 import JobsTable from "./JobsTable";
@@ -939,6 +940,7 @@ function App() {
                 project={project}
                 initialTab={projectSection}
                 preview={preview}
+                enabled={preview || session.unlocked}
                 jobs={shownJobs}
                 refreshWorkspace={refresh}
                 openDeployments={() => {
@@ -1551,6 +1553,7 @@ export function ProjectDetail({
   project: p,
   initialTab = "overview",
   preview,
+  enabled = true,
   open,
   action,
   execute,
@@ -1563,6 +1566,7 @@ export function ProjectDetail({
 }: {
   project: Project;
   preview: boolean;
+  enabled?: boolean;
   open: (m: Modal) => void;
   action: (a: "start" | "restart", p: Project) => Promise<void>;
   execute: (m: unknown) => Promise<void>;
@@ -1583,22 +1587,15 @@ export function ProjectDetail({
   const [connectingService, setConnectingService] = useState<Service>();
   const [servicesLoading, setServicesLoading] = useState(!preview);
   const [servicesError, setServicesError] = useState(false);
+  const [statusError, setStatusError] = useState(false);
   const [servicesRefresh, setServicesRefresh] = useState(0);
   const [dnsLoading, setDnsLoading] = useState(!preview);
-  const [logsLoading, setLogsLoading] = useState(false);
   const [status, setStatus] = useState<{
     health: string;
     route: string;
     busy: boolean;
     public_tls_state: string;
   }>();
-  const [logs, setLogs] = useState("");
-  const [truncated, setTruncated] = useState(false);
-  const [service, setService] = useState(
-    p.mode === "compose" ? (p.route_service ?? "") : "app",
-  );
-  const [slot, setSlot] = useState("active");
-  const [since, setSince] = useState("30m");
   const [busy, setBusy] = useState(false);
   const [starting, setStarting] = useState(false);
   const [dns, setDNS] = useState<
@@ -1653,8 +1650,10 @@ export function ProjectDetail({
         !s.container_ports,
     );
   function updateBlockedReason(s: Service) {
-    if (servicesLoading) return "Checking service availability…";
-    if (servicesError) return "Could not check services. Refresh to try again.";
+    if (servicesLoading || (!preview && !status && !statusError))
+      return "Checking service availability…";
+    if (servicesError || statusError)
+      return "Could not check services. Refresh to try again.";
     if (recoveryJob)
       return "An interrupted operation needs recovery. Open Deployments.";
     if (p.state !== "running")
@@ -1672,6 +1671,7 @@ export function ProjectDetail({
   }
   useEffect(() => {
     let cancelled = false;
+    if (!enabled) return;
     if (preview) {
       setServicesLoading(false);
       setDnsLoading(false);
@@ -1711,32 +1711,20 @@ export function ProjectDetail({
     }
     setServicesLoading(true);
     setServicesError(false);
+    setStatusError(false);
     setStatus(undefined);
     setDnsLoading(true);
     setServices([]);
     setDNS([]);
-    void Promise.all([
-      api.read<{ services: Service[] }>({
+    void api
+      .read<{ services: Service[] }>({
         kind: "project",
         project: p.id,
         view: "services",
-      }),
-      api.read<NonNullable<typeof status>>({
-        kind: "project",
-        project: p.id,
-        view: "status",
-      }),
-    ])
-      .then(([d, projectStatus]) => {
+      })
+      .then((d) => {
         if (!cancelled) {
-          setStatus(projectStatus);
-          const items = d.services ?? [];
-          setServices(items);
-          setService((current) =>
-            items.some((item) => item.name === current)
-              ? current
-              : (items[0]?.name ?? ""),
-          );
+          setServices(d.services ?? []);
         }
       })
       .catch((e) => {
@@ -1747,6 +1735,21 @@ export function ProjectDetail({
       })
       .finally(() => {
         if (!cancelled) setServicesLoading(false);
+      });
+    void api
+      .read<NonNullable<typeof status>>({
+        kind: "project",
+        project: p.id,
+        view: "status",
+      })
+      .then((projectStatus) => {
+        if (!cancelled) setStatus(projectStatus);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setStatusError(true);
+          report(e);
+        }
       });
     void api
       .read<
@@ -1782,6 +1785,7 @@ export function ProjectDetail({
     operationRevision,
     servicesRefresh,
     preview,
+    enabled,
     report,
   ]);
   async function check() {
@@ -1803,33 +1807,6 @@ export function ProjectDetail({
       report(e);
     } finally {
       setBusy(false);
-    }
-  }
-  async function loadLogs() {
-    setBusy(true);
-    setLogsLoading(true);
-    try {
-      if (preview) {
-        setLogs(
-          "[Sample logs · no server connected]\napp  | Listening on 0.0.0.0:3000\napp  | Readiness check passed\napp  | GET /health/ready 200\n",
-        );
-        return;
-      }
-      const data = await api.read<{ logs: string; truncated: boolean }>({
-        kind: "logs",
-        project: p.id,
-        service,
-        slot,
-        tail: 200,
-        since,
-      });
-      setLogs(data.logs);
-      setTruncated(data.truncated);
-    } catch (e) {
-      report(e);
-    } finally {
-      setBusy(false);
-      setLogsLoading(false);
     }
   }
   return (
@@ -2411,81 +2388,16 @@ export function ProjectDetail({
         </section>
       )}
       {tab === "logs" && (
-        <section className="panel logs-panel">
-          <div className="section-heading">
-            <h2>
-              <Terminal size={18} />
-              Container logs
-            </h2>
-            <div className="heading-actions">
-              <Tag>Bounded · 200 lines</Tag>
-              <CopyButton text={logs} />
-            </div>
-          </div>
-          <div className="log-filters">
-            <Select
-              label="Service"
-              value={service}
-              onValueChange={setService}
-              options={Array.from(
-                new Set(["app", ...services.map((s) => s.name)]),
-              ).map((s) => ({ value: s, label: s }))}
-            />
-            <Select
-              label="Instance"
-              value={slot}
-              onValueChange={setSlot}
-              options={[
-                "active",
-                ...(p.zerodowntime ? ["inactive", "blue", "green"] : ["blue"]),
-              ].map((s) => ({ value: s, label: instanceLabel(s) }))}
-            />
-            <Select
-              label="Since"
-              value={since}
-              onValueChange={setSince}
-              options={["5m", "30m", "1h", "24h"].map((s) => ({
-                value: s,
-                label: s,
-              }))}
-            />
-            <Button
-              type="button"
-              className="button"
-              disabled={busy}
-              onClick={() => void loadLogs()}
-            >
-              <RefreshCw size={14} />
-              Read logs
-            </Button>
-          </div>
-          {logsLoading ? (
-            <div
-              className="terminal skeleton-terminal"
-              role="status"
-              aria-label="Loading container logs"
-            >
-              {["72%", "53%", "84%", "45%", "64%"].map((width, index) => (
-                <Skeleton key={index} width={width} height={12} />
-              ))}
-            </div>
-          ) : (
-            <pre className="terminal">
-              {logs ||
-                "Select a service and read its logs. No terminal or shell access is exposed."}
-            </pre>
-          )}
-          {truncated && (
-            <p className="warning">Output was truncated by the server.</p>
-          )}
-          <div className="help-row">
-            Log privacy{" "}
-            <Help label="log privacy">
-              The server redacts retained environment values. Avoid logging
-              secrets in your applications.
-            </Help>
-          </div>
-        </section>
+        <ProjectLogs
+          key={p.id}
+          project={p}
+          services={services}
+          servicesLoading={servicesLoading}
+          servicesError={servicesError}
+          preview={preview}
+          enabled={enabled}
+          report={report}
+        />
       )}
       {tab === "domains" && (
         <section className="panel">

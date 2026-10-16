@@ -18,7 +18,7 @@ The agent defaults to `https://127.0.0.1:9123`; it can bind an explicitly config
 | GET | `/v1/projects/{id}/domains` | `deploy.read` | SQLite inventory of assigned/reserved domains and known Cloudflare record IDs |
 | GET | `/v1/projects/{id}/logs` | `deploy.logs` | Bounded, redacted snapshot |
 | GET | `/v1/jobs/{job_id}` | `deploy.read` | Job outcome/phases/warnings; key must allow its project |
-| GET | `/v1/ports/next` | `projects.write` | Next free allowed port; advisory, not a reservation |
+| GET | `/v1/ports/next` | `projects.write` | Next free allowed port; optional `count=1..3` returns up to three; advisory, not a reservation |
 | GET | `/v1/audit?after=0` | `deploy.read` plus all-project access | Next 100 transactional audit events |
 | POST | `/v1/projects` | `projects.write` | Create project files, reserve ports/domain, install maintenance route |
 | PUT | `/v1/projects/{id}/routes` | `sites.write` | Replace assigned domain list; update ports while stopped |
@@ -58,6 +58,8 @@ Docker Compose validates the YAML and `.env` inputs before admission. Each is li
 Optional `domains`, `route_service` and `route_port` on creation enable managed Caddy routing. Only compatible stateless production stacks support `zerodowntime: true`. See [Compose deployments](COMPOSE.md) for lifecycle, blue-green, persistent-data and rollback behavior. Older projects explicitly created with `template_id` retain the [legacy policy](LEGACY_COMPOSE.md).
 
 ## Routes and DNS
+
+`GET /v1/ports/next` checks the configured allowed port range, durable managed and observed reservations, Docker published ports, and host listeners. The default response remains `{"port":3005,"reserved":false}`. Supply `?count=3` to read the next three distinct available ports in ascending order: `{"port":3005,"ports":[3005,3007,3008],"reserved":false}`. An explicit `count` of 1, 2, or 3 includes the `ports` list; fewer entries are returned when fewer ports are available. An empty pool returns `409 PORT_POOL_EXHAUSTED`. These checks do not reserve ports, so availability can change before deployment.
 
 Project, release, service and domain inventory reads use SQLite without accessing project files or live adapters. Service entries contain `slot`, `name`, `image`, `template_id`, `compose_revision` (omitted for legacy releases) and `environment_revision`. Domain entries contain `hostname`, `assigned` and optional `dns_record_id`; retired reservations remain visible with `assigned: false`. These are recorded metadata, not live health, DNS propagation or Caddy verification. See [database storage and migration](DATABASE.md).
 
