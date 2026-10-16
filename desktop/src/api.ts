@@ -28,10 +28,19 @@ export const resolvePending = () =>
     status?: string;
   }>("resolve_pending");
 export const readEnv = (project: string) =>
-  invoke<{ release_id: string; env_file: string }>("read_env", { project });
+  invoke<{
+    release_id: string;
+    env_file: string;
+    env_files: Record<string, string>;
+    env_files_supported: boolean;
+  }>("read_env", { project });
 export const saveDraft = (
   project: string,
-  data: { compose_yaml: string; env_file?: string },
+  data: {
+    compose_yaml: string;
+    env_file?: string;
+    env_files?: Record<string, string>;
+  },
 ) => invoke<{ saved: boolean }>("save_draft", { project, data });
 export const retry = () => invoke<{ job_id: string }>("retry_pending");
 export const pendingInfo = () => invoke<Pending>("pending_info");
@@ -51,6 +60,8 @@ export const cancelSetup = () => invoke<void>("setup_cancel");
 export type ServerUpdatePreview = {
   source_commit: string;
   candidate_version: string;
+  candidate_source: "github" | "bundled";
+  release_check_error: string | null;
   installed_version: string | null;
   installed_commit: string | null;
   version_status:

@@ -32,7 +32,6 @@ type MigrationCheck struct {
 }
 type adoptionDocker interface {
 	PlanAdoption(context.Context, string) (runtime.AdoptionPlan, error)
-	PrepareNative(context.Context, model.Project, string, string) (model.Release, error)
 }
 
 func observedProject(e *engine.Engine, id string) (*model.ExistingProject, error) {
@@ -54,7 +53,7 @@ func migrationAssessment(ctx context.Context, e *engine.Engine, id string) (Migr
 		return result, false, err
 	}
 	d, ok := e.Docker.(adoptionDocker)
-	if !ok {
+	if !ok || !canPrepareNative(e.Docker) {
 		result.Checks = append(result.Checks, MigrationCheck{"MIGRATION_UNAVAILABLE", "blocked"})
 		return result, true, nil
 	}
@@ -128,7 +127,7 @@ func (a *API) adopt(w http.ResponseWriter, r *http.Request, principal auth.Princ
 		return
 	}
 	d, ok := e.Docker.(adoptionDocker)
-	if !ok {
+	if !ok || !canPrepareNative(e.Docker) {
 		problem(w, 409, "MIGRATION_UNAVAILABLE", principal.RequestID)
 		return
 	}
@@ -176,7 +175,7 @@ func (a *API) adopt(w http.ResponseWriter, r *http.Request, principal auth.Princ
 			os.RemoveAll(dir)
 		}
 	}() // Only our newly created private snapshot directory.
-	release, err := d.PrepareNative(r.Context(), p, plan.Source, plan.Dotenv)
+	release, err := prepareNative(r.Context(), e.Docker, p, plan.Source, plan.Dotenv, plan.EnvFiles)
 	if err != nil {
 		fail(w, err, principal.RequestID)
 		return

@@ -25,8 +25,8 @@ func (d *adoptionStub) PlanAdoption(context.Context, string) (runtime.AdoptionPl
 	d.calls++
 	return d.plan, nil
 }
-func (d *adoptionStub) PrepareNative(ctx context.Context, p model.Project, source, env string) (model.Release, error) {
-	return d.docker.PrepareNative(ctx, p, source, env)
+func (d *adoptionStub) PrepareNative(ctx context.Context, p model.Project, source, env string, files ...map[string]string) (model.Release, error) {
+	return d.docker.PrepareNative(ctx, p, source, env, files...)
 }
 func TestAdoptionIsScopedDurableAndDoesNotRestartStack(t *testing.T) {
 	a, d, routes, send := apiFixture(t)

@@ -5,6 +5,35 @@ use sha2::{Digest, Sha256};
 use url::Url;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+pub type EnvFiles = std::collections::BTreeMap<String, String>;
+
+pub fn env_filename(name: &str) -> bool {
+    let Some(suffix) = name.strip_prefix(".env.") else { return false; };
+    !suffix.is_empty()
+        && suffix.len() <= 64
+        && suffix.as_bytes()[0].is_ascii_alphanumeric()
+        && !suffix.contains("..")
+        && suffix.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
+
+pub fn env_files_valid(main: Option<&str>, files: Option<&EnvFiles>) -> bool {
+    let mut total = main.map_or(0, str::len);
+    if total > 65536 || main.is_some_and(|value| value.contains('\0')) {
+        return false;
+    }
+    if let Some(files) = files {
+        if files.len() > 16 { return false; }
+        for (name, value) in files {
+            if !env_filename(name) || value.len() > 65536 || value.contains('\0') {
+                return false;
+            }
+            total += value.len();
+            if total > 65536 { return false; }
+        }
+    }
+    true
+}
+
 #[derive(Clone, Deserialize, Serialize, Zeroize, ZeroizeOnDrop)]
 #[serde(deny_unknown_fields)]
 pub struct Enrollment {
@@ -205,6 +234,8 @@ pub struct Deploy {
     pub variables: Option<std::collections::BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_files: Option<EnvFiles>,
     /// Compose projects: connect domains / re-point traffic for this release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domains: Option<Vec<String>>,
@@ -212,6 +243,14 @@ pub struct Deploy {
     pub route_service: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub route_port: Option<u16>,
+}
+impl Drop for Deploy {
+    fn drop(&mut self) {
+        self.compose_yaml.zeroize();
+        if let Some(env) = self.env_file.as_mut() { env.zeroize(); }
+        if let Some(files) = self.env_files.as_mut() { files.values_mut().for_each(Zeroize::zeroize); }
+        if let Some(variables) = self.variables.as_mut() { variables.values_mut().for_each(Zeroize::zeroize); }
+    }
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -440,10 +479,8 @@ impl Mutation {
                     || data.expected_release_id.as_ref().is_some_and(|r| !r.is_empty() && !token(r))
                     || data.compose_yaml.is_empty()
                     || data.compose_yaml.len() > 65536
-                    || data
-                        .env_file
-                        .as_ref()
-                        .is_some_and(|s| s.len() > 65536 || s.contains('\0'))
+                    || data.compose_yaml.contains('\0')
+                    || !env_files_valid(data.env_file.as_deref(), data.env_files.as_ref())
                     || data.variables.as_ref().is_some_and(|v| {
                         v.len() > 100 || v.iter().any(|(k, val)| k.len() > 64 || val.len() > 8192)
                     })
@@ -462,6 +499,9 @@ impl Mutation {
                 data.compose_yaml.zeroize();
                 if let Some(env) = data.env_file.as_mut() {
                     env.zeroize();
+                }
+                if let Some(files) = data.env_files.as_mut() {
+                    files.values_mut().for_each(Zeroize::zeroize);
                 }
                 if let Some(v) = data.variables.as_mut() {
                     v.values_mut().for_each(Zeroize::zeroize);
@@ -725,6 +765,41 @@ mod tests {
         let body: serde_json::Value = serde_json::from_str(&op.body).unwrap();
         assert_eq!(body["expected_release_id"], "rel-old");
         assert_eq!(body["env_file"], "");
+    }
+
+    #[test]
+    fn named_environment_files_are_bounded_and_confined_to_project_filenames() {
+        for name in [".env.frontend", ".env.API-2_test.local", &format!(".env.{}", "a".repeat(64))] {
+            assert!(env_filename(name), "{name}");
+        }
+        for name in [".env", ".env.", ".env._local", ".env.../secret", ".env.a..b", "../.env.api", ".env.api/secret", ".env.api\\secret", ".env.é", &format!(".env.{}", "a".repeat(65))] {
+            assert!(!env_filename(name), "{name}");
+        }
+        let mut files = EnvFiles::from([(".env.backend".into(), "a".repeat(65535))]);
+        assert!(env_files_valid(Some("x"), Some(&files)));
+        assert!(!env_files_valid(Some("xy"), Some(&files)));
+        files.insert(".env.backend".into(), "SECRET=\0bad".into());
+        assert!(!env_files_valid(None, Some(&files)));
+        files = (0..16).map(|i| (format!(".env.app{i}"), String::new())).collect();
+        assert!(env_files_valid(None, Some(&files)));
+        files.insert(".env.extra".into(), String::new());
+        assert!(!env_files_valid(None, Some(&files)));
+    }
+
+    #[test]
+    fn named_environment_deploy_preserves_omitted_files_and_explicit_clear() {
+        let mut value = serde_json::json!({"action":"deploy","project":"demo","data":{"environment":"production","compose_yaml":"services: {}","env_file":"SHARED=value"}});
+        let plan = serde_json::from_value::<Mutation>(value.clone()).unwrap().plan().unwrap();
+        let body: serde_json::Value = serde_json::from_str(&plan.body).unwrap();
+        assert!(body.get("env_files").is_none());
+        value["data"]["env_files"] = serde_json::json!({});
+        let plan = serde_json::from_value::<Mutation>(value.clone()).unwrap().plan().unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&plan.body).unwrap()["env_files"], serde_json::json!({}));
+        value["data"]["env_files"] = serde_json::json!({".env.backend":"TOKEN='a$HOME'\n"});
+        let plan = serde_json::from_value::<Mutation>(value.clone()).unwrap().plan().unwrap();
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&plan.body).unwrap()["env_files"][".env.backend"], "TOKEN='a$HOME'\n");
+        value["data"]["env_files"] = serde_json::json!({"../.env.backend":"TOKEN=bad"});
+        assert!(serde_json::from_value::<Mutation>(value).unwrap().plan().is_err());
     }
 
     #[test]

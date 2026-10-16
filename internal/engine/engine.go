@@ -595,6 +595,11 @@ func (e *Engine) deploy(ctx context.Context, j *model.Job, p *model.Project) err
 	} else if writeErr := secure.Atomic(runtime.ProjectMirrorPath(e.Config, *p, ".env"), b, 0600); writeErr != nil {
 		j.Warning = "ENVIRONMENT_MIRROR_FAILED"
 	}
+	if p.NativeCompose() {
+		if err := runtime.MirrorEnvFiles(e.Config, *p, r); err != nil {
+			j.Warning = "ENVIRONMENT_MIRROR_FAILED"
+		}
+	}
 	// The running slots use immutable files; this is only an operator mirror.
 	if b, readErr := runtime.ComposeMirror(e.Config, *p, r); readErr != nil {
 		j.Warning = "COMPOSE_MIRROR_FAILED"

@@ -168,6 +168,9 @@ func (e *Engine) blueGreen(ctx context.Context, j *model.Job, p *model.Project) 
 	} else if secure.Atomic(runtime.ProjectMirrorPath(e.Config, *p, ".env"), b, 0600) != nil {
 		j.Warning = "ENVIRONMENT_MIRROR_FAILED"
 	}
+	if err := runtime.MirrorEnvFiles(e.Config, *p, r); err != nil {
+		j.Warning = "ENVIRONMENT_MIRROR_FAILED"
+	}
 	return nil
 }
 

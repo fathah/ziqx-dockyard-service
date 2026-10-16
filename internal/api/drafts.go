@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"os"
 
 	"github.com/ziqx/ziqx-dockyard-service/internal/auth"
 	"github.com/ziqx/ziqx-dockyard-service/internal/config"
@@ -11,8 +10,9 @@ import (
 )
 
 type draftRequest struct {
-	Compose string  `json:"compose_yaml"`
-	EnvFile *string `json:"env_file,omitempty"`
+	Compose  string            `json:"compose_yaml"`
+	EnvFile  *string           `json:"env_file,omitempty"`
+	EnvFiles map[string]string `json:"env_files,omitempty"`
 }
 
 // Save the Compose file and .env as-is, without validating or deploying.
@@ -32,6 +32,11 @@ func (a *API) saveDraft(w http.ResponseWriter, principal auth.Principal, body []
 		return
 	}
 	e := a.Engine
+	// Serialize admission-time file reads with lifecycle/deploy preparation.
+	// The worker releases Admission before running accepted jobs, so operators
+	// can still save newer drafts while a deployment is in progress.
+	e.Admission.Lock()
+	defer e.Admission.Unlock()
 	p, err := e.Store.Project(id)
 	if err != nil {
 		problem(w, 404, "PROJECT_NOT_FOUND", request)
@@ -42,19 +47,26 @@ func (a *API) saveDraft(w http.ResponseWriter, principal auth.Principal, body []
 		return
 	}
 	env := ""
-	if input.EnvFile != nil {
-		env = *input.EnvFile
-	} else if _, saved, ok := runtime.ReadDraft(e.Config, p); ok {
-		env = saved
-	} else if current, ok := p.Current(); ok {
-		_, saved, err := runtime.EditableConfiguration(e.Config, p, current)
-		if err != nil && !os.IsNotExist(err) {
-			fail(w, err, request)
+	files := input.EnvFiles
+	if input.EnvFile == nil || files == nil {
+		_, savedMain, savedFiles, _, readErr := savedConfiguration(e.Config, p)
+		if readErr != nil {
+			fail(w, readErr, request)
 			return
 		}
-		env = saved
+		env = savedMain
+		if files == nil {
+			files = savedFiles
+		}
 	}
-	sha, err := runtime.SaveDraft(e.Config, p, input.Compose, env)
+	if input.EnvFile != nil {
+		env = *input.EnvFile
+	}
+	if err = runtime.ValidateEnvFiles(env, files); err != nil {
+		fail(w, err, request)
+		return
+	}
+	sha, err := runtime.SaveDraft(e.Config, p, input.Compose, env, files)
 	if err != nil {
 		fail(w, err, request)
 		return

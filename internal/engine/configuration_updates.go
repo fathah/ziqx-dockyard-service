@@ -183,6 +183,9 @@ func (e *Engine) configurationMirrors(j *model.Job, p model.Project) {
 	} else if err := secure.Atomic(runtime.ProjectMirrorPath(e.Config, p, ".env"), b, 0600); err != nil {
 		j.Warning = "ENVIRONMENT_MIRROR_FAILED"
 	}
+	if err := runtime.MirrorEnvFiles(e.Config, p, r); err != nil {
+		j.Warning = "ENVIRONMENT_MIRROR_FAILED"
+	}
 	if b, err := runtime.ComposeMirror(e.Config, p, r); err != nil {
 		j.Warning = "COMPOSE_MIRROR_FAILED"
 	} else if err := secure.Atomic(runtime.ProjectMirrorPath(e.Config, p, "compose.yml"), b, 0600); err != nil {

@@ -21,10 +21,23 @@ import (
 // Native Compose is an administrator capability, not a sandbox. Docker's own
 // loader validates the full Compose model, including host paths and builds.
 // Resolved configurations (which can contain secrets) stay in private files.
-func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dotenv string) (model.Release, error) {
+func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dotenv string, extra ...map[string]string) (model.Release, error) {
 	r := model.Release{}
 	if len(source) == 0 || len(source) > 64<<10 || len(dotenv) > 64<<10 || strings.ContainsRune(source+dotenv, 0) {
 		return r, model.Fail("COMPOSE_INPUT_INVALID")
+	}
+	files := map[string]string{}
+	if len(extra) > 0 {
+		files = copyEnvFiles(extra[0])
+	} else {
+		var err error
+		files, err = DiscoverEnvFiles(d.Config, p, nil)
+		if err != nil {
+			return r, err
+		}
+	}
+	if err := ValidateEnvFiles(dotenv, files); err != nil {
+		return r, err
 	}
 	dir := projectDir(d.Config, p)
 	for _, sub := range []string{"env", "compose", "source"} {
@@ -46,9 +59,13 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	defer func() {
 		if !saved {
 			os.Remove(envPath(d.Config, p, env))
+			os.RemoveAll(namedEnvDir(d.Config, p, env))
 		}
 	}()
 	if err := secure.Atomic(envPath(d.Config, p, env), []byte(dotenv), 0600); err != nil {
+		return r, err
+	}
+	if err := writeNamedEnvFiles(d.Config, p, env, files); err != nil {
 		return r, err
 	}
 	f, err := os.CreateTemp(dir, ".compose-review-*.yml")
@@ -71,7 +88,8 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 		return r, d.failure(p, "COMPOSE_VALIDATION_FAILED", result)
 	}
 	// Resolve env_file paths after interpolation/includes, so even an alias or
-	// ${ENV_FILE:-.env} uses this deployment's .env rather than the old mirror.
+	// ${ENV_FILE:-.env.frontend} uses this deployment's snapshot rather than the
+	// old mirror. Preview never writes into the running project's environment.
 	var paths map[string]any
 	if json.Unmarshal(result.Output, &paths) != nil {
 		return r, model.Fail("COMPOSE_VALIDATION_FAILED")
@@ -85,8 +103,18 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 		}
 		for _, entry := range array(svc["env_file"]) {
 			file := object(entry)
-			if path, ok := file["path"].(string); ok && filepath.Clean(path) == filepath.Join(d.workingDir(p), ".env") {
-				file["path"] = envPath(d.Config, p, env)
+			if path, ok := file["path"].(string); ok {
+				if !filepath.IsAbs(path) {
+					path = filepath.Join(d.workingDir(p), path)
+				}
+				path = filepath.Clean(path)
+				if path == filepath.Join(d.workingDir(p), ".env") {
+					file["path"] = envPath(d.Config, p, env)
+				} else if name := filepath.Base(path); filepath.Dir(path) == d.workingDir(p) {
+					if _, managed := files[name]; managed {
+						file["path"] = filepath.Join(namedEnvDir(d.Config, p, env), name)
+					}
+				}
 			}
 		}
 	}
@@ -125,6 +153,7 @@ func (d Docker) PrepareNative(ctx context.Context, p model.Project, source, dote
 	}
 	h := sha256.Sum256([]byte(dotenv))
 	doc["x-dockyard-env-sha256"] = hex.EncodeToString(h[:])
+	doc["x-dockyard-env-files-sha256"] = envFilesSHA(files)
 	h = sha256.Sum256([]byte(source))
 	doc["x-dockyard-source-sha256"] = hex.EncodeToString(h[:])
 	b, err := json.MarshalIndent(doc, "", "  ")
@@ -302,10 +331,13 @@ func nativeRelease(c config.Config, p model.Project, r model.Release) (string, [
 	if !strings.HasPrefix(r.Environment, "env-") || len(r.Environment) != 36 || strings.ContainsAny(r.Environment, "/\\.") {
 		return "", nil, model.Uncertain("ENVIRONMENT_IDENTITY_UNKNOWN")
 	}
-	env, err := os.ReadFile(envPath(c, p, r.Environment))
+	env, err := readEnvFile(envPath(c, p, r.Environment), maxEnvBytes)
 	h = sha256.Sum256(env)
 	if err != nil || doc["x-dockyard-env-sha256"] != hex.EncodeToString(h[:]) {
 		return "", nil, model.Uncertain("ENVIRONMENT_IDENTITY_UNKNOWN")
+	}
+	if _, err := verifyReleaseEnvFiles(c, p, r, doc, string(env)); err != nil {
+		return "", nil, err
 	}
 	return path, b, nil
 }

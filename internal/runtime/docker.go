@@ -451,7 +451,7 @@ func (d Docker) secrets(p model.Project) ([]string, error) {
 			}
 			return nil
 		}
-		if strings.HasSuffix(entry.Name(), ".env") || strings.HasSuffix(entry.Name(), ".secrets.json") {
+		if strings.HasSuffix(entry.Name(), ".env") || strings.HasSuffix(entry.Name(), ".secrets.json") || ValidEnvFilename(entry.Name()) {
 			files = append(files, path)
 			if len(files) > 4000 {
 				return model.Fail("LOG_REDACTION_LIMIT")

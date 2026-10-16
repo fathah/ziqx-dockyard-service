@@ -1907,6 +1907,103 @@ pre.terminal {
 .server-updater-forget {
   margin-top: 20px;
 }
+.server-update-release-error {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid #e8ddcc;
+  background: #faf5ed;
+}
+.server-update-release-error p {
+  margin: 0 0 5px;
+}
+.server-update-release-error > span {
+  display: block;
+  color: #766652;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.home-server-update-card,
+.home-server-update-summary,
+.home-server-update-actions,
+.home-server-update-versions,
+.home-server-update-details-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.home-server-update-card,
+.home-server-update-details-heading {
+  justify-content: space-between;
+}
+.home-server-update-card.has-update {
+  border-color: #cddfd1;
+  background: #f8fbf8;
+}
+.home-server-update-summary {
+  min-width: 0;
+}
+.home-server-update-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  color: #1f6b4f;
+  background: rgba(31, 107, 79, 0.1);
+}
+.home-server-update-copy {
+  min-width: 0;
+}
+.home-server-update-copy h2 {
+  margin: 0 0 5px;
+}
+.home-server-update-copy p {
+  margin: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.home-server-update-versions {
+  flex-wrap: wrap;
+  gap: 5px 18px;
+  font-size: 13px;
+  color: #6e6e73;
+}
+.home-server-update-versions strong {
+  color: #1d1d1f;
+  font-weight: 500;
+}
+.home-server-update-checked {
+  font-size: 12px;
+}
+.home-server-update-copy .home-server-update-note {
+  margin-top: 6px;
+  color: #7a602f;
+  font-size: 12px;
+}
+.home-server-update-actions {
+  flex-shrink: 0;
+  gap: 10px;
+}
+.home-server-update-details-heading {
+  margin-bottom: 10px;
+}
+.home-server-update-details-heading h2 {
+  margin: 0;
+}
+.home-server-update > .server-updater {
+  margin-top: 0;
+}
+@media (max-width: 860px) {
+  .home-server-update-card {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .home-server-update-actions {
+    margin-left: auto;
+  }
+}
 .server-update-jobs {
   margin-top: 20px;
   padding: 20px;

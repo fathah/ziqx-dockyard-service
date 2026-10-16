@@ -9,6 +9,7 @@ import {
   AlignLeft,
   Save,
   Upload,
+  Plus,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import * as api from "./api";
@@ -33,12 +34,23 @@ type Configuration = {
   release_id: string;
   compose_yaml: string;
   env_file: string;
+  env_files?: Record<string, string>;
+  env_files_supported?: boolean;
+  env_file_names?: string[];
   draft?: boolean;
 };
 // Compose loads without Touch ID; the server's .env is fetched separately.
-type ComposeConfiguration = Omit<Configuration, "env_file"> & {
+type ComposeConfiguration = Omit<Configuration, "env_file" | "env_files"> & {
   env_file?: string;
 };
+const validEnvName = (name: string) =>
+  /^\.env\.[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(name) && !name.includes("..");
+const sameEnvFiles = (
+  left: Record<string, string>,
+  right: Record<string, string>,
+) =>
+  Object.keys(left).length === Object.keys(right).length &&
+  Object.keys(left).every((name) => left[name] === right[name]);
 // Docker's explanation, if the server sent one (lines after the error code).
 function detailOf(error: unknown): string {
   return String(error).split("\n").slice(1).join("\n").trim();
@@ -74,6 +86,8 @@ function message(error: unknown): string {
     return "Seamless configuration updates require a running production Compose project with managed domains and an updated VPS service.";
   if (/PROJECT_BUSY/.test(text))
     return "A project operation is still running. Wait for it to finish, then deploy again.";
+  if (/ENV_FILES_INVALID/.test(text))
+    return "Use names such as .env.frontend or .env.backend. Up to 16 additional files and 64 KiB of environment contents are supported.";
   if (
     /COMPOSE_CONFIG_DIVERGED|ENVIRONMENT_IDENTITY_UNKNOWN|CONFIGURATION_UNAVAILABLE/.test(
       text,
@@ -104,11 +118,21 @@ export default function ProjectConfiguration({
         compose_yaml:
           "services:\n  web:\n    image: nginx:alpine\n    environment:\n      APP_URL: ${APP_URL}\n",
         env_file: "APP_URL=https://example.com\n",
+        env_files: {
+          ".env.frontend": "PUBLIC_API_URL=https://api.example.com\n",
+        },
+        env_files_supported: true,
       }
     : undefined; // Always ask the server: a never-deployed project may have a saved draft.
   const [saved, setSaved] = useState<Configuration | undefined>(initial);
   const [compose, setCompose] = useState(initial?.compose_yaml ?? "");
   const [dotenv, setDotenv] = useState(initial?.env_file ?? "");
+  const [envFiles, setEnvFiles] = useState<Record<string, string>>(
+    initial?.env_files ?? {},
+  );
+  const [selectedEnv, setSelectedEnv] = useState(".env");
+  const [addingEnv, setAddingEnv] = useState(false);
+  const [newEnvName, setNewEnvName] = useState(".env.");
   const [file, setFile] = useState<"compose" | "env">("compose");
   const [busy, setBusy] = useState(false);
   const canSeamless =
@@ -139,7 +163,36 @@ export default function ProjectConfiguration({
   const dirty =
     !!saved &&
     (compose !== saved.compose_yaml ||
-      (envLoaded && dotenv !== saved.env_file));
+      (envLoaded &&
+        (dotenv !== saved.env_file ||
+          !sameEnvFiles(envFiles, saved.env_files ?? {}))));
+  const envFilesSupported = Boolean(saved?.env_files_supported);
+  const envNames = [".env", ...Object.keys(envFiles).sort()];
+  const selectedEnvValue =
+    selectedEnv === ".env" ? dotenv : (envFiles[selectedEnv] ?? "");
+  function updateSelectedEnv(value: string) {
+    if (selectedEnv === ".env") setDotenv(value);
+    else setEnvFiles((files) => ({ ...files, [selectedEnv]: value }));
+  }
+  function addEnvFile() {
+    const name = newEnvName.trim();
+    if (!validEnvName(name)) {
+      setError(
+        "Use a filename such as .env.frontend or .env.backend, without folders or '..'.",
+      );
+      return;
+    }
+    if (!Object.hasOwn(envFiles, name) && Object.keys(envFiles).length >= 16) {
+      setError("Up to 16 additional environment files are supported.");
+      return;
+    }
+    if (!Object.hasOwn(envFiles, name))
+      setEnvFiles((files) => ({ ...files, [name]: "" }));
+    setSelectedEnv(name);
+    setAddingEnv(false);
+    setNewEnvName(".env.");
+    setError("");
+  }
   useEffect(() => {
     onDirtyChange(dirty);
     return () => onDirtyChange(false);
@@ -187,6 +240,9 @@ export default function ProjectConfiguration({
     // Runs once per request; saved/compose are read at that moment.
   }, [healthcheck]);
   const bytes = (value: string) => new TextEncoder().encode(value).length;
+  const envBytes =
+    bytes(dotenv) +
+    Object.values(envFiles).reduce((sum, value) => sum + bytes(value), 0);
   // The project's web service must exist in the file being deployed.
   const routable =
     project.mode === "compose" &&
@@ -226,12 +282,17 @@ export default function ProjectConfiguration({
     });
     if (!alive.current) return undefined;
     const source = composeForEditor(data.compose_yaml);
-    setSaved({ ...data, compose_yaml: source, env_file: "" });
+    setSaved({ ...data, compose_yaml: source, env_file: "", env_files: {} });
     setCompose(source);
     setDotenv("");
+    setEnvFiles({});
+    setSelectedEnv(".env");
+    setAddingEnv(false);
     setIsDraft(!!data.draft);
     // A draft's .env is on the server too; only a blank new project starts empty.
-    setEnvLoaded(!data.release_id && !data.draft);
+    setEnvLoaded(
+      !data.release_id && !data.draft && !data.env_file_names?.length,
+    );
     return source;
   }
   async function load() {
@@ -258,17 +319,32 @@ export default function ProjectConfiguration({
     if (!saved && !healthcheck && !preview) void load();
     // Mount only.
   }, []);
-  async function fetchEnv(): Promise<string> {
-    if (envLoaded || !saved) return dotenv;
+  async function fetchEnv() {
+    if (envLoaded || !saved)
+      return {
+        env_file: dotenv,
+        env_files: envFiles,
+        supported: envFilesSupported,
+      };
     const data = await api.readEnv(project.id);
     if (data.release_id !== saved.release_id)
       throw new Error("Files changed on the server. Reload and try again.");
     if (alive.current) {
-      setSaved({ ...saved, env_file: data.env_file });
+      setSaved({
+        ...saved,
+        env_file: data.env_file,
+        env_files: data.env_files ?? {},
+        env_files_supported: data.env_files_supported ?? false,
+      });
       setDotenv(data.env_file);
+      setEnvFiles(data.env_files ?? {});
       setEnvLoaded(true);
     }
-    return data.env_file;
+    return {
+      env_file: data.env_file,
+      env_files: data.env_files ?? {},
+      supported: data.env_files_supported ?? false,
+    };
   }
   async function unlockEnv() {
     setBusy(true);
@@ -291,12 +367,14 @@ export default function ProjectConfiguration({
       await api.saveDraft(project.id, {
         compose_yaml: compose,
         ...(envLoaded ? { env_file: dotenv } : {}),
+        ...(envLoaded && envFilesSupported ? { env_files: envFiles } : {}),
       });
       if (!alive.current) return;
       setSaved({
         ...saved,
         compose_yaml: compose,
         env_file: envLoaded ? dotenv : saved.env_file,
+        env_files: envLoaded ? envFiles : saved.env_files,
       });
       setIsDraft(true);
       toast.success("Saved · not deployed yet");
@@ -343,7 +421,8 @@ export default function ProjectConfiguration({
           environment: project.environment,
           ...(canSeamless ? { mode: deploymentMode } : {}),
           compose_yaml: compose,
-          env_file: env,
+          env_file: env.env_file,
+          ...(env.supported ? { env_files: env.env_files } : {}),
           ...(routeMissing
             ? {
                 route_service: routeFix.service,
@@ -355,8 +434,15 @@ export default function ProjectConfiguration({
       });
       if (alive.current) {
         // Deploy saved these files as the draft; keep them open.
-        setSaved({ ...saved, compose_yaml: compose, env_file: env });
-        setDotenv(env);
+        setSaved({
+          ...saved,
+          compose_yaml: compose,
+          env_file: env.env_file,
+          env_files: env.env_files,
+          env_files_supported: env.supported,
+        });
+        setDotenv(env.env_file);
+        setEnvFiles(env.env_files);
         setEnvLoaded(true);
         setIsDraft(true);
       }
@@ -375,9 +461,9 @@ export default function ProjectConfiguration({
         <h2>
           Project files{" "}
           <Help label="Project files">
-            This is Dockyard's saved release; edits made directly on the VPS
-            aren't imported. Deploy validates both files and saves a new
-            release.
+            Edit Compose and environment files, then Save or Deploy them
+            together. Named .env files in the project folder can be brought into
+            Dockyard management when you open the environment editor.
             {project.adoption &&
               project.adoption.source_name !== project.id &&
               ` Original files in /docker/${project.adoption.source_name} are kept; build contexts and relative paths still use that folder.`}
@@ -385,7 +471,8 @@ export default function ProjectConfiguration({
         </h2>
       </div>
       <p className="configuration-subtitle">
-        {project.environment} · /docker/{project.id}/compose.yml and .env
+        {project.environment} · /docker/{project.id}/compose.yml and environment
+        files
       </p>
       {error && (
         <div className="alert error configuration-error" role="alert">
@@ -474,7 +561,9 @@ export default function ProjectConfiguration({
                       if (file === "compose")
                         setCompose(composeForEditor(value));
                       else {
-                        setDotenv(value);
+                        if (!envLoaded) await fetchEnv();
+                        if (!alive.current) return;
+                        updateSelectedEnv(value);
                         setEnvLoaded(true);
                       }
                     }
@@ -484,7 +573,9 @@ export default function ProjectConfiguration({
                 }}
               >
                 <Upload size={15} />{" "}
-                {file === "compose" ? "Import Compose" : "Import .env"}
+                {file === "compose"
+                  ? "Import Compose"
+                  : `Import ${selectedEnv}`}
               </Button>
               {file === "compose" && (
                 <>
@@ -520,6 +611,93 @@ export default function ProjectConfiguration({
               )}
             </div>
           </div>
+          {file === "env" && envLoaded && (
+            <>
+              <div className="env-file-toolbar">
+                <Select
+                  label="Environment file"
+                  value={selectedEnv}
+                  options={envNames.map((name) => ({
+                    value: name,
+                    label: name,
+                  }))}
+                  onValueChange={(name) => {
+                    // The select's form bridge can emit an empty value when
+                    // its options change after adding a file.
+                    if (envNames.includes(name)) setSelectedEnv(name);
+                  }}
+                  disabled={busy}
+                />
+                <Button
+                  type="button"
+                  className="button small"
+                  disabled={busy || preview || !envFilesSupported}
+                  title={
+                    !envFilesSupported
+                      ? "Update Dockyard on the VPS to manage named env files"
+                      : "Add an environment file"
+                  }
+                  onClick={() => setAddingEnv((value) => !value)}
+                >
+                  <Plus size={14} /> Add file
+                </Button>
+                <span className="env-file-hint">
+                  {!envFilesSupported ? (
+                    "Update Dockyard on the VPS to manage additional env files."
+                  ) : selectedEnv === ".env" ? (
+                    "Main file for Compose variables."
+                  ) : (
+                    <>
+                      Use <code>env_file: {selectedEnv}</code> in the service's
+                      Compose settings.
+                    </>
+                  )}
+                </span>
+              </div>
+              {addingEnv && (
+                <div
+                  className="env-file-add"
+                  role="group"
+                  aria-label="Add environment file"
+                >
+                  <label>
+                    Filename
+                    <input
+                      aria-label="Environment filename"
+                      autoFocus
+                      value={newEnvName}
+                      placeholder=".env.backend"
+                      maxLength={69}
+                      disabled={busy}
+                      onChange={(event) => setNewEnvName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addEnvFile();
+                        }
+                        if (event.key === "Escape") setAddingEnv(false);
+                      }}
+                    />
+                  </label>
+                  <Button
+                    type="button"
+                    className="button small"
+                    onClick={addEnvFile}
+                    disabled={busy}
+                  >
+                    Create file
+                  </Button>
+                  <Button
+                    type="button"
+                    className="text-button"
+                    onClick={() => setAddingEnv(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
           <div hidden={file !== "compose"}>
             <CodeEditor
               ref={composeEditor}
@@ -543,19 +721,24 @@ export default function ProjectConfiguration({
           </div>
           <div hidden={file !== "env" || !envLoaded}>
             <CodeEditor
+              key={selectedEnv}
               showToolbar={false}
               kind="env"
-              value={dotenv}
-              onChange={setDotenv}
+              value={selectedEnvValue}
+              onChange={updateSelectedEnv}
               readOnly={busy || preview}
               active={file === "env"}
             />
           </div>
           <div className="editor-meta">
             <span>
-              {file === "compose" ? (isJson ? "JSON" : "YAML") : ".env"} ·{" "}
-              {bytes(file === "compose" ? compose : dotenv).toLocaleString()} /
-              65,536 bytes
+              {file === "compose" ? (isJson ? "JSON" : "YAML") : selectedEnv} ·{" "}
+              {bytes(
+                file === "compose" ? compose : selectedEnvValue,
+              ).toLocaleString()}
+              {file === "compose"
+                ? " / 65,536 bytes"
+                : ` bytes · all env files ${envBytes.toLocaleString()} / 65,536 bytes`}
             </span>
             <span>
               {preview
@@ -571,7 +754,8 @@ export default function ProjectConfiguration({
           </div>
           {file === "env" && envLoaded && (
             <p className="configuration-note">
-              An empty .env clears saved values.
+              An empty file clears its saved values. Save and Deploy include all
+              environment files.
             </p>
           )}
           {file === "env" && envLoaded && (
@@ -652,9 +836,9 @@ export default function ProjectConfiguration({
                   busy ||
                   !dirty ||
                   bytes(compose) > 65536 ||
-                  bytes(dotenv) > 65536
+                  envBytes > 65536
                 }
-                title="Save the Compose file and .env on the VPS without deploying"
+                title="Save Compose and all environment files on the VPS without deploying"
                 onClick={() => void save()}
               >
                 <Save size={15} /> Save
@@ -667,7 +851,7 @@ export default function ProjectConfiguration({
                   busy ||
                   !compose.trim() ||
                   bytes(compose) > 65536 ||
-                  bytes(dotenv) > 65536
+                  envBytes > 65536
                 }
               >
                 <ArrowUpRight size={15} /> {busy ? "Working…" : "Deploy"}

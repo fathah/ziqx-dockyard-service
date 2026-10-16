@@ -18,13 +18,14 @@ import (
 )
 
 type blueGreenRequest struct {
-	ExpectedRelease string `json:"expected_release_id"`
-	Compose         string `json:"compose_yaml"`
-	Dotenv          string `json:"env_file"`
-	Service         string `json:"route_service"`
-	Port            int    `json:"route_port"`
-	Readiness       string `json:"readiness_path"`
-	Review          string `json:"review_sha256,omitempty"`
+	ExpectedRelease string            `json:"expected_release_id"`
+	Compose         string            `json:"compose_yaml"`
+	Dotenv          string            `json:"env_file"`
+	EnvFiles        map[string]string `json:"env_files,omitempty"`
+	Service         string            `json:"route_service"`
+	Port            int               `json:"route_port"`
+	Readiness       string            `json:"readiness_path"`
+	Review          string            `json:"review_sha256,omitempty"`
 }
 type routeImporter interface {
 	PlanRouteImport(context.Context, model.Project, string) ([]model.RouteEdit, error)
@@ -163,14 +164,20 @@ func (a *API) blueGreen(w http.ResponseWriter, r *http.Request, principal auth.P
 			return
 		}
 	}
-	d, ok := e.Docker.(interface {
-		PrepareNative(context.Context, model.Project, string, string) (model.Release, error)
-	})
-	if !ok {
-		problem(w, 409, "BLUE_GREEN_UNAVAILABLE", principal.RequestID)
+	files := input.EnvFiles
+	if files == nil {
+		files, err = savedEnvFiles(e.Config, p)
+		if err != nil {
+			fail(w, err, principal.RequestID)
+			return
+		}
+	}
+	if err = runtime.ValidateEnvFiles(input.Dotenv, files); err != nil {
+		fail(w, err, principal.RequestID)
 		return
 	}
-	release, err := d.PrepareNative(r.Context(), next, input.Compose, input.Dotenv)
+	input.EnvFiles = files
+	release, err := prepareNative(r.Context(), e.Docker, next, input.Compose, input.Dotenv, files)
 	if err != nil {
 		fail(w, err, principal.RequestID)
 		return

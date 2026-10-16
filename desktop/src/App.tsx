@@ -4,6 +4,8 @@ import DomainHTTPS from "./DomainHTTPS";
 import ServerDetailsTabs from "./ServerDetailsTabs";
 import ServerDiagnostics from "./ServerDiagnostics";
 import ServerUpdater from "./ServerUpdater";
+import HomeServerUpdate from "./HomeServerUpdate";
+import { ServerUpdatesProvider, useServerUpdateSession } from "./serverUpdates";
 import {
   useCallback,
   useEffect,
@@ -397,6 +399,14 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [jobsReady, setJobsReady] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
+  const serverUpdates = useServerUpdateSession(
+    session.profile,
+    api.native &&
+      !preview &&
+      session.unlocked &&
+      !authBusy &&
+      !!session.profile?.server_ip,
+  );
   const [setupOpen, setSetupOpen] = useState(false);
   const closeSetup = useCallback(() => setSetupOpen(false), []);
   const [updated, setUpdated] = useState<string>();
@@ -703,399 +713,415 @@ function App() {
   );
   if (locked && !overlayLocked) return lockScreen;
   return (
-    <ProjectLogoScope.Provider
-      value={preview ? "preview" : `server:${session.profile?.server_ip ?? ""}`}
-    >
-      {locked && lockScreen}
-      <div
-        className={
-          page === "terminal" && canUse
-            ? "app-shell terminal-layout"
-            : "app-shell"
+    <ServerUpdatesProvider value={serverUpdates}>
+      <ProjectLogoScope.Provider
+        value={
+          preview ? "preview" : `server:${session.profile?.server_ip ?? ""}`
         }
       >
-        <aside className="sidebar">
-          <div className="brand">
-            <Brand />
-          </div>
-          <div className="nav-label">Workspace</div>
-          <nav>
-            {nav.map((n) => (
-              <Button
-                type="button"
-                key={n.id}
-                className={page === n.id ? "nav-item active" : "nav-item"}
-                onClick={() => {
-                  setPage(n.id);
-                  setSelected(null);
-                  setError("");
-                }}
-              >
-                <n.icon size={16} />
-                <span>{n.label}</span>
-                {n.id === "projects" && canUse && !initialWorkspaceLoading && (
-                  <small>{projectCount}</small>
-                )}
-              </Button>
-            ))}
-          </nav>
-          <div className="sidebar-bottom">
-            <div
-              className={
-                page === "security" ? "server-footer active" : "server-footer"
-              }
-            >
-              <Button
-                type="button"
-                className="server-summary"
-                onClick={() => {
-                  setPage("security");
-                  setSelected(null);
-                  setError("");
-                }}
-                aria-label="Open server details"
-              >
-                <span className="server-symbol">
-                  <Server size={18} />
-                </span>
-                <span className="server-summary-copy">
-                  <strong>
-                    {preview
-                      ? "Preview workspace"
-                      : (session.profile?.name ?? "Your VPS")}
-                  </strong>
-                  <span className="server-status">
-                    <i
-                      className={
-                        session.unlocked && !preview ? "green-dot" : "gray-dot"
-                      }
-                    />
-                    {preview
-                      ? "Sample data"
-                      : session.unlocked
-                        ? "Connected"
-                        : "Not connected"}
-                  </span>
-                </span>
-              </Button>
-              <Button
-                type="button"
-                className="sidebar-lock"
-                aria-label="Lock session"
-                title="Lock session"
-                onClick={() => {
-                  if (preview) loseSession();
-                  else lockSession();
-                  setPreview(false);
-                  if (api.native) void api.lock();
-                }}
-              >
-                <LockKeyhole size={16} />
-              </Button>
+        {locked && lockScreen}
+        <div
+          className={
+            page === "terminal" && canUse
+              ? "app-shell terminal-layout"
+              : "app-shell"
+          }
+        >
+          <aside className="sidebar">
+            <div className="brand">
+              <Brand />
             </div>
-          </div>
-        </aside>
-        <main className="main">
-          {preview && (
-            <div className="preview-banner">
-              <FileCode2 size={15} />
-              <span>
-                <strong>Preview</strong> · Sample data
-              </span>
-              <Button
-                type="button"
-                onClick={() => {
-                  setPreview(false);
-                  setSelected(null);
-                  setPage("security");
-                }}
-              >
-                Connect your VPS <ArrowRight size={14} />
-              </Button>
-            </div>
-          )}
-          {error && (
-            <div className="alert error" role="alert">
-              {error}
-              <Button
-                type="button"
-                aria-label="Dismiss error"
-                onClick={() => setError("")}
-              >
-                <X size={15} />
-              </Button>
-            </div>
-          )}
-          {pending && !preview && canUse && (
-            <div
-              className={`activity-bar ${pending.job_id ? "running" : "unconfirmed"}`}
-              role="status"
-            >
-              {pending.job_id ? (
-                <LoaderCircle size={14} className="spin" aria-hidden="true" />
-              ) : (
-                <CircleAlert size={14} aria-hidden="true" />
-              )}
-              <span>
-                {pending.job_id
-                  ? `${activityVerb(pending.action)} ${projectName(projects, pending.project)}…`
-                  : `${operationLabel(pending.action)} · ${projectName(projects, pending.project)} wasn't confirmed`}
-              </span>
-              {pending.job_id ? (
-                <button
+            <div className="nav-label">Workspace</div>
+            <nav>
+              {nav.map((n) => (
+                <Button
                   type="button"
-                  className="activity-link"
+                  key={n.id}
+                  className={page === n.id ? "nav-item active" : "nav-item"}
                   onClick={() => {
-                    setPage("deployments");
+                    setPage(n.id);
                     setSelected(null);
+                    setError("");
                   }}
                 >
-                  Show
-                </button>
-              ) : (
-                <>
+                  <n.icon size={16} />
+                  <span>{n.label}</span>
+                  {n.id === "projects" &&
+                    canUse &&
+                    !initialWorkspaceLoading && <small>{projectCount}</small>}
+                </Button>
+              ))}
+            </nav>
+            <div className="sidebar-bottom">
+              <div
+                className={
+                  page === "security" ? "server-footer active" : "server-footer"
+                }
+              >
+                <Button
+                  type="button"
+                  className="server-summary"
+                  onClick={() => {
+                    setPage("security");
+                    setSelected(null);
+                    setError("");
+                  }}
+                  aria-label="Open server details"
+                >
+                  <span className="server-symbol">
+                    <Server size={18} />
+                  </span>
+                  <span className="server-summary-copy">
+                    <strong>
+                      {preview
+                        ? "Preview workspace"
+                        : (session.profile?.name ?? "Your VPS")}
+                    </strong>
+                    <span className="server-status">
+                      <i
+                        className={
+                          session.unlocked && !preview
+                            ? "green-dot"
+                            : "gray-dot"
+                        }
+                      />
+                      {preview
+                        ? "Sample data"
+                        : session.unlocked
+                          ? "Connected"
+                          : "Not connected"}
+                    </span>
+                  </span>
+                </Button>
+                <Button
+                  type="button"
+                  className="sidebar-lock"
+                  aria-label="Lock session"
+                  title="Lock session"
+                  onClick={() => {
+                    if (preview) loseSession();
+                    else lockSession();
+                    setPreview(false);
+                    if (api.native) void api.lock();
+                  }}
+                >
+                  <LockKeyhole size={16} />
+                </Button>
+              </div>
+            </div>
+          </aside>
+          <main className="main">
+            {preview && (
+              <div className="preview-banner">
+                <FileCode2 size={15} />
+                <span>
+                  <strong>Preview</strong> · Sample data
+                </span>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setPreview(false);
+                    setSelected(null);
+                    setPage("security");
+                  }}
+                >
+                  Connect your VPS <ArrowRight size={14} />
+                </Button>
+              </div>
+            )}
+            {error && (
+              <div className="alert error" role="alert">
+                {error}
+                <Button
+                  type="button"
+                  aria-label="Dismiss error"
+                  onClick={() => setError("")}
+                >
+                  <X size={15} />
+                </Button>
+              </div>
+            )}
+            {pending && !preview && canUse && (
+              <div
+                className={`activity-bar ${pending.job_id ? "running" : "unconfirmed"}`}
+                role="status"
+              >
+                {pending.job_id ? (
+                  <LoaderCircle size={14} className="spin" aria-hidden="true" />
+                ) : (
+                  <CircleAlert size={14} aria-hidden="true" />
+                )}
+                <span>
+                  {pending.job_id
+                    ? `${activityVerb(pending.action)} ${projectName(projects, pending.project)}…`
+                    : `${operationLabel(pending.action)} · ${projectName(projects, pending.project)} wasn't confirmed`}
+                </span>
+                {pending.job_id ? (
                   <button
                     type="button"
                     className="activity-link"
-                    disabled={busy}
-                    title="Send the same request again"
-                    onClick={() => void doRetry()}
+                    onClick={() => {
+                      setPage("deployments");
+                      setSelected(null);
+                    }}
                   >
-                    Send again
+                    Show
                   </button>
-                  <Button
-                    type="button"
-                    className="button small"
-                    disabled={busy}
-                    onClick={() => void doResolve()}
-                  >
-                    Check
-                  </Button>
-                </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="activity-link"
+                      disabled={busy}
+                      title="Send the same request again"
+                      onClick={() => void doRetry()}
+                    >
+                      Send again
+                    </button>
+                    <Button
+                      type="button"
+                      className="button small"
+                      disabled={busy}
+                      onClick={() => void doResolve()}
+                    >
+                      Check
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+            <div
+              className={
+                page === "terminal" && canUse
+                  ? "content content-terminal"
+                  : "content"
+              }
+            >
+              {canUse && (
+                <TerminalPage
+                  visible={page === "terminal"}
+                  native={api.native && !preview}
+                  server={session.profile?.server_ip}
+                  request={shellRequest}
+                  report={report}
+                />
+              )}
+              {page === "security" ? (
+                <Security
+                  profile={session.profile}
+                  unlocked={session.unlocked && !preview}
+                  native={api.native}
+                  busy={authBusy}
+                  authenticate={authenticate}
+                  setup={() => setSetupOpen(true)}
+                  explore={() => setPreview(true)}
+                  openOperations={() => {
+                    setSelected(null);
+                    setPage("deployments");
+                  }}
+                  openDomains={() => {
+                    setSelected(null);
+                    setPage("domains");
+                  }}
+                  forget={async () => {
+                    loseSession();
+                    setPreview(false);
+                    setAuthBusy(true);
+                    try {
+                      await api.forget();
+                      loseSession();
+                      setSession({ unlocked: false, profile: null, jobs: [] });
+                      setHasEnrollment(false);
+                      toast.success(
+                        "Local enrollment removed. Revoke its key on the VPS to remove server access.",
+                      );
+                    } catch (e) {
+                      report(e);
+                    } finally {
+                      setAuthBusy(false);
+                    }
+                  }}
+                />
+              ) : !canUse ? (
+                <Connect
+                  busy={authBusy}
+                  authenticate={authenticate}
+                  setup={() => setSetupOpen(true)}
+                  explore={() => setPreview(true)}
+                />
+              ) : page === "terminal" ? null : project ? (
+                <ProjectDetail
+                  key={project.id + String(preview)}
+                  project={project}
+                  initialTab={projectSection}
+                  preview={preview}
+                  enabled={preview || session.unlocked}
+                  jobs={shownJobs}
+                  refreshWorkspace={refresh}
+                  openDeployments={() => {
+                    setSelected(null);
+                    setPage("deployments");
+                  }}
+                  open={setModal}
+                  action={simple}
+                  execute={perform}
+                  report={report}
+                  openServerDetails={() => {
+                    setSelected(null);
+                    setPage("security");
+                  }}
+                  openShell={
+                    api.native && !preview && session.profile?.server_ip
+                      ? (s) => {
+                          setShellRequest({
+                            project: project.id,
+                            composeProject: project.adoption?.compose_project,
+                            slot: s.slot,
+                            service: s.name,
+                            nonce: Date.now(),
+                          });
+                          setPage("terminal");
+                        }
+                      : undefined
+                  }
+                />
+              ) : observedProject ? (
+                <ObservedProjectDetail
+                  project={observedProject}
+                  inventory={shownInventory}
+                  preview={preview}
+                  perform={perform}
+                  back={() => setSelected(null)}
+                  openServerDetails={() => {
+                    setSelected(null);
+                    setPage("security");
+                  }}
+                />
+              ) : page === "projects" ? (
+                <Projects
+                  serverUpdate={
+                    api.native && !preview && session.profile?.server_ip ? (
+                      <HomeServerUpdate
+                        openOperations={() => {
+                          setSelected(null);
+                          setPage("deployments");
+                        }}
+                      />
+                    ) : undefined
+                  }
+                  projects={shownProjects}
+                  recentProjects={recentProjects}
+                  inventory={shownInventory}
+                  updated={updated}
+                  loading={loading}
+                  initialLoading={initialWorkspaceLoading}
+                  select={(id) => {
+                    setProjectSection("overview");
+                    setSelected(id);
+                  }}
+                  selectObserved={(id) => setSelected(`observed:${id}`)}
+                  create={() => setModal({ kind: "create" })}
+                  refresh={() => {
+                    if (!preview) void refresh();
+                    else toast("This preview uses sample data.");
+                  }}
+                />
+              ) : page === "deployments" ? (
+                <Jobs
+                  jobs={shownJobs}
+                  projects={projects}
+                  preview={preview}
+                  loading={!preview && !jobsReady}
+                  refresh={refresh}
+                  report={report}
+                />
+              ) : page === "domains" ? (
+                <ProviderDomains
+                  preview={preview}
+                  serverIP={session.profile?.server_ip}
+                  routes={
+                    <Domains
+                      projects={shownProjects}
+                      inventory={shownInventory}
+                      loading={initialWorkspaceLoading}
+                      select={(id) => {
+                        setProjectSection("domains");
+                        setPage("projects");
+                        setSelected(id);
+                      }}
+                      open={setModal}
+                    />
+                  }
+                />
+              ) : page === "inventory" ? (
+                <InventoryView
+                  inventory={shownInventory}
+                  loading={loading}
+                  initialLoading={initialWorkspaceLoading}
+                  refresh={() => {
+                    if (!preview) void refresh();
+                  }}
+                />
+              ) : (
+                <AuditView
+                  preview={preview}
+                  events={audit}
+                  setEvents={setAudit}
+                  report={report}
+                />
               )}
             </div>
-          )}
-          <div
-            className={
-              page === "terminal" && canUse
-                ? "content content-terminal"
-                : "content"
-            }
-          >
-            {canUse && (
-              <TerminalPage
-                visible={page === "terminal"}
-                native={api.native && !preview}
-                server={session.profile?.server_ip}
-                request={shellRequest}
-                report={report}
-              />
+            {page !== "terminal" && (
+              <footer className="footer">
+                <span>
+                  <span className="tiny-mark">D</span>DOCKYARD{" "}
+                  <span className="footer-dot">/</span> Service manager.
+                </span>
+                <span>
+                  {preview
+                    ? "Read-only preview"
+                    : updated
+                      ? `Last read ${ago(updated)}`
+                      : "Awaiting private connection"}
+                  <span className="footer-dot">·</span>v0.1.0
+                </span>
+              </footer>
             )}
-            {page === "security" ? (
-              <Security
-                profile={session.profile}
-                unlocked={session.unlocked && !preview}
-                native={api.native}
-                busy={authBusy}
-                authenticate={authenticate}
-                setup={() => setSetupOpen(true)}
-                explore={() => setPreview(true)}
-                openOperations={() => {
-                  setSelected(null);
-                  setPage("deployments");
-                }}
-                openDomains={() => {
-                  setSelected(null);
-                  setPage("domains");
-                }}
-                forget={async () => {
-                  loseSession();
-                  setPreview(false);
-                  setAuthBusy(true);
-                  try {
-                    await api.forget();
-                    loseSession();
-                    setSession({ unlocked: false, profile: null, jobs: [] });
-                    setHasEnrollment(false);
-                    toast.success(
-                      "Local enrollment removed. Revoke its key on the VPS to remove server access.",
-                    );
-                  } catch (e) {
-                    report(e);
-                  } finally {
-                    setAuthBusy(false);
-                  }
-                }}
-              />
-            ) : !canUse ? (
-              <Connect
-                busy={authBusy}
-                authenticate={authenticate}
-                setup={() => setSetupOpen(true)}
-                explore={() => setPreview(true)}
-              />
-            ) : page === "terminal" ? null : project ? (
-              <ProjectDetail
-                key={project.id + String(preview)}
-                project={project}
-                initialTab={projectSection}
-                preview={preview}
-                enabled={preview || session.unlocked}
-                jobs={shownJobs}
-                refreshWorkspace={refresh}
-                openDeployments={() => {
-                  setSelected(null);
-                  setPage("deployments");
-                }}
-                open={setModal}
-                action={simple}
-                execute={perform}
-                report={report}
-                openServerDetails={() => {
-                  setSelected(null);
-                  setPage("security");
-                }}
-                openShell={
-                  api.native && !preview && session.profile?.server_ip
-                    ? (s) => {
-                        setShellRequest({
-                          project: project.id,
-                          composeProject: project.adoption?.compose_project,
-                          slot: s.slot,
-                          service: s.name,
-                          nonce: Date.now(),
-                        });
-                        setPage("terminal");
-                      }
-                    : undefined
-                }
-              />
-            ) : observedProject ? (
-              <ObservedProjectDetail
-                project={observedProject}
-                inventory={shownInventory}
-                preview={preview}
-                perform={perform}
-                back={() => setSelected(null)}
-                openServerDetails={() => {
-                  setSelected(null);
-                  setPage("security");
-                }}
-              />
-            ) : page === "projects" ? (
-              <Projects
-                projects={shownProjects}
-                recentProjects={recentProjects}
-                inventory={shownInventory}
-                updated={updated}
-                loading={loading}
-                initialLoading={initialWorkspaceLoading}
-                select={(id) => {
-                  setProjectSection("overview");
-                  setSelected(id);
-                }}
-                selectObserved={(id) => setSelected(`observed:${id}`)}
-                create={() => setModal({ kind: "create" })}
-                refresh={() => {
-                  if (!preview) void refresh();
-                  else toast("This preview uses sample data.");
-                }}
-              />
-            ) : page === "deployments" ? (
-              <Jobs
-                jobs={shownJobs}
-                projects={projects}
-                preview={preview}
-                loading={!preview && !jobsReady}
-                refresh={refresh}
-                report={report}
-              />
-            ) : page === "domains" ? (
-              <ProviderDomains
-                preview={preview}
-                serverIP={session.profile?.server_ip}
-                routes={
-                  <Domains
-                    projects={shownProjects}
-                    inventory={shownInventory}
-                    loading={initialWorkspaceLoading}
-                    select={(id) => {
-                      setProjectSection("domains");
-                      setPage("projects");
-                      setSelected(id);
-                    }}
-                    open={setModal}
-                  />
-                }
-              />
-            ) : page === "inventory" ? (
-              <InventoryView
-                inventory={shownInventory}
-                loading={loading}
-                initialLoading={initialWorkspaceLoading}
-                refresh={() => {
-                  if (!preview) void refresh();
-                }}
-              />
-            ) : (
-              <AuditView
-                preview={preview}
-                events={audit}
-                setEvents={setAudit}
-                report={report}
-              />
-            )}
-          </div>
-          {page !== "terminal" && (
-            <footer className="footer">
-              <span>
-                <span className="tiny-mark">D</span>DOCKYARD{" "}
-                <span className="footer-dot">/</span> Service manager.
-              </span>
-              <span>
-                {preview
-                  ? "Read-only preview"
-                  : updated
-                    ? `Last read ${ago(updated)}`
-                    : "Awaiting private connection"}
-                <span className="footer-dot">·</span>v0.1.0
-              </span>
-            </footer>
+          </main>
+          {modal && canUse && (
+            <OperationModal
+              modal={modal}
+              projects={shownProjects}
+              observedIDs={(shownInventory?.projects ?? [])
+                .filter((p) => !p.managed)
+                .map((p) => p.id)}
+              preview={preview}
+              close={() => setModal(null)}
+              perform={perform}
+              report={report}
+            />
           )}
-        </main>
-        {modal && canUse && (
-          <OperationModal
-            modal={modal}
-            projects={shownProjects}
-            observedIDs={(shownInventory?.projects ?? [])
-              .filter((p) => !p.managed)
-              .map((p) => p.id)}
-            preview={preview}
-            close={() => setModal(null)}
-            perform={perform}
-            report={report}
-          />
-        )}
-        {setupOpen && (
-          <SetupWizard
-            close={closeSetup}
-            ready={(s) => {
-              epoch.current++;
-              unlocked.current = true;
-              setSession(s);
-              setHasEnrollment(true);
-              setPreview(false);
-              setSetupOpen(false);
-              setPage("projects");
-              toast.success(
-                "Dockyard is running on your VPS. Your server IP and connection are saved in Keychain.",
-              );
-              void refresh(s.jobs);
-            }}
-          />
-        )}
-      </div>
-    </ProjectLogoScope.Provider>
+          {setupOpen && (
+            <SetupWizard
+              close={closeSetup}
+              ready={(s) => {
+                epoch.current++;
+                unlocked.current = true;
+                setSession(s);
+                setHasEnrollment(true);
+                setPreview(false);
+                setSetupOpen(false);
+                setPage("projects");
+                toast.success(
+                  "Dockyard is running on your VPS. Your server IP and connection are saved in Keychain.",
+                );
+                void refresh(s.jobs);
+              }}
+            />
+          )}
+        </div>
+      </ProjectLogoScope.Provider>
+    </ServerUpdatesProvider>
   );
 }
 function Connect({
@@ -1187,6 +1213,7 @@ function Connect({
   );
 }
 function Projects({
+  serverUpdate,
   projects,
   recentProjects,
   inventory,
@@ -1198,6 +1225,7 @@ function Projects({
   create,
   refresh,
 }: {
+  serverUpdate?: ReactNode;
   projects: Project[];
   recentProjects: string[];
   inventory: Inventory | null;
@@ -1257,6 +1285,7 @@ function Projects({
             <Plus size={17} /> New project
           </Button>
         </div>
+        {serverUpdate}
         <SkeletonStats />
         <div className="section-heading">
           <h2>Projects</h2>
@@ -1287,6 +1316,7 @@ function Projects({
           New project
         </Button>
       </div>
+      {serverUpdate}
       <div className="stats-grid three">
         <Stat
           label="Projects"

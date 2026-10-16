@@ -12,7 +12,7 @@ New Dockyard projects use **Docker Compose YAML and `.env` contents**. No templa
 
 Services without an explicit `env_file` receive the project’s `.env` as their default container environment. Explicit `environment` entries take precedence; services with an explicit `env_file` keep their selected files.
 
-Configuration always submits both files; an empty `.env` clears saved values. The older Deploy Compose dialog leaves saved values unchanged when its environment field is blank; import an empty file or enter `# empty` there to clear them.
+In the `.env` tab, select `.env`, `.env.frontend`, `.env.backend`, or another named file to edit. Use **Add file** to create a named file, and **Import** to replace the selected file. Save and deploy include all files in the editor; switching the selected file retains your edits. An empty main `.env` clears saved main values. The older Deploy Compose dialog leaves saved values unchanged when its environment field is blank; import an empty file or enter `# empty` there to clear them.
 
 Dockyard assigns its own Compose project identity and ownership labels; supplied top-level `name` and `COMPOSE_PROJECT_NAME` do not override them. All services in the supplied Compose file are deployed, including services behind `profiles`; Dockyard explicitly enables every profile during resolution. Supply a separate Compose file per flavor when the service set should differ.
 
@@ -40,9 +40,21 @@ NGINX_TAG=alpine
 POSTGRES_PASSWORD=replace-with-your-secret
 ```
 
-Build contexts, bind sources, includes, configs, and additional secret/env files must already exist on the VPS. Relative paths resolve from `/docker/<project-id>`. Dockyard uploads the Compose and `.env` inputs; it does not upload a source tree. Use Docker healthchecks for application readiness. Without them, Compose waits for services to run, which does not prove application readiness.
+Dockyard manages main `.env` and up to 16 named `.env.*` files, with a combined 64 KiB UTF-8 content limit. The main `.env` supplies Compose `${VARIABLE}` interpolation. Named files supply environment to services that explicitly reference them:
 
-A successful deployment mirrors the submitted source into `/docker/<project-id>/compose.yml` and `.env`. Docker runs private, verified revisions. Normal API reads expose safe service metadata from SQLite; environment values and resolved source are write-only.
+```yaml
+services:
+  frontend:
+    image: your/frontend:latest
+    env_file: .env.frontend
+  backend:
+    image: your/backend:latest
+    env_file: .env.backend
+```
+
+Safe existing `.env.*` files in the VPS project folder appear in the editor for adoption. Each deployment privately snapshots its managed files; save alone does not change running services. Additional build contexts, bind sources, includes, configs, and unmanaged secret/env files must already exist on the VPS. Relative paths resolve from `/docker/<project-id>`. Dockyard uploads Compose and managed environment inputs; it does not upload a source tree. Use Docker healthchecks for application readiness. Without them, Compose waits for services to run, which does not prove application readiness.
+
+A successful deployment mirrors submitted `compose.yml`, main `.env`, and managed `.env.*` files into `/docker/<project-id>/`. Docker runs private, verified revisions. Normal API reads expose safe service metadata from SQLite; environment values and resolved source are write-only.
 
 ## Authorization
 
@@ -86,7 +98,7 @@ Then submit to `/v1/projects/demo-production/deploy`:
 {"environment":"production","compose_yaml":"services:\n  web:\n    image: nginx:${TAG}\n    ports: [\"8080:80\"]\n","env_file":"TAG=alpine\n"}
 ```
 
-`env_file` contains raw file contents. Omitting it reuses the saved Configuration `.env`, falling back to the deployed snapshot; `""` supplies an empty `.env`. Input limits are 64 KiB each, within the HTTP body limit. Refer to `/docs` for signed headers and job polling.
+`env_file` contains raw main file contents. `env_files` maps extra filenames to raw contents, for example `{".env.frontend":"URL=https://example.com\n",".env.backend":"TOKEN=secret\n"}`. Omitting either environment field reuses its saved Configuration value, falling back to the deployed snapshot; `env_file: ""` supplies an empty main `.env`, and `env_files: {}` clears the managed named-file map. Explicit maps are complete and do not rediscover host files during deployment. Names use `.env.` followed by 1–64 ASCII letters, digits, underscores, periods or hyphens, beginning with a letter/digit; `..` is rejected. Compose has a 64 KiB limit; main and all named environment contents share a separate 64 KiB limit, within the HTTP body limit. Configuration reads advertise `env_files_supported: true` and `env_file_names`; add `?env_files=1` to the configuration GET to include named contents. The desktop performs that private read after environment access is authorized. Refer to `/docs` for signed headers and job polling.
 
 Existing Compose domain bindings move to Docker-assigned ports on their next full deployment, start, restart, or rollback. Connecting an already-published service can reuse its verified current binding without recreating containers; subsequent full deployments manage that binding automatically. Ports belonging to services or targets without domain routes are retained as supplied.
 

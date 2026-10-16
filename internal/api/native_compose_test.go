@@ -49,7 +49,7 @@ func TestNativeComposeRequiresExplicitRootCapability(t *testing.T) {
 		t.Fatal("native project needs a template or route", p)
 	}
 	w = send("GET", "/v1/projects/demo/configuration", "", "deploy.environment", "empty-config")
-	if w.Code != 200 || !strings.Contains(w.Body.String(), `"release_id":""`) {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"release_id":""`) || !strings.Contains(w.Body.String(), `"env_files_supported":true`) || !strings.Contains(w.Body.String(), `"env_file_names":[]`) || strings.Contains(w.Body.String(), `"env_files":`) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	// Merely possessing environment permission must not grant host-level secrets.
@@ -75,8 +75,8 @@ type nativePreparer struct {
 	config config.Config
 }
 
-func (n nativePreparer) PrepareNative(ctx context.Context, p model.Project, source, env string) (model.Release, error) {
-	return (runtime.Docker{Config: n.config, Runner: nativeRunner{}}).PrepareNative(ctx, p, source, env)
+func (n nativePreparer) PrepareNative(ctx context.Context, p model.Project, source, env string, files ...map[string]string) (model.Release, error) {
+	return (runtime.Docker{Config: n.config, Runner: nativeRunner{}}).PrepareNative(ctx, p, source, env, files...)
 }
 func TestNativeDeploymentQueuesRevisionsWithoutSecrets(t *testing.T) {
 	a, d, _, send := apiFixture(t)
@@ -110,7 +110,7 @@ func TestNativeDeploymentQueuesRevisionsWithoutSecrets(t *testing.T) {
 	if err := a.Engine.Store.Update(job, &p); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"environment":"production","compose_yaml":"services:\n  web:\n    image: nginx:alpine\n","env_file":"TOKEN=private-test-token\n","expected_release_id":""}`
+	body := `{"environment":"production","compose_yaml":"services:\n  web:\n    image: nginx:alpine\n","env_file":"TOKEN=private-test-token\n","env_files":{".env.backend":"BACKEND_SECRET=named-test-secret\n"},"expected_release_id":""}`
 	if w := send("POST", "/v1/projects/demo/deploy", body, "deploy.execute", "env-denied"); w.Code != 403 {
 		t.Fatal("dotenv write requires scope", w.Code)
 	}
@@ -150,6 +150,10 @@ func TestNativeDeploymentQueuesRevisionsWithoutSecrets(t *testing.T) {
 	dotenv, err := os.ReadFile(filepath.Join(a.Engine.Config.ProjectsRoot, "demo", ".env"))
 	if err != nil || string(dotenv) != "TOKEN=private-test-token\n" {
 		t.Fatal("dotenv mirror missing", err)
+	}
+	named, err := os.ReadFile(filepath.Join(a.Engine.Config.ProjectsRoot, "demo", ".env.backend"))
+	if err != nil || string(named) != "BACKEND_SECRET=named-test-secret\n" {
+		t.Fatal("named dotenv mirror missing", err)
 	}
 	project, err := a.Engine.Store.Project("demo")
 	if err != nil || project.State != "running" || project.BluePort != 0 {

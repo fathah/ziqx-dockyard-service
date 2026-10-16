@@ -22,6 +22,7 @@ type AdoptionPlan struct {
 	Identity                      model.Adoption
 	Source, Dotenv, SHA256, State string
 	Services                      int
+	EnvFiles                      map[string]string
 }
 
 func (d Docker) ownsNative(p model.Project, slot string, c Container) bool {
@@ -140,6 +141,10 @@ func (d Docker) PlanAdoption(ctx context.Context, name string) (AdoptionPlan, er
 		}
 		plan.Dotenv = string(b)
 	}
+	plan.EnvFiles, err = DiscoverEnvFiles(d.Config, model.Project{ID: name}, nil)
+	if err != nil || ValidateEnvFiles(plan.Dotenv, plan.EnvFiles) != nil {
+		return plan, model.Fail("ENV_FILES_INVALID")
+	}
 	for _, c := range containers {
 		l := c.Config.Labels
 		if !expected[c.ID] || l["com.docker.compose.project"] != project || l["com.docker.compose.project.working_dir"] != dir || l["com.docker.compose.project.config_files"] != strings.Join(files, ",") || l["io.ziqx.dockyard.server"] != "" || l["io.ziqx.dockyard.project"] != "" || strings.EqualFold(l["com.docker.compose.oneoff"], "true") {
@@ -196,6 +201,7 @@ func (d Docker) PlanAdoption(ctx context.Context, name string) (AdoptionPlan, er
 	digest.Write([]byte{0})
 	digest.Write([]byte(plan.Source))
 	digest.Write([]byte(plan.Dotenv))
+	digest.Write([]byte(envFilesSHA(plan.EnvFiles)))
 	digest.Write([]byte(plan.State))
 	plan.SHA256 = hex.EncodeToString(digest.Sum(nil))
 	return plan, nil

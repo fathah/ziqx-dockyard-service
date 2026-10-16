@@ -22,6 +22,8 @@ function preview(): ServerUpdatePreview {
   return {
     source_commit: "local",
     candidate_version: "0.7.4",
+    candidate_source: "github",
+    release_check_error: null,
     installed_version: "0.7.2",
     installed_commit: "local",
     version_status: "update_available",

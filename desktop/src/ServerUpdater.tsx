@@ -1,85 +1,81 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, RefreshCw } from "lucide-react";
 import toast from "react-hot-toast";
 import Button from "./Button";
 import * as api from "./api";
+import { useServerUpdates } from "./serverUpdates";
 
 const explain = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
 
 export default function ServerUpdater({
   openOperations,
+  initialReview = false,
 }: {
   openOperations?: () => void;
+  initialReview?: boolean;
 }) {
-  const [preview, setPreview] = useState<api.ServerUpdatePreview | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [review, setReview] = useState(false);
+  const {
+    preview,
+    busy: updateBusy,
+    error: updateError,
+    check,
+    apply,
+  } = useServerUpdates();
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const [review, setReview] = useState<api.ServerUpdatePreview | null>(null);
+  const initialReviewStarted = useRef(false);
+  const busy = updateBusy || passwordBusy;
+  const error = passwordError || updateError;
   const jobs = preview?.jobs;
-  const blocked = !jobs || jobs.active_count > 0;
-  async function check() {
-    setBusy(true);
-    setError("");
-    setReview(false);
-    setPreview(null);
-    try {
-      setPreview(await api.checkServerUpdate());
-    } catch (e) {
-      setError(explain(e));
-    } finally {
-      setBusy(false);
-    }
+  const blocked = !review || review.jobs.active_count > 0;
+  async function checkVersion() {
+    setPasswordError("");
+    setReview(null);
+    await check();
   }
+  async function beginReview() {
+    setPasswordError("");
+    setReview(null);
+    const fresh = await check();
+    if (fresh?.update_available && fresh.jobs.active_count === 0)
+      setReview(fresh);
+  }
+  useEffect(() => {
+    if (initialReview && !initialReviewStarted.current) {
+      initialReviewStarted.current = true;
+      void beginReview();
+    }
+  }, [initialReview]);
   async function update() {
-    if (!preview || blocked) return;
-    setBusy(true);
-    setError("");
-    try {
-      const version = await api.applyServerUpdate(preview);
+    if (!review || blocked) return;
+    const expected = review;
+    setPasswordError("");
+    const updated = await apply(expected);
+    setReview(null);
+    if (updated) {
       toast.success(
-        version === "unversioned"
-          ? `Dockyard service updated to bundled build ${preview.source_commit.slice(0, 12)}.`
-          : `Dockyard service updated to v${version}.`,
+        expected.candidate_version === "unversioned"
+          ? `Dockyard service updated to bundled build ${expected.source_commit.slice(0, 12)}.`
+          : `Dockyard service updated to v${expected.candidate_version}.`,
       );
-      if (preview.jobs.recovery_count > 0)
+      if (expected.jobs.recovery_count > 0)
         toast(
           "Control service updated. The recovery job is preserved and still blocks deployments.",
         );
-      setReview(false);
-      setPreview({
-        ...preview,
-        installed_dockyard: preview.candidate_dockyard,
-        installed_dockyardctl: preview.candidate_dockyardctl,
-        installed_version:
-          preview.candidate_version === "unversioned"
-            ? null
-            : preview.candidate_version,
-        installed_commit:
-          preview.candidate_version === "unversioned"
-            ? null
-            : preview.source_commit,
-        version_status: "current",
-        update_available: false,
-      });
-    } catch (e) {
-      setError(explain(e));
-      setReview(false);
-      setPreview(null);
-    } finally {
-      setBusy(false);
     }
   }
   async function forgetPassword() {
-    setBusy(true);
-    setError("");
+    setPasswordBusy(true);
+    setPasswordError("");
     try {
       await api.forgetRootPassword();
       toast.success("Saved root password removed from Keychain.");
     } catch (e) {
-      setError(explain(e));
+      setPasswordError(explain(e));
     } finally {
-      setBusy(false);
+      setPasswordBusy(false);
     }
   }
   return (
@@ -88,14 +84,15 @@ export default function ServerUpdater({
         <div>
           <h2>Server software</h2>
           <p className="muted">
-            Compares the VPS with the latest verified release from GitHub.
+            Checks once when the app connects. Check again to refresh the VPS
+            version and update safety checks.
           </p>
         </div>
         <Button
           type="button"
           className="button"
           disabled={busy}
-          onClick={() => void check()}
+          onClick={() => void checkVersion()}
         >
           <RefreshCw size={16} />
           {busy ? "Working…" : "Check version"}
@@ -105,7 +102,9 @@ export default function ServerUpdater({
         <div className="server-updater-status">
           <span className="tag">
             {preview.version_status === "current"
-              ? "Up to date"
+              ? preview.candidate_source === "bundled"
+                ? "Bundled build matches VPS"
+                : "Up to date"
               : preview.version_status === "server_newer"
                 ? "VPS is newer"
                 : preview.version_status === "same_version_different_build"
@@ -123,7 +122,7 @@ export default function ServerUpdater({
               : "Version unavailable"}
           </span>
           <span>
-            Latest:{" "}
+            {preview.candidate_source === "bundled" ? "Bundled" : "Latest"}:{" "}
             {preview.candidate_version === "unversioned"
               ? "Version unavailable"
               : `v${preview.candidate_version}`}
@@ -132,12 +131,21 @@ export default function ServerUpdater({
             <Button
               type="button"
               className="button primary"
-              disabled={busy || blocked}
-              onClick={() => setReview(true)}
+              disabled={busy}
+              onClick={() => void beginReview()}
             >
               Update server <ArrowRight size={15} />
             </Button>
           )}
+        </div>
+      )}
+      {preview?.release_check_error && (
+        <div className="server-update-release-error" role="status">
+          <p>
+            GitHub could not be checked. Showing the verified build bundled with
+            this app. Use Check version to retry.
+          </p>
+          <span>{preview.release_check_error}</span>
         </div>
       )}
       {jobs && (jobs.active_count > 0 || jobs.recovery_count > 0) && (
@@ -184,15 +192,15 @@ export default function ServerUpdater({
           current Go build to enable in-app updates.
         </p>
       )}
-      {review && preview && (
+      {review && (
         <div className="server-updater-review">
           <h3>Update Dockyard on your VPS?</h3>
           <p>
-            {preview.candidate_version === "unversioned"
+            {review.candidate_version === "unversioned"
               ? "This older bundle has no version number. Check its source commit before installing; the control service will restart briefly."
               : "The control service will restart briefly. Containers and Caddy will continue; Dockyard keeps a database and binary backup for rollback."}
           </p>
-          {preview.jobs.recovery_count > 0 && (
+          {review.jobs.recovery_count > 0 && (
             <p>
               <strong>The recovery lock stays in place.</strong> This update
               replaces Dockyard’s binaries and restarts its control service. It
@@ -203,15 +211,15 @@ export default function ServerUpdater({
           <div className="server-updater-hashes">
             <span>Installed version</span>
             <strong>
-              {preview.installed_version
-                ? `v${preview.installed_version}`
+              {review.installed_version
+                ? `v${review.installed_version}`
                 : "Unavailable (older build)"}
             </strong>
             <span>New build</span>
             <strong>
-              {preview.candidate_version === "unversioned"
-                ? `Unversioned · ${preview.source_commit.slice(0, 12)}`
-                : `v${preview.candidate_version}`}
+              {review.candidate_version === "unversioned"
+                ? `Unversioned · ${review.source_commit.slice(0, 12)}`
+                : `v${review.candidate_version}`}
             </strong>
           </div>
           <div className="controls">
@@ -227,7 +235,7 @@ export default function ServerUpdater({
               type="button"
               className="button"
               disabled={busy}
-              onClick={() => setReview(false)}
+              onClick={() => setReview(null)}
             >
               Cancel
             </Button>

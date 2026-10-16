@@ -24,8 +24,8 @@ type bgPreparer struct {
 	config config.Config
 }
 
-func (n bgPreparer) PrepareNative(ctx context.Context, p model.Project, s, env string) (model.Release, error) {
-	return (runtime.Docker{Config: n.config, Runner: bgRunner{}}).PrepareNative(ctx, p, s, env)
+func (n bgPreparer) PrepareNative(ctx context.Context, p model.Project, s, env string, files ...map[string]string) (model.Release, error) {
+	return (runtime.Docker{Config: n.config, Runner: bgRunner{}}).PrepareNative(ctx, p, s, env, files...)
 }
 func (n bgPreparer) CheckBlueGreenSource(context.Context, model.Project) error { return nil }
 func TestBlueGreenReviewAuthorizationStalenessAndReplay(t *testing.T) {

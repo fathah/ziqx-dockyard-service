@@ -6,6 +6,7 @@ use ssh2::{OpenFlags, OpenType, Session};
 use std::{
     io::{Read, Write},
     path::Path,
+    sync::Mutex,
 };
 use tauri::AppHandle;
 
@@ -124,6 +125,10 @@ struct Manifest {
 pub struct Preview {
     pub source_commit: String,
     pub candidate_version: String,
+    #[serde(default)]
+    pub candidate_source: String,
+    #[serde(default)]
+    pub release_check_error: Option<String>,
     pub installed_version: Option<String>,
     pub installed_commit: Option<String>,
     pub version_status: String,
@@ -264,7 +269,31 @@ fn manifest() -> Result<Manifest, String> {
 const RELEASES: &str = "https://api.github.com/repos/fathah/ziqx-dockyard-service/releases/latest";
 
 type Build = (Vec<u8>, Vec<u8>, Manifest);
-static RELEASE_CACHE: std::sync::Mutex<Option<(String, Build)>> = std::sync::Mutex::new(None);
+// A fresh desktop process checks GitHub once. Keep the verified bytes together
+// with their manifest so checking another server or applying an update uses the
+// exact candidate already shown to the user, without another network request.
+static RELEASE_CACHE: Mutex<Option<Build>> = Mutex::new(None);
+
+struct Candidate {
+    build: Build,
+    source: &'static str,
+    release_check_error: Option<String>,
+}
+
+fn cached_release(
+    cache: &Mutex<Option<Build>>,
+    fetch: impl FnOnce() -> Result<Build, String>,
+) -> Result<Build, String> {
+    // Keep initialization serialized across simultaneous profile checks. Failed
+    // checks are not cached, allowing a deliberate retry when GitHub is back.
+    let mut cached = cache.lock().map_err(|_| "Release cache unavailable")?;
+    if let Some(build) = cached.as_ref() {
+        return Ok(build.clone());
+    }
+    let build = fetch()?;
+    *cached = Some(build.clone());
+    Ok(build)
+}
 
 fn http() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
@@ -275,8 +304,12 @@ fn http() -> Result<reqwest::blocking::Client, String> {
         .map_err(|_| "Cannot start the download client".into())
 }
 
-/// Latest published release, verified against its SHA256SUMS. Cached per tag.
+/// Latest published release, verified against its SHA256SUMS. Cached per app run.
 fn latest_release() -> Result<Build, String> {
+    cached_release(&RELEASE_CACHE, download_latest_release)
+}
+
+fn download_latest_release() -> Result<Build, String> {
     #[derive(Deserialize)]
     struct Asset {
         name: String,
@@ -284,7 +317,6 @@ fn latest_release() -> Result<Build, String> {
     }
     #[derive(Deserialize)]
     struct Release {
-        tag_name: String,
         assets: Vec<Asset>,
     }
     let client = http()?;
@@ -295,15 +327,6 @@ fn latest_release() -> Result<Build, String> {
         .and_then(|r| r.error_for_status())
         .and_then(|r| r.json())
         .map_err(|_| "Cannot read the latest release from GitHub")?;
-    if let Some((tag, build)) = RELEASE_CACHE
-        .lock()
-        .map_err(|_| "Release cache unavailable")?
-        .as_ref()
-    {
-        if *tag == release.tag_name {
-            return Ok(build.clone());
-        }
-    }
     let fetch = |name: &str| -> Result<Vec<u8>, String> {
         let url = release
             .assets
@@ -351,25 +374,41 @@ fn latest_release() -> Result<Build, String> {
     if hash(&agent) != m.dockyard_sha256 || hash(&ctl) != m.dockyardctl_sha256 {
         return Err("The downloaded release failed its checksum".into());
     }
-    let build = (agent, ctl, m);
-    *RELEASE_CACHE
-        .lock()
-        .map_err(|_| "Release cache unavailable")? = Some((release.tag_name, build.clone()));
-    Ok(build)
+    Ok((agent, ctl, m))
 }
 
 /// The newest verified build: the latest GitHub release when it is newer than
 /// the one bundled in this app, otherwise (or offline) the bundled build.
-fn binaries(app: &AppHandle) -> Result<Build, String> {
+fn binaries(app: &AppHandle) -> Result<Candidate, String> {
     let bundled = bundled_binaries(app);
-    match (latest_release(), bundled) {
+    select_candidate(latest_release(), bundled)
+}
+
+fn select_candidate(
+    remote: Result<Build, String>,
+    bundled: Result<Build, String>,
+) -> Result<Candidate, String> {
+    match (remote, bundled) {
         (Ok(remote), Ok(local)) => {
             let newer = version_parts(&remote.2.version) > version_parts(&local.2.version)
                 || (remote.2.version == local.2.version && local.2.source_commit == "local");
-            Ok(if newer { remote } else { local })
+            Ok(Candidate {
+                build: if newer { remote } else { local },
+                source: if newer { "github" } else { "bundled" },
+                release_check_error: None,
+            })
         }
-        (Ok(remote), Err(_)) => Ok(remote),
-        (Err(_), local) => local,
+        (Ok(remote), Err(_)) => Ok(Candidate {
+            build: remote,
+            source: "github",
+            release_check_error: None,
+        }),
+        (Err(error), Ok(local)) => Ok(Candidate {
+            build: local,
+            source: "bundled",
+            release_check_error: Some(error),
+        }),
+        (Err(remote), Err(local)) => Err(format!("{remote}. {local}")),
     }
 }
 fn bundled_binaries(app: &AppHandle) -> Result<Build, String> {
@@ -675,7 +714,8 @@ pub fn prepare_access(
     }
     Ok(report)
 }
-fn inspect(session: &Session, m: &Manifest) -> Result<Preview, String> {
+fn inspect(session: &Session, candidate: &Candidate) -> Result<Preview, String> {
+    let m = &candidate.build.2;
     let output = command(session, INSPECT, 15000)?;
     let lines: Vec<&str> = output.lines().collect();
     if lines.len() != 4 || lines[2].trim() != "active" {
@@ -706,6 +746,8 @@ fn inspect(session: &Session, m: &Manifest) -> Result<Preview, String> {
     Ok(Preview {
         source_commit: m.source_commit.clone(),
         candidate_version: m.version.clone(),
+        candidate_source: candidate.source.into(),
+        release_check_error: candidate.release_check_error.clone(),
         installed_version: build.as_ref().map(|b| b.version.clone()),
         installed_commit: build.as_ref().map(|b| b.commit.clone()),
         version_status: status.into(),
@@ -720,9 +762,9 @@ fn inspect(session: &Session, m: &Manifest) -> Result<Preview, String> {
     })
 }
 pub fn check(app: &AppHandle, identity: &SshIdentity) -> Result<Preview, String> {
-    let (_, _, m) = binaries(app)?;
+    let candidate = binaries(app)?;
     let session = ssh(app, identity, None)?;
-    inspect(&session, &m)
+    inspect(&session, &candidate)
 }
 fn upload(session: &Session, path: &str, bytes: &[u8], executable: bool) -> Result<(), String> {
     session.set_timeout(120000);
@@ -752,7 +794,8 @@ pub fn apply(
     identity: &SshIdentity,
     expected: &Preview,
 ) -> Result<String, String> {
-    let (agent, ctl, m) = binaries(app)?;
+    let candidate = binaries(app)?;
+    let (agent, ctl, m) = &candidate.build;
     if expected.source_commit != m.source_commit
         || expected.candidate_version != m.version
         || expected.candidate_dockyard != m.dockyard_sha256
@@ -766,7 +809,7 @@ pub fn apply(
         return Err("A Dockyard job is queued or running. Wait for it to finish, then check the server again".into());
     }
     let session = ssh(app, identity, None)?;
-    let current = inspect(&session, &m)?;
+    let current = inspect(&session, &candidate)?;
     if current.installed_dockyard != expected.installed_dockyard
         || current.installed_dockyardctl != expected.installed_dockyardctl
         || current.installed_version != expected.installed_version
@@ -815,7 +858,7 @@ pub fn apply(
         .map_err(|_| format!("Update result was unclear. Inspect {stage} on the VPS"))?;
     match value.get("status").and_then(|s| s.as_str()) {
         Some("updated") => {
-            let now = inspect(&session, &m)?;
+            let now = inspect(&session, &candidate)?;
             if now.installed_dockyard != m.dockyard_sha256
                 || now.installed_dockyardctl != m.dockyardctl_sha256
                 || (m.version != "unversioned"
@@ -824,9 +867,9 @@ pub fn apply(
             {
                 return Err(format!("The service restarted, but its binaries do not match the expected checksums. Inspect {stage}"));
             }
-            Ok(m.version)
+            Ok(m.version.clone())
         }
-        Some("current") => Ok(m.version),
+        Some("current") => Ok(m.version.clone()),
         Some("error") => Err(value
             .get("message")
             .and_then(|s| s.as_str())
@@ -1003,6 +1046,101 @@ print('ready')
     }
 
     use super::*;
+
+    fn release_fixture(version: &str, commit: &str) -> Build {
+        let agent = format!("dockyard-{version}").into_bytes();
+        let ctl = format!("dockyardctl-{version}").into_bytes();
+        let manifest = Manifest {
+            source_commit: commit.into(),
+            version: version.into(),
+            dockyard_sha256: hash(&agent),
+            dockyardctl_sha256: hash(&ctl),
+        };
+        (agent, ctl, manifest)
+    }
+
+    #[test]
+    fn release_check_is_shared_for_the_app_run_and_failures_can_retry() {
+        let cache = Mutex::new(None);
+        assert_eq!(
+            cached_release(&cache, || Err("GitHub is offline".into())).err(),
+            Some("GitHub is offline".into())
+        );
+        let first =
+            cached_release(&cache, || Ok(release_fixture("0.7.33", &"a".repeat(40)))).unwrap();
+        let subsequent =
+            cached_release(&cache, || panic!("must not request GitHub again")).unwrap();
+        assert_eq!(first.0, subsequent.0);
+        assert_eq!(first.1, subsequent.1);
+        assert_eq!(first.2.source_commit, subsequent.2.source_commit);
+        assert_eq!(first.2.dockyard_sha256, subsequent.2.dockyard_sha256);
+    }
+
+    #[test]
+    fn simultaneous_server_checks_download_one_verified_release() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Barrier,
+        };
+
+        let cache = Arc::new(Mutex::new(None));
+        let requests = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(Barrier::new(4));
+        let checks: Vec<_> = (0..4)
+            .map(|_| {
+                let cache = Arc::clone(&cache);
+                let requests = Arc::clone(&requests);
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    start.wait();
+                    cached_release(&cache, || {
+                        requests.fetch_add(1, Ordering::SeqCst);
+                        Ok(release_fixture("0.7.33", &"a".repeat(40)))
+                    })
+                    .unwrap()
+                    .2
+                    .version
+                })
+            })
+            .collect();
+        for check in checks {
+            assert_eq!(check.join().unwrap(), "0.7.33");
+        }
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn bundled_fallback_exposes_failed_github_check_and_build_source() {
+        let fallback = select_candidate(
+            Err("Cannot read the latest release from GitHub".into()),
+            Ok(release_fixture("0.7.33", &"b".repeat(40))),
+        )
+        .unwrap();
+        assert_eq!(fallback.source, "bundled");
+        assert_eq!(fallback.build.2.version, "0.7.33");
+        assert_eq!(
+            fallback.release_check_error.as_deref(),
+            Some("Cannot read the latest release from GitHub")
+        );
+
+        let newer_remote = select_candidate(
+            Ok(release_fixture("0.7.34", &"a".repeat(40))),
+            Ok(release_fixture("0.7.33", &"b".repeat(40))),
+        )
+        .unwrap();
+        assert_eq!(newer_remote.source, "github");
+        assert_eq!(newer_remote.build.2.version, "0.7.34");
+        assert!(newer_remote.release_check_error.is_none());
+
+        let newer_bundle = select_candidate(
+            Ok(release_fixture("0.7.32", &"a".repeat(40))),
+            Ok(release_fixture("0.7.33", &"b".repeat(40))),
+        )
+        .unwrap();
+        assert_eq!(newer_bundle.source, "bundled");
+        assert_eq!(newer_bundle.build.2.version, "0.7.33");
+        assert!(newer_bundle.release_check_error.is_none());
+    }
 
     #[test]
     fn job_review_accepts_recovery_but_rejects_untrusted_metadata() {

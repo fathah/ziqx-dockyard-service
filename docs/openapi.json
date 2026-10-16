@@ -1800,7 +1800,7 @@
         "operationId": "readProjectConfiguration",
         "summary": "Read saved Compose and environment files",
         "tags": ["Deployments"],
-        "description": "Returns verified source Compose and raw .env for the current release, or empty files and release_id for an undeployed project. Contains secrets: requires signed deploy.environment and server-wide compose.admin authority. Responses are no-store. The desktop requires Touch ID before fetching. Read-only metadata endpoints never include these contents.",
+        "description": "Returns saved draft or verified source Compose and raw main .env in env_file. Always advertises env_files_supported: true and sorted env_file_names on supporting servers. Named contents are omitted by default so older desktops cannot expose them before their environment-read authorization. Opt in with the exact query ?env_files=1 to also receive the env_files map, including {}. Includes safely discovered existing named files on the VPS for editor adoption; managed snapshots take precedence. An undeployed project returns empty source/main and release_id. Contains secrets: requires signed deploy.environment and server-wide compose.admin authority. Responses are no-store. The desktop requires Touch ID before fetching. Read-only metadata endpoints never include these contents.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -1822,6 +1822,13 @@
           },
           {
             "$ref": "#/components/parameters/ProjectID"
+          },
+          {
+            "name": "env_files",
+            "in": "query",
+            "required": false,
+            "schema": {"type": "string", "const": "1"},
+            "description": "Explicitly include named environment contents. Omit for filename metadata only; other values and duplicates are rejected. Main env_file retains its existing behavior."
           }
         ],
         "responses": {
@@ -1922,6 +1929,9 @@
                   "env_file": {
                     "type": "string",
                     "maxLength": 65536
+                  },
+                  "env_files": {
+                    "$ref": "#/components/schemas/NamedEnvFiles"
                   },
                   "route_service": {
                     "type": "string"
@@ -2051,6 +2061,9 @@
                   "env_file": {
                     "type": "string",
                     "maxLength": 65536
+                  },
+                  "env_files": {
+                    "$ref": "#/components/schemas/NamedEnvFiles"
                   },
                   "route_service": {
                     "type": "string"
@@ -2473,11 +2486,11 @@
     "/v1/projects/{id}/draft": {
       "post": {
         "operationId": "saveDraft",
-        "summary": "Save Compose and .env without deploying",
+        "summary": "Save Compose and environment files without deploying",
         "tags": [
           "Deployments"
         ],
-        "description": "Requires server-wide compose.admin and deploy.environment. Stores the Compose file and .env verbatim (not validated) in the project's private draft folder. Omitting env_file keeps the draft's .env, or else the deployed one. GET configuration returns the draft (with `draft: true`) until a deployment of that exact content succeeds. Every Compose deploy also saves its files as the draft first, so a failed deployment keeps them.",
+        "description": "Requires server-wide compose.admin and deploy.environment. Stores Compose and environment contents verbatim in the private draft folder without Compose validation or Docker changes. Optional env_files maps named .env.* filenames to contents. Omitting env_file or env_files preserves its saved draft/current value; an empty string clears main .env and an explicit empty map clears managed named files. At most 16 named files, 64 KiB total main+named UTF-8 bytes. GET configuration returns the draft (with `draft: true`) until a deployment of that exact content succeeds. Every Compose deploy also saves its files as the draft first, so a failed deployment keeps them.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -2518,6 +2531,9 @@
                   "env_file": {
                     "type": "string",
                     "maxLength": 65536
+                  },
+                  "env_files": {
+                    "$ref": "#/components/schemas/NamedEnvFiles"
                   }
                 },
                 "additionalProperties": false
@@ -3719,7 +3735,10 @@
             "type": "string",
             "maxLength": 65536,
             "writeOnly": true,
-            "description": "Raw .env file contents, not a filesystem path. Up to 64 KiB in UTF-8. Used for Compose interpolation and env_file: .env. Omit to reuse the current snapshot, or supply an empty string to clear. Full Compose mode only; requires deploy.environment."
+            "description": "Raw main .env contents, not a filesystem path. Main plus named env_files have a combined 64 KiB UTF-8 limit. Used for Compose interpolation and env_file: .env. Omit to reuse the latest draft/current snapshot, or supply an empty string to clear. Full Compose mode only; requires deploy.environment."
+          },
+          "env_files": {
+            "$ref": "#/components/schemas/NamedEnvFiles"
           },
           "expected_release_id": {
             "type": "string",
@@ -4310,9 +4329,21 @@
           }
         }
       },
+      "NamedEnvFiles": {
+        "type": "object",
+        "maxProperties": 16,
+        "propertyNames": {
+          "pattern": "^\\.env\\.(?!.*\\.\\.)[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+        },
+        "additionalProperties": {
+          "type": "string",
+          "maxLength": 65536
+        },
+        "description": "Named .env.* filenames and raw contents, excluding main .env. Filenames have a 1..64 character ASCII suffix, start with a letter/digit, and cannot contain '..' or path separators. At most 16 files; main .env plus all named contents must fit 64 KiB UTF-8. Omit on write to preserve the latest saved/current map; explicit {} clears managed named files. Safe existing VPS files are included by configuration reads for adoption. Named files supply container environment only through explicit service env_file references; Compose interpolation still uses main .env. Full Compose mode only, with deploy.environment and server-wide compose.admin."
+      },
       "ProjectConfiguration": {
         "type": "object",
-        "required": ["release_id", "compose_yaml", "env_file"],
+        "required": ["release_id", "compose_yaml", "env_file", "env_files_supported", "env_file_names"],
         "properties": {
           "release_id": {
             "type": "string"
@@ -4322,6 +4353,24 @@
           },
           "env_file": {
             "type": "string"
+          },
+          "env_files": {
+            "$ref": "#/components/schemas/NamedEnvFiles",
+            "description": "Raw named contents, present only when the request opts in with ?env_files=1."
+          },
+          "env_files_supported": {
+            "type": "boolean",
+            "const": true
+          },
+          "env_file_names": {
+            "type": "array",
+            "maxItems": 16,
+            "uniqueItems": true,
+            "items": {"type": "string"},
+            "description": "Sorted named filenames available to edit; contains no environment values."
+          },
+          "draft": {
+            "type": "boolean"
           }
         }
       },

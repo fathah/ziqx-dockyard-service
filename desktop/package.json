@@ -18,6 +18,7 @@
     "test:editor": "node --experimental-strip-types --test tests/compose-editor.test.mjs",
     "test:route-review": "node --test tests/route-review.test.mjs",
     "test:route": "node --experimental-strip-types --test tests/compose-route.test.mjs",
+    "test:updates": "node --experimental-strip-types --test tests/server-update-cache.test.mjs",
     "editor:schema": "node scripts/generate-compose-validator.mjs"
   },
   "dependencies": {

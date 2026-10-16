@@ -18,10 +18,11 @@ function portError(error: unknown): string {
 
 export default function AvailablePorts({ preview }: { preview: boolean }) {
   const [ports, setPorts] = useState<number[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [refresh, setRefresh] = useState(0);
   useEffect(() => {
+    if (refresh === 0) return;
     let cancelled = false;
     setPorts([]);
     setError("");
@@ -78,23 +79,33 @@ export default function AvailablePorts({ preview }: { preview: boolean }) {
           Suggestions are not reserved; availability can change before
           deployment.
         </Help>
-        <Button
-          type="button"
-          className="icon-button"
-          aria-label="Refresh available ports"
-          title="Refresh available ports"
-          disabled={loading}
-          onClick={() => setRefresh((value) => value + 1)}
-        >
-          <RefreshCw size={14} />
-        </Button>
+        {refresh > 0 && (
+          <Button
+            type="button"
+            className="icon-button"
+            aria-label="Refresh available ports"
+            title="Refresh available ports"
+            disabled={loading}
+            onClick={() => setRefresh((value) => value + 1)}
+          >
+            <RefreshCw size={14} />
+          </Button>
+        )}
       </div>
       <div
         className="available-ports-values"
         aria-live="polite"
         aria-busy={loading}
       >
-        {loading ? (
+        {refresh === 0 ? (
+          <Button
+            type="button"
+            className="button small"
+            onClick={() => setRefresh((value) => value + 1)}
+          >
+            Check ports
+          </Button>
+        ) : loading ? (
           <span className="available-ports-message">Checking VPS ports…</span>
         ) : error ? (
           <span className="available-ports-error" role="alert">

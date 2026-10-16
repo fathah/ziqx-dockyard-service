@@ -74,7 +74,7 @@ func fail(w http.ResponseWriter, err error, request string) {
 		status = 429
 	case "DEPENDENCY_UNAVAILABLE", "DOCKER_UNAVAILABLE", "CADDY_UNAVAILABLE", "CADDY_CONFIG_WRITE_REQUIRED", "RECOVERY_REQUIRED", "METADATA_UNAVAILABLE":
 		status = 503
-	case "HOSTNAME_INVALID", "HOSTNAME_NOT_ALLOWED", "PORT_INVALID", "ENVIRONMENT_INVALID", "IMAGE_INVALID", "REQUEST_INVALID", "COMPOSE_INVALID", "COMPOSE_PERSISTENT_BLUE_GREEN", "COMPOSE_RESOURCE_LIMIT":
+	case "HOSTNAME_INVALID", "HOSTNAME_NOT_ALLOWED", "PORT_INVALID", "ENVIRONMENT_INVALID", "ENV_FILES_INVALID", "IMAGE_INVALID", "REQUEST_INVALID", "COMPOSE_INVALID", "COMPOSE_PERSISTENT_BLUE_GREEN", "COMPOSE_RESOURCE_LIMIT":
 		status = 400
 	}
 	detail := ""
@@ -475,10 +475,16 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 		return
 	}
 	if len(parts) == 3 && parts[2] == "configuration" {
-		if _, err := query(r); err != nil {
+		q, err := query(r, "env_files")
+		if err != nil {
 			fail(w, err, p.RequestID)
 			return
 		}
+		if value, present := q["env_files"]; present && value != "1" {
+			problem(w, 400, "REQUEST_INVALID", p.RequestID)
+			return
+		}
+		includeFiles := q["env_files"] == "1"
 		if !a.nativeAuthority(w, p) {
 			return
 		}
@@ -487,6 +493,14 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 			return
 		}
 		current, exists := project.Current()
+		source, dotenv, files, draft, err := savedConfiguration(e.Config, project)
+		if err == nil {
+			files, err = runtime.DiscoverEnvFiles(e.Config, project, files)
+		}
+		if err != nil {
+			fail(w, err, p.RequestID)
+			return
+		}
 		// Imported projects' frozen inline values would override any .env edit;
 		// the editor offers the original environment rules instead.
 		restore := func(source string) (string, error) {
@@ -497,29 +511,24 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 			}
 			return source, nil
 		}
-		if compose, dotenv, ok := runtime.ReadDraft(e.Config, project); ok {
+		if draft {
 			// A draft is the operator's text; keep it if it can't be parsed.
-			if source, err := restore(compose); err == nil {
-				compose = source
+			if restored, err := restore(source); err == nil {
+				source = restored
 			}
-			// release_id stays the deployed release, so a deploy still detects
-			// someone else's newer release.
-			write(w, 200, map[string]any{"release_id": current.ID, "compose_yaml": compose, "env_file": dotenv, "draft": true})
-			return
-		}
-		if !exists {
-			write(w, 200, map[string]string{"release_id": "", "compose_yaml": "", "env_file": ""})
-			return
-		}
-		source, dotenv, err := runtime.EditableConfiguration(e.Config, project, current)
-		if err == nil {
+		} else if exists {
 			source, err = restore(source)
+			if err != nil {
+				fail(w, err, p.RequestID)
+				return
+			}
 		}
-		if err != nil {
+		if err := runtime.ValidateEnvFiles(dotenv, files); err != nil {
 			fail(w, err, p.RequestID)
 			return
 		}
-		write(w, 200, map[string]string{"release_id": current.ID, "compose_yaml": source, "env_file": dotenv})
+		// Keep the deployed release ID with a draft for optimistic concurrency.
+		write(w, 200, configurationResponse(current.ID, source, dotenv, files, includeFiles, draft))
 		return
 	}
 	if len(parts) == 3 && parts[2] == "logs" {
@@ -711,6 +720,7 @@ type deployRequest struct {
 	Compose         string            `json:"compose_yaml"`
 	Variables       map[string]string `json:"variables,omitempty"`
 	EnvFile         *string           `json:"env_file,omitempty"`
+	EnvFiles        map[string]string `json:"env_files,omitempty"`
 	// Compose projects may connect domains or re-point their web service per
 	// release; the port binding is compiled into the release, so this deploys.
 	Domains      *[]string `json:"domains,omitempty"`
@@ -1064,20 +1074,27 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					return
 				}
 				dotenv := ""
-				if input.EnvFile != nil {
-					dotenv = *input.EnvFile
-				} else if _, saved, ok := runtime.ReadDraft(e.Config, p); ok {
-					dotenv = saved
-				} else if current, ok := p.Current(); ok {
-					b, readErr := os.ReadFile(runtime.EnvironmentPath(e.Config, p, current.Environment))
+				files := input.EnvFiles
+				if input.EnvFile == nil || files == nil {
+					_, savedMain, savedFiles, _, readErr := savedConfiguration(e.Config, p)
 					if readErr != nil {
-						fail(w, model.Fail("ENVIRONMENT_UNAVAILABLE"), request)
+						fail(w, readErr, request)
 						return
 					}
-					dotenv = string(b)
+					dotenv = savedMain
+					if files == nil {
+						files = savedFiles
+					}
+				}
+				if input.EnvFile != nil {
+					dotenv = *input.EnvFile
+				}
+				if err = runtime.ValidateEnvFiles(dotenv, files); err != nil {
+					fail(w, err, request)
+					return
 				}
 				// Keep the files even if validation or the deployment fails.
-				draftSHA, err := runtime.SaveDraft(e.Config, p, input.Compose, dotenv)
+				draftSHA, err := runtime.SaveDraft(e.Config, p, input.Compose, dotenv, files)
 				if err != nil {
 					fail(w, err, request)
 					return
@@ -1115,15 +1132,8 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 					}
 					j.Input.Project = &target
 				}
-				preparer, ok := e.Docker.(interface {
-					PrepareNative(context.Context, model.Project, string, string) (model.Release, error)
-				})
-				if !ok {
-					fail(w, model.Fail("COMPOSE_UNAVAILABLE"), request)
-					return
-				}
 				composeSource := input.Compose
-				if restorer, ok := preparer.(interface {
+				if restorer, ok := e.Docker.(interface {
 					RestoreAdoptedEnvironment(context.Context, model.Project, string) (string, error)
 				}); ok {
 					composeSource, err = restorer.RestoreAdoptedEnvironment(r.Context(), p, composeSource)
@@ -1132,7 +1142,7 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 						return
 					}
 				}
-				release, prepareErr := preparer.PrepareNative(r.Context(), target, composeSource, dotenv)
+				release, prepareErr := prepareNative(r.Context(), e.Docker, target, composeSource, dotenv, files)
 				if prepareErr != nil {
 					fail(w, prepareErr, request)
 					return
@@ -1189,7 +1199,7 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 				}
 				break
 			}
-			if input.EnvFile != nil {
+			if input.EnvFile != nil || input.EnvFiles != nil {
 				problem(w, 400, "LEGACY_PROJECT_REQUIRES_VARIABLES", request)
 				return
 			}

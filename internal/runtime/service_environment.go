@@ -16,7 +16,7 @@ import (
 )
 
 type NativeEnvironmentPreparer interface {
-	PrepareNative(context.Context, model.Project, string, string) (model.Release, error)
+	PrepareNative(context.Context, model.Project, string, string, ...map[string]string) (model.Release, error)
 }
 
 // PrepareLatestNative builds a full-stack release for Start/Restart from the
@@ -26,11 +26,13 @@ type NativeEnvironmentPreparer interface {
 // step just fetched rather than ones pinned by earlier individual updates. The
 // returned hash identifies the applied draft ("" when none was saved).
 func PrepareLatestNative(ctx context.Context, c config.Config, preparer NativeEnvironmentPreparer, p model.Project, current model.Release) (model.Release, string, error) {
-	source, dotenv, saved := ReadDraft(c, p)
+	source, dotenv, files, saved, err := ReadDraftConfiguration(c, p)
+	if err != nil {
+		return current, "", err
+	}
 	sha := ""
-	var err error
 	if saved {
-		sha = draftSHA(source, dotenv)
+		sha = draftSHA(source, dotenv, files)
 		if restorer, ok := preparer.(interface {
 			RestoreAdoptedEnvironment(context.Context, model.Project, string) (string, error)
 		}); ok {
@@ -47,7 +49,13 @@ func PrepareLatestNative(ctx context.Context, c config.Config, preparer NativeEn
 	} else if source, dotenv, err = EditableConfiguration(c, p, current); err != nil {
 		return current, "", err
 	}
-	release, err := preparer.PrepareNative(ctx, p, source, dotenv)
+	if !saved {
+		files, err = ReadReleaseEnvFiles(c, p, current)
+		if err != nil {
+			return current, "", err
+		}
+	}
+	release, err := preparer.PrepareNative(ctx, p, source, dotenv, files)
 	if err != nil {
 		return current, "", err
 	}
@@ -146,7 +154,10 @@ func (d Docker) RestoreAdoptedEnvironment(ctx context.Context, p model.Project, 
 // .env while retaining deployed Compose settings. Draft Compose edits are not
 // applied by Start/Restart. Rollback deliberately keeps its historical inputs.
 func PrepareRestartEnvironment(ctx context.Context, c config.Config, preparer NativeEnvironmentPreparer, p model.Project, current model.Release) (model.Release, error) {
-	_, dotenv, saved := ReadDraft(c, p)
+	_, dotenv, files, saved, err := ReadDraftConfiguration(c, p)
+	if err != nil {
+		return current, err
+	}
 	if !saved {
 		return current, nil
 	}
@@ -162,7 +173,7 @@ func PrepareRestartEnvironment(ctx context.Context, c config.Config, preparer Na
 			return current, err
 		}
 	}
-	resolved, err := preparer.PrepareNative(ctx, p, source, dotenv)
+	resolved, err := preparer.PrepareNative(ctx, p, source, dotenv, files)
 	if err != nil {
 		return current, err
 	}
@@ -191,6 +202,7 @@ func PrepareRestartEnvironment(ctx context.Context, c config.Config, preparer Na
 		}
 	}
 	old["x-dockyard-env-sha256"] = next["x-dockyard-env-sha256"]
+	old["x-dockyard-env-files-sha256"] = next["x-dockyard-env-files-sha256"]
 	b, err := json.MarshalIndent(old, "", "  ")
 	if err != nil || len(b) > 2<<20 {
 		return current, model.Fail("COMPOSE_LIMIT")
@@ -215,10 +227,18 @@ func (d Docker) PrepareServiceEnvironment(ctx context.Context, p model.Project, 
 	if err != nil {
 		return err
 	}
-	if _, saved, ok := ReadDraft(d.Config, p); ok {
-		dotenv = saved
+	files, err := ReadReleaseEnvFiles(d.Config, p, current)
+	if err != nil {
+		return err
 	}
-	release, err := d.PrepareNative(ctx, p, source, dotenv)
+	_, draftEnv, draftFiles, saved, err := ReadDraftConfiguration(d.Config, p)
+	if err != nil {
+		return err
+	}
+	if saved {
+		dotenv, files = draftEnv, draftFiles
+	}
+	release, err := d.PrepareNative(ctx, p, source, dotenv, files)
 	if err != nil {
 		return err
 	}
@@ -277,6 +297,7 @@ func (d Docker) PrepareServiceEnvironment(ctx context.Context, p model.Project, 
 		object(doc["services"])[plan.Service] = svc
 	}
 	doc["x-dockyard-env-sha256"] = next["x-dockyard-env-sha256"]
+	doc["x-dockyard-env-files-sha256"] = next["x-dockyard-env-files-sha256"]
 	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil || len(b) > 2<<20 {
 		return model.Fail("COMPOSE_LIMIT")

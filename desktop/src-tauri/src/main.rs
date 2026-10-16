@@ -516,6 +516,14 @@ fn read_op(read: &Read) -> Result<Operation, String> {
         request_id: format!("req-{}", uuid::Uuid::new_v4()),
     })
 }
+fn named_environment_op(read: &Read) -> Result<Operation, String> {
+    if !matches!(read, Read::Configuration { .. }) {
+        return Err("Invalid environment read".into());
+    }
+    let mut op = read_op(read)?;
+    op.target.push_str("?env_files=1");
+    Ok(op)
+}
 struct PromptGuard(Arc<AtomicBool>);
 impl Drop for PromptGuard {
     fn drop(&mut self) {
@@ -797,6 +805,59 @@ async fn read_api(c: State<'_, Control>, read: Read) -> Result<Value, String> {
         "READ_TIMEOUT: the server took too long to respond. Try reading again.".to_string()
     })?
 }
+fn zeroize_json(value: &mut Value) {
+    match value {
+        Value::String(value) => value.zeroize(),
+        Value::Array(values) => values.iter_mut().for_each(zeroize_json),
+        Value::Object(values) => values.values_mut().for_each(zeroize_json),
+        _ => {}
+    }
+}
+// A configuration response contains both Compose text and environment secrets.
+// Keep every unreleased value covered when authentication or session checks fail.
+struct SecretConfiguration(Value);
+impl Drop for SecretConfiguration {
+    fn drop(&mut self) { zeroize_json(&mut self.0); }
+}
+fn env_files_supported(data: &Value) -> bool {
+    data.get("env_files_supported").and_then(Value::as_bool)
+        .unwrap_or_else(|| data.get("env_files").is_some())
+}
+fn needs_named_environment(data: &Value) -> bool {
+    env_files_supported(data) && data.get("env_files").is_none()
+}
+fn redact_configuration(data: &mut Value) {
+    let supported = env_files_supported(data);
+    let mut names: Vec<String> = if let Some(files) = data.get("env_files").and_then(Value::as_object) {
+        files.keys().filter(|name| protocol::env_filename(name)).cloned().collect()
+    } else {
+        data.get("env_file_names").and_then(Value::as_array).map(|names| {
+            names.iter().filter_map(Value::as_str).filter(|name| protocol::env_filename(name)).map(str::to_string).collect()
+        }).unwrap_or_default()
+    };
+    names.sort();
+    names.dedup();
+    if let Some(obj) = data.as_object_mut() {
+        for field in ["env_file", "env_files"] {
+            if let Some(mut secret) = obj.remove(field) { zeroize_json(&mut secret); }
+        }
+        obj.insert("env_files_supported".into(), Value::Bool(supported));
+        obj.insert("env_file_names".into(), Value::Array(names.into_iter().map(Value::String).collect()));
+        obj.insert("env_locked".into(), Value::Bool(true));
+    }
+}
+fn unlocked_environment(data: &mut Value) -> Value {
+    let supported = env_files_supported(data);
+    let Some(obj) = data.as_object_mut() else {
+        return json!({"release_id": null, "env_file": "", "env_files": {}, "env_files_supported": supported});
+    };
+    let mut result = serde_json::Map::new();
+    result.insert("release_id".into(), obj.remove("release_id").unwrap_or(Value::Null));
+    result.insert("env_file".into(), obj.remove("env_file").unwrap_or_else(|| Value::String(String::new())));
+    result.insert("env_files".into(), obj.remove("env_files").unwrap_or_else(|| json!({})));
+    result.insert("env_files_supported".into(), Value::Bool(supported));
+    Value::Object(result)
+}
 async fn read_api_with<F, Fut>(c: &Control, read: Read, send: F) -> Result<Value, String>
 where
     F: FnOnce(reqwest::RequestBuilder, Operation) -> Fut,
@@ -818,21 +879,16 @@ where
     if generation != c.generation.load(Ordering::SeqCst) {
         return Err("SESSION_LOCKED".into());
     }
-    let result = send(request, op).await;
+    let mut result = send(request, op).await;
+    if let (Read::Configuration { .. }, Ok(data)) = (&read, &mut result) {
+        // Compose opens freely; environment secrets need read_env (Touch ID).
+        // Scrub before checking the generation so revoked reads clear secrets too.
+        redact_configuration(data);
+    }
     if generation != c.generation.load(Ordering::SeqCst) {
         return Err("SESSION_LOCKED".into());
     }
-    let mut data = result?;
-    if matches!(&read, Read::Configuration { .. }) {
-        // Compose opens freely; environment secrets need read_env (Touch ID).
-        if let Some(Value::String(env)) = data.get_mut("env_file") {
-            env.zeroize();
-        }
-        if let Some(obj) = data.as_object_mut() {
-            obj.remove("env_file");
-            obj.insert("env_locked".into(), Value::Bool(true));
-        }
-    }
+    let data = result?;
     if let Read::Job { job } = read {
         let mut inner = c.inner.lock().await;
         let s = session(&mut inner)?;
@@ -980,15 +1036,21 @@ async fn read_env(c: State<'_, Control>, project: String) -> Result<Value, Strin
     if generation != c.generation.load(Ordering::SeqCst) {
         return Err("SESSION_LOCKED".into());
     }
-    let mut data = send(s, &op).await?;
-    let result = json!({
-        "release_id": data.get("release_id").cloned().unwrap_or(Value::Null),
-        "env_file": data.get("env_file").cloned().unwrap_or(Value::String(String::new())),
-    });
-    if let Some(Value::String(compose)) = data.get_mut("compose_yaml") {
-        compose.zeroize();
+    let mut data = SecretConfiguration(send(s, &op).await?);
+    if generation != c.generation.load(Ordering::SeqCst) {
+        return Err("SESSION_LOCKED".into());
     }
-    Ok(result)
+    if needs_named_environment(&data.0) {
+        // Default reads remain safe for older desktop versions, which only
+        // remove the main .env. Named secrets need this authenticated opt-in.
+        let named_op = named_environment_op(&read)?;
+        zeroize_json(&mut data.0);
+        data = SecretConfiguration(send(s, &named_op).await?);
+        if generation != c.generation.load(Ordering::SeqCst) {
+            return Err("SESSION_LOCKED".into());
+        }
+    }
+    Ok(unlocked_environment(&mut data.0))
 }
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -996,17 +1058,36 @@ struct DraftInput {
     compose_yaml: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     env_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    env_files: Option<protocol::EnvFiles>,
+}
+impl DraftInput {
+    fn valid(&self) -> bool {
+        self.compose_yaml.len() <= 65536
+            && !self.compose_yaml.contains('\0')
+            && protocol::env_files_valid(self.env_file.as_deref(), self.env_files.as_ref())
+    }
+}
+impl Drop for DraftInput {
+    fn drop(&mut self) {
+        self.compose_yaml.zeroize();
+        if let Some(env) = self.env_file.as_mut() { env.zeroize(); }
+        if let Some(files) = self.env_files.as_mut() { files.values_mut().for_each(Zeroize::zeroize); }
+    }
 }
 #[tauri::command]
 async fn save_draft(c: State<'_, Control>, project: String, mut data: DraftInput) -> Result<Value, String> {
     // Saves the files on the VPS without validating or deploying them.
-    if !protocol::id(&project) || data.compose_yaml.len() > 65536 || data.env_file.as_ref().is_some_and(|e| e.len() > 65536 || e.contains('\0')) {
-        return Err("Compose and .env must each be at most 64 KiB".into());
+    if !protocol::id(&project) || !data.valid() {
+        return Err("Compose must be at most 64 KiB; .env plus up to 16 .env.* files must total at most 64 KiB".into());
     }
     let body = serde_json::to_string(&data).map_err(|_| "Invalid request")?;
     data.compose_yaml.zeroize();
     if let Some(env) = data.env_file.as_mut() {
         env.zeroize();
+    }
+    if let Some(files) = data.env_files.as_mut() {
+        files.values_mut().for_each(Zeroize::zeroize);
     }
     let op = Operation { method: "POST".into(), target: format!("/v1/projects/{project}/draft"), scopes: "deploy.environment".into(), project, action: "draft".into(), body, idempotency: format!("draft-{}", uuid::Uuid::new_v4()), request_id: format!("req-{}", uuid::Uuid::new_v4()) };
     let mut inner = c.inner.lock().await;
@@ -1675,6 +1756,81 @@ mod transport_tests {
             },
         });
         c
+    }
+    #[test]
+    fn configuration_read_redacts_every_environment_file_before_webview_delivery() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        runtime.block_on(async {
+            let c = read_test_control().await;
+            let data = read_api_with(&c, Read::Configuration { project: "demo".into() }, |_, _| async {
+                Ok(json!({"release_id":"rel-test", "compose_yaml":"services: {}", "env_file":"MAIN_SECRET=test", "env_files":{".env.frontend":"FRONTEND_SECRET=test", ".env.backend":"BACKEND_SECRET=test"}}))
+            }).await.unwrap();
+            assert_eq!(data["compose_yaml"], "services: {}");
+            assert_eq!(data["env_locked"], true);
+            assert_eq!(data["env_files_supported"], true);
+            assert_eq!(data["env_file_names"], json!([".env.backend", ".env.frontend"]));
+            assert!(data.get("env_file").is_none());
+            assert!(data.get("env_files").is_none());
+            assert!(!data.to_string().contains("SECRET"));
+        });
+    }
+    #[test]
+    fn environment_unlock_moves_secrets_and_detects_legacy_server_support() {
+        let mut data = SecretConfiguration(json!({"release_id":"rel-test", "compose_yaml":"secret compose", "env_file":"MAIN_SECRET=test", "env_files":{".env.backend":"BACKEND_SECRET=test"}}));
+        let result = unlocked_environment(&mut data.0);
+        assert_eq!(result["env_file"], "MAIN_SECRET=test");
+        assert_eq!(result["env_files"][".env.backend"], "BACKEND_SECRET=test");
+        assert_eq!(result["env_files_supported"], true);
+        assert!(result.get("compose_yaml").is_none());
+        assert!(data.0.get("env_file").is_none());
+        assert!(data.0.get("env_files").is_none());
+        let result = unlocked_environment(&mut json!({"env_file":"MAIN_SECRET=test"}));
+        assert_eq!(result["env_files"], json!({}));
+        assert_eq!(result["env_files_supported"], false);
+        let mut data = json!({"env_files":{}, "env_files_supported":false});
+        redact_configuration(&mut data);
+        assert_eq!(data["env_files_supported"], false);
+        let mut data = json!({"compose_yaml":"compose secret", "env_files":{".env.backend":"backend secret"}, "other":["nested secret"]});
+        zeroize_json(&mut data);
+        assert_eq!(data, json!({"compose_yaml":"", "env_files":{".env.backend":""}, "other":[""]}));
+    }
+    #[test]
+    fn configuration_metadata_survives_redaction_without_exposing_named_secrets() {
+        let mut data = json!({"env_file":"MAIN_SECRET=test", "env_files_supported":true, "env_file_names":[".env.frontend", "../.env.backend", ".env.backend", 5, ".env.frontend"]});
+        assert!(needs_named_environment(&data));
+        redact_configuration(&mut data);
+        assert_eq!(data["env_file_names"], json!([".env.backend", ".env.frontend"]));
+        assert_eq!(data["env_files_supported"], true);
+        assert!(data.get("env_file").is_none());
+        assert!(data.get("env_files").is_none());
+        assert!(!needs_named_environment(&json!({"env_file":"LEGACY_SECRET=test"})));
+        assert!(!needs_named_environment(&json!({"env_files_supported":false})));
+        assert!(!needs_named_environment(&json!({"env_files_supported":true, "env_files":{}})));
+    }
+    #[test]
+    fn named_environment_opt_in_has_a_fresh_identity_and_fixed_configuration_target() {
+        let read = Read::Configuration { project: "demo".into() };
+        let basic = read_op(&read).unwrap();
+        let named = named_environment_op(&read).unwrap();
+        assert_eq!(basic.target, "/v1/projects/demo/configuration");
+        assert_eq!(named.target, "/v1/projects/demo/configuration?env_files=1");
+        assert_eq!(named.method, "GET");
+        assert_eq!(named.scopes, "deploy.environment");
+        assert_ne!(named.idempotency, basic.idempotency);
+        assert_ne!(named.request_id, basic.request_id);
+        assert!(named_environment_op(&Read::Configuration { project: "../demo".into() }).is_err());
+        assert!(named_environment_op(&Read::Projects {}).is_err());
+    }
+    #[test]
+    fn draft_environment_files_keep_omission_distinct_from_explicit_clear() {
+        let omitted: DraftInput = serde_json::from_value(json!({"compose_yaml":"services: {}"})).unwrap();
+        assert!(omitted.valid());
+        assert!(serde_json::to_value(&omitted).unwrap().get("env_files").is_none());
+        let cleared: DraftInput = serde_json::from_value(json!({"compose_yaml":"services: {}", "env_files":{}})).unwrap();
+        assert!(cleared.valid());
+        assert_eq!(serde_json::to_value(&cleared).unwrap()["env_files"], json!({}));
+        let invalid: DraftInput = serde_json::from_value(json!({"compose_yaml":"services: {}", "env_file":"x", "env_files":{".env.backend":"x".repeat(65536)}})).unwrap();
+        assert!(!invalid.valid());
     }
     #[test]
     fn slow_logs_do_not_block_other_reads_or_session_access() {

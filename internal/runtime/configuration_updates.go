@@ -37,6 +37,7 @@ func (d Docker) PlanConfigurationUpdates(ctx context.Context, p model.Project, r
 	for _, doc := range []map[string]any{old, next} {
 		delete(doc, "services")
 		delete(doc, "x-dockyard-env-sha256")
+		delete(doc, "x-dockyard-env-files-sha256")
 		delete(doc, "x-dockyard-source-sha256")
 	}
 	if !reflect.DeepEqual(old, next) {
