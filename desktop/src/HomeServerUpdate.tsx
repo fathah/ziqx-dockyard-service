@@ -35,6 +35,8 @@ export default function HomeServerUpdate({
     setReviewOnOpen(review);
     setExpanded(true);
   };
+  // The home screen only announces updates; versions live in server details.
+  if (!expanded && !preview?.update_available) return null;
   return (
     <div className="home-server-update">
       {expanded ? (
