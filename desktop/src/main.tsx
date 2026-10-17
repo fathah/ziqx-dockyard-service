@@ -24,6 +24,11 @@ createRoot(document.getElementById("root")!).render(
         success: {
           iconTheme: { primary: "#c9e6a8", secondary: "#244e39" },
         },
+        error: {
+          duration: 8000,
+          style: { background: "#6b2424" },
+          iconTheme: { primary: "#f6c9c4", secondary: "#6b2424" },
+        },
       }}
     />
   </React.StrictMode>,

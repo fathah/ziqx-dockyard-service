@@ -460,6 +460,12 @@ function App() {
     },
     [lockSession],
   );
+  // Workspace errors are toasts; the lock screen keeps its inline message.
+  useEffect(() => {
+    if (!error || locked) return;
+    toast.error(error, { id: error });
+    setError("");
+  }, [error, locked]);
   const refresh = useCallback(
     async (ids?: string[]) => {
       if (!unlocked.current) return;
@@ -830,18 +836,6 @@ function App() {
                   }}
                 >
                   Connect your VPS <ArrowRight size={14} />
-                </Button>
-              </div>
-            )}
-            {error && (
-              <div className="alert error" role="alert">
-                {error}
-                <Button
-                  type="button"
-                  aria-label="Dismiss error"
-                  onClick={() => setError("")}
-                >
-                  <X size={15} />
                 </Button>
               </div>
             )}
