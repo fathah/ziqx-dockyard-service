@@ -501,12 +501,10 @@ function App() {
           return;
         }
         setSession((s) => ({ ...info, stay_until: s.stay_until }));
-        const tracked = Array.from(
-          new Set([
-            ...(pending?.job_id ? [pending.job_id] : []),
-            ...(ids ?? info.jobs),
-          ]),
-        ).slice(0, 10);
+        const tracked = Array.from(new Set([...(ids ?? info.jobs)])).slice(
+          0,
+          10,
+        );
         const fetched: Job[] = [];
         for (const job of tracked) {
           try {
@@ -632,24 +630,37 @@ function App() {
       report(e);
     }
   }
-  // Follow a running saved operation; reading its job clears it when done.
+  // Accepted operations wait in the VPS queue; follow them until each ends.
+  const activeJobs = jobs.filter(
+    (j) => j.status === "queued" || j.status === "running",
+  );
+  const activeKey = activeJobs.map((j) => j.job_id).join(",");
   useEffect(() => {
-    const job = pending?.job_id;
-    if (!job || preview || !api.native) return;
+    if (!activeKey || preview || !api.native) return;
+    const ids = activeKey.split(",");
     const timer = setInterval(async () => {
       try {
-        await api.read<Job>({ kind: "job", job });
-        const saved = await api.pendingInfo();
-        if (!saved) {
+        const latest: Job[] = [];
+        for (const job of ids)
+          latest.push(await api.read<Job>({ kind: "job", job }));
+        if (
+          latest.some((j) => j.status !== "queued" && j.status !== "running")
+        ) {
           clearInterval(timer);
           await refresh();
+          return;
         }
+        setJobs((current) =>
+          current.map((j) => latest.find((l) => l.job_id === j.job_id) ?? j),
+        );
       } catch {
         // Keep the bar; the next tick or a manual refresh retries.
       }
     }, 3000);
     return () => clearInterval(timer);
-  }, [pending?.job_id, preview]);
+  }, [activeKey, preview, refresh]);
+  const runningJob = activeJobs.find((j) => j.status === "running");
+  const queuedJobs = activeJobs.filter((j) => j.status === "queued");
   async function doResolve() {
     const version = epoch.current;
     try {
@@ -839,53 +850,52 @@ function App() {
                 </Button>
               </div>
             )}
-            {pending && !preview && canUse && (
-              <div
-                className={`activity-bar ${pending.job_id ? "running" : "unconfirmed"}`}
-                role="status"
-              >
-                {pending.job_id ? (
-                  <LoaderCircle size={14} className="spin" aria-hidden="true" />
-                ) : (
-                  <CircleAlert size={14} aria-hidden="true" />
-                )}
+            {activeJobs.length > 0 && !preview && canUse && (
+              <div className="activity-bar running" role="status">
+                <LoaderCircle size={14} className="spin" aria-hidden="true" />
                 <span>
-                  {pending.job_id
-                    ? `${activityVerb(pending.action)} ${projectName(projects, pending.project)}…`
-                    : `${operationLabel(pending.action)} · ${projectName(projects, pending.project)} wasn't confirmed`}
+                  {runningJob
+                    ? `${activityVerb(runningJob.action)} ${projectName(projects, runningJob.project_id)}…`
+                    : `${operationLabel(queuedJobs[0].action)} · ${projectName(projects, queuedJobs[0].project_id)} is queued`}
+                  {runningJob &&
+                    queuedJobs.length > 0 &&
+                    ` · ${queuedJobs.length} queued`}
                 </span>
-                {pending.job_id ? (
-                  <button
-                    type="button"
-                    className="activity-link"
-                    onClick={() => {
-                      setPage("deployments");
-                      setSelected(null);
-                    }}
-                  >
-                    Show
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      className="activity-link"
-                      disabled={busy}
-                      title="Send the same request again"
-                      onClick={() => void doRetry()}
-                    >
-                      Send again
-                    </button>
-                    <Button
-                      type="button"
-                      className="button small"
-                      disabled={busy}
-                      onClick={() => void doResolve()}
-                    >
-                      Check
-                    </Button>
-                  </>
-                )}
+                <button
+                  type="button"
+                  className="activity-link"
+                  onClick={() => {
+                    setPage("deployments");
+                    setSelected(null);
+                  }}
+                >
+                  Show
+                </button>
+              </div>
+            )}
+            {pending && !preview && canUse && (
+              <div className="activity-bar unconfirmed" role="status">
+                <CircleAlert size={14} aria-hidden="true" />
+                <span>
+                  {`${operationLabel(pending.action)} · ${projectName(projects, pending.project)} wasn't confirmed`}
+                </span>
+                <button
+                  type="button"
+                  className="activity-link"
+                  disabled={busy}
+                  title="Send the same request again"
+                  onClick={() => void doRetry()}
+                >
+                  Send again
+                </button>
+                <Button
+                  type="button"
+                  className="button small"
+                  disabled={busy}
+                  onClick={() => void doResolve()}
+                >
+                  Check
+                </Button>
               </div>
             )}
             <div
@@ -3487,7 +3497,7 @@ function Security({
               {
                 icon: History,
                 title: "Safe retries",
-                text: "Exact payloads and retry IDs are saved in Keychain before submission. A pending write blocks another write.",
+                text: "Exact payloads and retry IDs are saved in Keychain before submission. An unconfirmed write blocks another write until it is checked; accepted writes wait in the VPS queue.",
               },
               {
                 icon: Server,

@@ -53,6 +53,11 @@ struct Pending {
 fn default_attempted() -> bool {
     true
 }
+// Once the VPS returns a job ID the write is durable in its queue and followed
+// through `jobs`. Only a write with an unknown outcome blocks another write.
+fn unresolved(pending: &Option<Pending>) -> bool {
+    pending.as_ref().is_some_and(|p| p.job_id.is_none())
+}
 struct Session {
     generation: u64,
     saved: Saved,
@@ -574,7 +579,7 @@ async fn enroll(c: State<'_, Control>) -> Result<Value, String> {
         if let Some(existing) = native::load_optional()? {
             let old: Saved = serde_json::from_slice(&existing)
                 .map_err(|_| "Existing enrollment is invalid; inspect it before replacing")?;
-            if old.pending.is_some() || old.setup.is_some() {
+            if unresolved(&old.pending) || old.setup.is_some() {
                 return Err(
                     "Unlock and resolve the pending operation before replacing enrollment".into(),
                 );
@@ -735,7 +740,7 @@ async fn forget_device(c: State<'_, Control>) -> Result<(), String> {
         let bytes = native::with_prompt(native::load)?;
         let saved: Saved =
             serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid")?;
-        if saved.pending.is_some() || saved.setup.is_some() {
+        if unresolved(&saved.pending) || saved.setup.is_some() {
             return Err("Resolve the saved operation before removing enrollment".into());
         }
         if let Some(ssh) = &saved.enrollment.ssh {
@@ -755,7 +760,7 @@ async fn forget_device(c: State<'_, Control>) -> Result<(), String> {
 async fn pending_info(c: State<'_, Control>) -> Result<Value, String> {
     let mut inner = c.inner.lock().await;
     let s = session(&mut inner)?;
-    Ok(s.saved.pending.as_ref().map(|p| json!({"project":p.operation.project,"action":p.operation.action,"request_id":p.operation.request_id,"idempotency":p.operation.idempotency,"job_id":p.job_id})).unwrap_or(Value::Null))
+    Ok(s.saved.pending.as_ref().filter(|p| p.job_id.is_none()).map(|p| json!({"project":p.operation.project,"action":p.operation.action,"request_id":p.operation.request_id,"idempotency":p.operation.idempotency,"job_id":p.job_id})).unwrap_or(Value::Null))
 }
 #[tauri::command]
 async fn check_domain_https(
@@ -969,6 +974,12 @@ async fn execute_pending(s: &mut Session) -> Result<Value, String> {
                 s.saved.jobs.truncate(100);
             }
             persist(&s.saved)?;
+            // The VPS queued it; free the slot so the next write can be queued
+            // too. A kept slot with a job ID no longer blocks writes.
+            let accepted = s.saved.pending.take();
+            if persist(&s.saved).is_err() {
+                s.saved.pending = accepted;
+            }
             Ok(data)
         }
         Err(e) => {
@@ -1141,7 +1152,7 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
     let name = {
         let mut inner = c.inner.lock().await;
         let s = session(&mut inner)?;
-        if s.saved.pending.is_some() {
+        if unresolved(&s.saved.pending) {
             return Err("Resolve the unconfirmed operation at the top first".into());
         }
         let mut target = format!(
@@ -1220,7 +1231,7 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
     }
     let mut inner = c.inner.lock().await;
     let s = session(&mut inner)?;
-    if s.saved.pending.is_some() {
+    if unresolved(&s.saved.pending) {
         return Err("Another operation is pending".into());
     }
     s.saved.pending = Some(Pending {
@@ -1955,6 +1966,21 @@ mod transport_tests {
             drop(occupied);
             assert_eq!(queued.await.unwrap().unwrap_err(), "SESSION_LOCKED");
         });
+    }
+    #[test]
+    fn only_unconfirmed_writes_block_the_next_write() {
+        let saved = |job_id: Option<&str>| {
+            Some(Pending {
+                attempted: true,
+                operation: Mutation::Restart { project: "demo".into() }.plan().unwrap(),
+                job_id: job_id.map(Into::into),
+                sent_at: None,
+            })
+        };
+        assert!(!unresolved(&None));
+        assert!(unresolved(&saved(None)));
+        // An accepted write is queued on the VPS; another can queue behind it.
+        assert!(!unresolved(&saved(Some("job-test"))));
     }
     #[test]
     fn revoked_reads_cannot_return_data_or_clear_pending_jobs() {
