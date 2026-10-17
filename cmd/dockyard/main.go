@@ -175,7 +175,9 @@ func run() error {
 	}
 	workerDone := make(chan error, 1)
 	inventoryDone := make(chan struct{})
+	routesDone := make(chan struct{})
 	go func() { defer close(inventoryDone); scanner.Run(ctx) }()
+	go func() { defer close(routesDone); e.WatchRoutes(ctx) }()
 	go func() { workerDone <- e.Run(ctx) }()
 	serverDone := make(chan error, 1)
 	go func() { serverDone <- server.ServeTLS(listener, "", "") }()
@@ -193,6 +195,7 @@ func run() error {
 	defer stop()
 	server.Shutdown(shutdown)
 	<-inventoryDone
+	<-routesDone
 	if !workerStopped {
 		if err := <-workerDone; result == nil {
 			result = err

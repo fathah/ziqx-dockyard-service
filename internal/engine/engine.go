@@ -248,6 +248,8 @@ func (e *Engine) execute(ctx context.Context, j model.Job) {
 		switch j.Action {
 		case "route_setup":
 			err = e.setupRoute(ctx, &j, &p)
+		case "route_repair":
+			err = e.repairRoutes(ctx, &j, &p)
 		case "configuration_update":
 			err = e.updateConfiguration(ctx, &j, &p)
 		case "service_update":
@@ -821,7 +823,7 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 	j.Error = "JOB_INTERRUPTED_RECONCILED"
 	j.Phase = "reconciled"
 	j.Warning = "CONTAINERS_PRESERVED"
-	p.RecoveryDrain = j.Action != "service_update" && j.Action != "configuration_update"
+	p.RecoveryDrain = j.Action != "service_update" && j.Action != "configuration_update" && j.Action != "route_repair"
 	now := time.Now().UTC()
 	j.Finished = &now
 	return e.Store.Update(j, &p)

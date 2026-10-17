@@ -3038,7 +3038,8 @@
           "stop",
           "project_adopt",
           "service_update",
-          "configuration_update"
+          "configuration_update",
+          "route_repair"
         ]
       },
       "AcceptedJob": {

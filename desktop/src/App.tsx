@@ -128,7 +128,10 @@ const operationLabel = (action: string) =>
       ? "Service update"
       : action === "route-setup" || action === "route_setup"
         ? "Configure route"
-        : action.charAt(0).toUpperCase() + action.slice(1).replaceAll("_", " ");
+        : action === "route_repair"
+          ? "Route repair"
+          : action.charAt(0).toUpperCase() +
+            action.slice(1).replaceAll("_", " ");
 const activityVerb = (action: string) =>
   ({
     start: "Starting",
@@ -140,6 +143,7 @@ const activityVerb = (action: string) =>
     "route-setup": "Connecting domain for",
     service_update: "Updating",
     "service-update": "Updating",
+    route_repair: "Repairing route for",
   })[action] ?? `${operationLabel(action)} ·`;
 // Human project name for job lists; falls back to the internal ID.
 const projectName = (projects: Project[], id: string) => {
