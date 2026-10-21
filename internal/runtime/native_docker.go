@@ -299,37 +299,68 @@ func (d Docker) CheckBlueGreenSource(ctx context.Context, p model.Project) error
 // PublishedServicePorts reads host bindings only from verified containers.
 // Exposed container ports do not imply a port is published on the host.
 func (d Docker) PublishedServicePorts(ctx context.Context, p model.Project) (map[string][]int, error) {
-	containers, err := d.nativeContainers(ctx, p, p.Active)
+	services, err := d.ServiceRuntime(ctx, p)
 	if err != nil {
 		return nil, err
 	}
 	ports := map[string][]int{}
+	for name, service := range services {
+		ports[name] = service.HostPorts
+	}
+	return ports, nil
+}
+
+// ServiceRuntime reuses the project-scoped inspection for bindings and identity.
+// Replacement instances are reported under their logical service names.
+func (d Docker) ServiceRuntime(ctx context.Context, p model.Project) (map[string]model.ServiceRuntime, error) {
+	containers, err := d.nativeContainers(ctx, p, p.Active)
+	if err != nil {
+		return nil, err
+	}
+	services := map[string]model.ServiceRuntime{}
+	add := func(name string, c Container) {
+		service := services[name]
+		if service.Containers == nil {
+			service.Containers = []model.ServiceContainer{}
+		}
+		if service.HostPorts == nil {
+			service.HostPorts = []int{}
+		}
+		if c.State.Running {
+			service.Containers = append(service.Containers, model.ServiceContainer{ID: c.ID, Name: strings.TrimPrefix(c.Name, "/")})
+			service.HostPorts = append(service.HostPorts, publishedHostPorts(c)...)
+		}
+		services[name] = service
+	}
 	for _, c := range containers {
 		name := c.Config.Labels["com.docker.compose.service"]
 		if _, replaced := p.ServiceInstances[name]; replaced {
 			continue
 		}
-		ports[name] = append(ports[name], publishedHostPorts(c)...)
+		add(name, c)
 	}
 	for name, instance := range p.ServiceInstances {
 		c, err := d.inspectServiceInstance(ctx, p, instance)
 		if err != nil {
 			return nil, err
 		}
-		ports[name] = publishedHostPorts(c)
+		add(name, c)
 	}
-	for name, values := range ports {
+	for name, service := range services {
 		seen := map[int]bool{}
-		ports[name] = []int{}
-		for _, port := range values {
+		ports := []int{}
+		for _, port := range service.HostPorts {
 			if !seen[port] {
-				ports[name] = append(ports[name], port)
+				ports = append(ports, port)
 				seen[port] = true
 			}
 		}
-		sort.Ints(ports[name])
+		sort.Ints(ports)
+		service.HostPorts = ports
+		sort.Slice(service.Containers, func(i, j int) bool { return service.Containers[i].Name < service.Containers[j].Name })
+		services[name] = service
 	}
-	return ports, nil
+	return services, nil
 }
 
 func publishedHostPorts(c Container) []int {

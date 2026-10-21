@@ -35,29 +35,35 @@ impl Lease {
 pub fn account(ip: &str, port: u16, pin: &str) -> String {
     hex::encode(Sha256::digest(format!("root\n{ip}\n{port}\n{pin}")))
 }
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Debug)]
 pub struct Container {
     pub id: String,
     pub name: String,
-    pub image: String,
-    pub status: String,
-    #[serde(default)]
-    pub project: String,
-    #[serde(default)]
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceTarget {
     pub compose_project: String,
-    #[serde(default)]
     pub service: String,
 }
-/// Reads one key from Docker's `k=v,k=v` label summary.
-fn label(labels: &str, key: &str) -> String {
-    labels
-        .split(',')
-        .find_map(|pair| pair.strip_prefix(key)?.strip_prefix('='))
-        .unwrap_or("")
-        .chars()
-        .filter(|c| !c.is_control())
-        .take(256)
-        .collect()
+impl ServiceTarget {
+    fn command(&self) -> Result<String, String> {
+        let identifier = |s: &str| {
+            !s.is_empty()
+                && s.len() <= 256
+                && s.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric())
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"_.-".contains(&b))
+        };
+        if !identifier(&self.compose_project) || !identifier(&self.service) {
+            return Err("Invalid container service target".into());
+        }
+        // Return only the selected service's identity, never Docker's full label catalog.
+        Ok(format!(
+            "docker ps --no-trunc --filter 'label=com.docker.compose.project={}' --filter 'label=com.docker.compose.service={}' --filter 'label=com.docker.compose.oneoff=False' --format '{{{{.ID}}}}\\t{{{{.Names}}}}'",
+            self.compose_project, self.service
+        ))
+    }
 }
 fn container_id(id: &str) -> bool {
     id.len() == 64
@@ -85,8 +91,7 @@ fn target(container: Option<&str>, shell: &str) -> Result<Option<String>, String
 #[derive(Serialize)]
 pub struct Connected {
     pub id: String,
-    pub containers: Vec<Container>,
-    pub container_warning: Option<String>,
+    pub container: Option<Container>,
     pub password_saved: bool,
 }
 #[derive(Serialize)]
@@ -184,14 +189,19 @@ impl Handle {
 fn would_block(e: &std::io::Error) -> bool {
     e.kind() == std::io::ErrorKind::WouldBlock
 }
-fn containers(session: &Session, lease: &Lease) -> Result<Vec<Container>, String> {
+fn service_container(
+    session: &Session,
+    lease: &Lease,
+    target: &ServiceTarget,
+) -> Result<Container, String> {
+    let command = target.command()?;
     session.set_timeout(3000);
     let mut channel = session
         .channel_session()
-        .map_err(|_| "Could not list Docker containers")?;
+        .map_err(|_| "Could not find the service container")?;
     channel
-        .exec("docker ps --no-trunc --format '{{json .}}'")
-        .map_err(|_| "Could not list Docker containers")?;
+        .exec(&command)
+        .map_err(|_| "Could not find the service container")?;
     session.set_blocking(false);
     let limit = Instant::now() + Duration::from_secs(10);
     let mut bytes = Zeroizing::new(Vec::new());
@@ -199,62 +209,61 @@ fn containers(session: &Session, lease: &Lease) -> Result<Vec<Container>, String
     loop {
         lease.check()?;
         if Instant::now() >= limit {
-            return Err("Docker container listing timed out".into());
+            return Err("Service container lookup timed out".into());
         }
         match channel.read(&mut chunk) {
             Ok(0) if channel.eof() => break,
             Ok(n) => {
-                if bytes.len() + n > 128 * 1024 {
-                    return Err("Docker container listing is too large".into());
+                if bytes.len() + n > 8192 {
+                    return Err("Service container lookup returned too much data".into());
                 }
                 bytes.extend_from_slice(&chunk[..n]);
             }
             Err(e) if would_block(&e) => {}
-            Err(_) => return Err("Could not read Docker container listing".into()),
+            Err(_) => return Err("Could not read the service container identity".into()),
         }
         std::thread::sleep(Duration::from_millis(20));
     }
     if channel.exit_status().unwrap_or(1) != 0 {
-        return Err("Docker could not list running containers".into());
+        return Err("Docker could not find the service container".into());
     }
+    parse_service_container(&bytes)
+}
+fn parse_service_container(bytes: &[u8]) -> Result<Container, String> {
     let text =
         std::str::from_utf8(&bytes).map_err(|_| "Docker returned invalid container information")?;
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let row: serde_json::Value = serde_json::from_str(line)
-            .map_err(|_| "Docker returned invalid container information")?;
-        let field = |key| {
-            row.get(key)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .chars()
-                .filter(|c| !c.is_control())
-                .take(256)
-                .collect::<String>()
-        };
-        let id = field("ID");
-        if !container_id(&id) || out.len() >= 1000 {
-            return Err("Docker returned invalid container information".into());
-        }
-        let labels = row.get("Labels").and_then(|v| v.as_str()).unwrap_or("");
-        out.push(Container {
-            id,
-            name: field("Names"),
-            image: field("Image"),
-            status: field("Status"),
-            project: label(labels, "io.ziqx.dockyard.project"),
-            compose_project: label(labels, "com.docker.compose.project"),
-            service: label(labels, "com.docker.compose.service"),
-        });
+    let mut lines = text.lines();
+    let line = lines
+        .next()
+        .ok_or("No running container found for this service. Refresh Services and try again.")?;
+    if lines.next().is_some() {
+        return Err("More than one running container matches this service. Open a VPS root terminal to select a replica.".into());
     }
-    Ok(out)
+    let (id, name) = line
+        .split_once('\t')
+        .ok_or("Docker returned invalid container information")?;
+    if !container_id(id)
+        || name.is_empty()
+        || name.len() > 256
+        || name.chars().any(char::is_control)
+    {
+        return Err("Docker returned invalid container information".into());
+    }
+    Ok(Container {
+        id: id.into(),
+        name: name.into(),
+    })
 }
 pub fn spawn(
     session: Session,
     lease: Lease,
     password_saved: bool,
+    service: Option<ServiceTarget>,
 ) -> Result<(Handle, Connected), String> {
-    let catalog = containers(&session, &lease);
+    let container = service
+        .as_ref()
+        .map(|target| service_container(&session, &lease, target))
+        .transpose()?;
     lease.check()?;
     session.set_blocking(false);
     let (tx, rx) = mpsc::sync_channel(16);
@@ -277,16 +286,11 @@ pub fn spawn(
             output.reason = Some(reason);
         })
         .map_err(|_| "Could not start the SSH terminal worker")?;
-    let (containers, warning) = match catalog {
-        Ok(c) => (c, None),
-        Err(e) => (Vec::new(), Some(e)),
-    };
     Ok((
         handle,
         Connected {
             id,
-            containers,
-            container_warning: warning,
+            container,
             password_saved,
         },
     ))
@@ -414,13 +418,47 @@ fn run(
 mod tests {
     use super::*;
     #[test]
-    fn labels_identify_compose_service() {
-        let labels = "com.docker.compose.project=dy-s-p-blue,com.docker.compose.service=web,io.ziqx.dockyard.project=p";
-        assert_eq!(label(labels, "com.docker.compose.service"), "web");
-        assert_eq!(label(labels, "com.docker.compose.project"), "dy-s-p-blue");
-        assert_eq!(label(labels, "io.ziqx.dockyard.project"), "p");
-        assert_eq!(label(labels, "com.docker.compose"), "");
-        assert_eq!(label("", "com.docker.compose.service"), "");
+    fn service_lookup_is_scoped_and_rejects_injection() {
+        let mut service = ServiceTarget {
+            compose_project: "dy-s-p-green".into(),
+            service: "dy-update-example".into(),
+        };
+        assert_eq!(service.command().unwrap(), "docker ps --no-trunc --filter 'label=com.docker.compose.project=dy-s-p-green' --filter 'label=com.docker.compose.service=dy-update-example' --filter 'label=com.docker.compose.oneoff=False' --format '{{.ID}}\\t{{.Names}}'");
+        for value in [
+            "",
+            "$(id)",
+            "web' ; id",
+            "web\n",
+            "--filter",
+            &"a".repeat(257),
+        ] {
+            service.service = value.into();
+            assert!(service.command().is_err());
+            service.service = "web".into();
+            service.compose_project = value.into();
+            assert!(service.command().is_err());
+            service.compose_project = "legacy-project".into();
+        }
+    }
+    #[test]
+    fn service_lookup_requires_one_valid_running_container() {
+        let row = format!("{}\tshop-web-1\n", "a".repeat(64));
+        let found = parse_service_container(row.as_bytes()).unwrap();
+        assert_eq!(found.id, "a".repeat(64));
+        assert_eq!(found.name, "shop-web-1");
+        assert!(parse_service_container(b"")
+            .unwrap_err()
+            .contains("No running container"));
+        assert!(parse_service_container(format!("{row}{row}").as_bytes())
+            .unwrap_err()
+            .contains("More than one"));
+        for row in [
+            "short\tname\n".into(),
+            format!("{}\t\n", "a".repeat(64)),
+            format!("{}\tname\u{1b}\n", "a".repeat(64)),
+        ] {
+            assert!(parse_service_container(row.as_bytes()).is_err());
+        }
     }
     #[test]
     fn commands_reject_injection_and_invalid_dimensions() {
@@ -515,7 +553,7 @@ mod ssh_tests {
         let script = format!(
             r#"#!/bin/sh
 if [ "$1" = ps ]; then
-    printf '%s\n' '{{"ID":"{container}","Names":"fixture-app","Image":"fixture:local","Status":"Up"}}'
+    printf '%s\t%s\n' '{container}' 'fixture-app'
 elif [ "$1" = exec ] && [ "$2" = -it ] && [ "$3" = {container} ] && [ "$4" = /bin/sh ] && [ "$#" = 4 ]; then
     exec /bin/sh
 else
@@ -541,13 +579,8 @@ fi
             generation: generation.clone(),
             expected: generation.load(Ordering::SeqCst),
         };
-        let (root, catalog) = spawn(ssh, lease(), false).unwrap();
-        assert!(
-            catalog.container_warning.is_none(),
-            "{:?}",
-            catalog.container_warning
-        );
-        assert_eq!(catalog.containers[0].id, container);
+        let (root, catalog) = spawn(ssh, lease(), false, None).unwrap();
+        assert!(catalog.container.is_none());
         root.start(None, "/bin/sh".into(), 80, 24)
             .unwrap()
             .recv_timeout(Duration::from_secs(12))
@@ -579,7 +612,17 @@ fi
         let (ssh, _) = crate::setup::connect("127.0.0.1", port, Some(&pin)).unwrap();
         ssh.userauth_password("root", "dockyard-fixture-only")
             .unwrap();
-        let (inside, _) = spawn(ssh, lease(), false).unwrap();
+        let (inside, connected) = spawn(
+            ssh,
+            lease(),
+            false,
+            Some(ServiceTarget {
+                compose_project: "dy-s-p-blue".into(),
+                service: "web".into(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(connected.container.unwrap().id, container);
         inside
             .start(Some(container), "/bin/sh".into(), 80, 24)
             .unwrap()
@@ -651,13 +694,8 @@ fi
             generation: generation.clone(),
             expected: generation.load(Ordering::SeqCst),
         };
-        let (root, catalog) = spawn(ssh, lease(), false).unwrap();
-        assert!(
-            catalog.container_warning.is_none(),
-            "{:?}",
-            catalog.container_warning
-        );
-        assert_eq!(catalog.containers.len(), 1);
+        let (root, catalog) = spawn(ssh, lease(), false, None).unwrap();
+        assert!(catalog.container.is_none());
         root.start(None, "/bin/sh".into(), 80, 24)
             .unwrap()
             .recv_timeout(Duration::from_secs(12))
@@ -683,7 +721,17 @@ fi
         drop(root);
         let (ssh, _) = crate::setup::connect("127.0.0.1", port, Some(&pin)).unwrap();
         ssh.userauth_password("root", "fixture-only").unwrap();
-        let (inside, _) = spawn(ssh, lease(), false).unwrap();
+        let (inside, connected) = spawn(
+            ssh,
+            lease(),
+            false,
+            Some(ServiceTarget {
+                compose_project: "dy-s-p-blue".into(),
+                service: "dy-update-example".into(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(connected.container.unwrap().name, "fixture-app");
         inside
             .start(Some("a".repeat(64)), "/bin/sh".into(), 80, 24)
             .unwrap()

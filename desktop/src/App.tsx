@@ -982,9 +982,11 @@ function App() {
                     api.native && !preview && session.profile?.server_ip
                       ? (s) => {
                           setShellRequest({
-                            project: project.id,
-                            composeProject: project.adoption?.compose_project,
-                            slot: s.slot,
+                            composeProject:
+                              project.adoption?.compose_project ??
+                              `dy-${session.profile!.server_id}-${project.id}-${s.slot}`,
+                            composeService:
+                              project.service_instances?.[s.name]?.name,
                             service: s.name,
                             nonce: Date.now(),
                           });
@@ -2252,6 +2254,31 @@ export function ProjectDetail({
                               </code>
                               {serviceDomains.length > 0 && (
                                 <small>{serviceDomains.join(", ")}</small>
+                              )}
+                              {s.containers?.map((container) => (
+                                <div
+                                  className="services-container"
+                                  key={container.id}
+                                >
+                                  <code title={container.id}>
+                                    Container:{" "}
+                                    {container.name ||
+                                      container.id.slice(0, 12)}{" "}
+                                    · {container.id.slice(0, 12)}
+                                  </code>
+                                  <CopyButton
+                                    text={container.name || container.id}
+                                    label="Name"
+                                  />
+                                  <CopyButton text={container.id} label="ID" />
+                                </div>
+                              ))}
+                              {active && !s.containers?.length && (
+                                <small className="services-container-note">
+                                  {s.containers == null
+                                    ? "Container identity unavailable"
+                                    : "No running container"}
+                                </small>
                               )}
                             </div>
                           </div>

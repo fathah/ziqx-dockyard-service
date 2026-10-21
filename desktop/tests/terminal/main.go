@@ -5,7 +5,6 @@ import (
 	"bufio"
 	"crypto/ed25519"
 	"crypto/rand"
-	"encoding/json"
 	"fmt"
 	"golang.org/x/crypto/ssh"
 	"io"
@@ -83,9 +82,9 @@ func serve(channel ssh.Channel, requests <-chan *ssh.Request) {
 		case "exec":
 			var p struct{ Command string }
 			ssh.Unmarshal(req.Payload, &p)
-			if p.Command == "docker ps --no-trunc --format '{{json .}}'" {
+			if p.Command == "docker ps --no-trunc --filter 'label=com.docker.compose.project=dy-s-p-blue' --filter 'label=com.docker.compose.service=dy-update-example' --filter 'label=com.docker.compose.oneoff=False' --format '{{.ID}}\\t{{.Names}}'" {
 				req.Reply(true, nil)
-				json.NewEncoder(channel).Encode(map[string]string{"ID": strings.Repeat("a", 64), "Names": "fixture-app", "Image": "fixture:local", "Status": "Up"})
+				fmt.Fprintf(channel, "%s\tfixture-app\n", strings.Repeat("a", 64))
 				channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
 				channel.Close()
 				return

@@ -1487,6 +1487,7 @@ async fn terminal_connect(
     app: tauri::AppHandle,
     c: State<'_, Control>,
     remember: bool,
+    service: Option<terminal::ServiceTarget>,
 ) -> Result<terminal::Connected, String> {
     let (ssh, lease) = terminal_authority(&c).await?;
     c.terminal.lock().expect("terminal poisoned").take();
@@ -1507,7 +1508,7 @@ async fn terminal_connect(
         if remember { native::terminal_save(&account, password.as_bytes())?; }
         else { native::terminal_remember_for_run(&account, password.as_bytes())?; }
         drop(password);
-        terminal::spawn(session, lease, remember)
+        terminal::spawn(session, lease, remember, service)
     }).await?;
     check.check()?;
     if !app

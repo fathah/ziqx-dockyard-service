@@ -203,18 +203,30 @@ type ServiceSpec struct {
 }
 
 type ServiceInfo struct {
-	HostPorts      []int    `json:"host_ports"`
-	DependsOn      []string `json:"depends_on"`
-	Updatable      bool     `json:"updatable,omitempty"`
-	ContainerPorts []int    `json:"container_ports,omitempty"`
-	UpdateReason   string   `json:"update_reason,omitempty"`
-	Seamless       bool     `json:"seamless,omitempty"`
-	Slot           string   `json:"slot"`
-	Name           string   `json:"name"`
-	Image          string   `json:"image"`
-	Template       string   `json:"template_id"`
-	Compose        string   `json:"compose_revision,omitempty"`
-	Environment    string   `json:"environment_revision"`
+	Containers     []ServiceContainer `json:"containers"`
+	HostPorts      []int              `json:"host_ports"`
+	DependsOn      []string           `json:"depends_on"`
+	Updatable      bool               `json:"updatable,omitempty"`
+	ContainerPorts []int              `json:"container_ports,omitempty"`
+	UpdateReason   string             `json:"update_reason,omitempty"`
+	Seamless       bool               `json:"seamless,omitempty"`
+	Slot           string             `json:"slot"`
+	Name           string             `json:"name"`
+	Image          string             `json:"image"`
+	Template       string             `json:"template_id"`
+	Compose        string             `json:"compose_revision,omitempty"`
+	Environment    string             `json:"environment_revision"`
+}
+
+// ServiceContainer is the live Docker identity, without private inspect data.
+type ServiceContainer struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type ServiceRuntime struct {
+	Containers []ServiceContainer
+	HostPorts  []int
 }
 
 // A service version runs under the original Compose project identity. Its

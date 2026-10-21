@@ -3,45 +3,23 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Terminal as XTerminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { Fingerprint, Terminal, Unplug, Play, Box } from "lucide-react";
+import { Fingerprint, Terminal, Unplug, Box } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import Help from "./Help";
-import Select from "./Select";
 
 type Container = {
   id: string;
   name: string;
-  image: string;
-  status: string;
-  project?: string;
-  compose_project?: string;
-  service?: string;
 };
 export type ShellRequest = {
-  project: string;
-  composeProject?: string;
-  slot?: string;
+  composeProject: string;
+  composeService?: string;
   service: string;
   nonce: number;
 };
-// Prefers the active slot's container when an old slot is still running.
-function serviceContainer(containers: Container[], request: ShellRequest) {
-  const matches = containers.filter(
-    (c) =>
-      c.service === request.service &&
-      (request.composeProject
-        ? c.compose_project === request.composeProject
-        : c.project === request.project),
-  );
-  return (
-    matches.find((c) => c.compose_project?.endsWith(`-${request.slot}`)) ??
-    matches[0]
-  );
-}
 type Connection = {
   id: string;
-  containers: Container[];
-  container_warning: string | null;
+  container: Container | null;
   password_saved: boolean;
 };
 type Output = { data: string; closed: boolean; reason: string | null };
@@ -74,9 +52,7 @@ export default function TerminalPage({
   const reportRef = useRef(report);
   reportRef.current = report;
   const [connection, setConnection] = useState<Connection | null>(null);
-  const [mode, setMode] = useState("root");
-  const [container, setContainer] = useState("");
-  const [shell, setShell] = useState("/bin/sh");
+  const [serviceTarget, setServiceTarget] = useState<ShellRequest | null>(null);
   const [busy, setBusy] = useState(false);
   const [active, setActive] = useState(false);
   const [message, setMessage] = useState("");
@@ -218,17 +194,14 @@ export default function TerminalPage({
         if (active) term.current?.focus();
       });
   }, [visible, active]);
-  const start = async (
-    current: Connection,
-    target = mode === "container" ? container : null,
-  ) => {
-    if (mode === "container" && !target) return;
+  const start = async (current: Connection) => {
+    const target = current.container?.id ?? null;
     fit.current?.fit();
     const terminal = term.current!;
     await invoke("terminal_start", {
       id: current.id,
       container: target,
-      shell,
+      shell: "/bin/sh",
       cols: Math.max(10, Math.min(500, terminal.cols)),
       rows: Math.max(5, Math.min(240, terminal.rows)),
     });
@@ -236,7 +209,11 @@ export default function TerminalPage({
     started.current = true;
     terminal.options.disableStdin = false;
     setActive(true);
-    setMessage(target ? "Container shell" : "Root shell · full server access");
+    setMessage(
+      current.container
+        ? `Container shell · ${current.container.name}`
+        : "Root shell · full server access",
+    );
     terminal.focus();
   };
   const handled = useRef(0);
@@ -246,7 +223,7 @@ export default function TerminalPage({
     handled.current = request.nonce;
     void (async () => {
       if (id.current || connection) await disconnect();
-      setMode("container");
+      setServiceTarget(request);
       await connect(request);
     })();
     // Only a new request opens a shell; connect/disconnect read refs.
@@ -261,6 +238,12 @@ export default function TerminalPage({
     try {
       const result = await invoke<Connection>("terminal_connect", {
         remember: true,
+        service: shellRequest
+          ? {
+              composeProject: shellRequest.composeProject,
+              service: shellRequest.composeService ?? shellRequest.service,
+            }
+          : null,
       });
       if (epoch.current !== turn) {
         await invoke("terminal_close", { id: result.id });
@@ -268,21 +251,11 @@ export default function TerminalPage({
       }
       id.current = result.id;
       setConnection(result);
-      setContainer("");
-      if (shellRequest) {
-        const match = serviceContainer(result.containers, shellRequest);
-        if (match) {
-          setContainer(match.id);
-          await start(result, match.id);
-        } else
-          setError(
-            `No running container found for ${shellRequest.service}. Choose one from the list.`,
-          );
-      } else if (mode === "root") await start(result);
-      else
-        setMessage(
-          "Connected. Choose a running container, then open its shell.",
+      if (shellRequest && !result.container)
+        throw new Error(
+          `No running container found for ${shellRequest.service}. Refresh Services and try again.`,
         );
+      await start(result);
     } catch (e) {
       if (epoch.current === turn) {
         fail(e);
@@ -310,33 +283,39 @@ export default function TerminalPage({
           >
             <Button
               type="button"
-              className={`terminal-target ${mode === "root" ? "selected" : ""}`}
-              aria-pressed={mode === "root"}
+              className={`terminal-target ${!serviceTarget ? "selected" : ""}`}
+              aria-pressed={!serviceTarget}
               disabled={busy || !!connection}
-              onClick={() => setMode("root")}
+              onClick={() => setServiceTarget(null)}
               title="Full server access"
             >
               <Terminal size={18} />
               <strong>VPS root</strong>
             </Button>
-            <Button
-              type="button"
-              className={`terminal-target ${mode === "container" ? "selected" : ""}`}
-              aria-pressed={mode === "container"}
-              disabled={busy || !!connection}
-              onClick={() => setMode("container")}
-              title="Configured container user"
-            >
-              <Box size={18} />
-              <strong>Container</strong>
-            </Button>
+            {serviceTarget && (
+              <Button
+                type="button"
+                className="terminal-target selected"
+                aria-pressed={true}
+                disabled={busy || !!connection}
+                title="Configured container user"
+              >
+                <Box size={18} />
+                <strong>{serviceTarget.service}</strong>
+              </Button>
+            )}
+            {connection?.container && (
+              <code title={connection.container.id}>
+                {connection.container.name}
+              </code>
+            )}
           </div>
           <div className="terminal-server">
             <span
               className="terminal-server-address"
               title={server || "No server connected"}
             >
-              {active && mode === "root"
+              {active && !serviceTarget
                 ? `root@${server}`
                 : server || "No server connected"}
             </span>
@@ -345,63 +324,9 @@ export default function TerminalPage({
                 className={`terminal-dot ${active ? "online" : ""}`}
                 aria-hidden="true"
               />
-              {active
-                ? "Connected"
-                : connection
-                  ? "Choose container"
-                  : busy
-                    ? "Connecting…"
-                    : "Disconnected"}
+              {active ? "Connected" : busy ? "Connecting…" : "Disconnected"}
             </span>
           </div>
-          {connection && mode === "container" && !active && (
-            <div className="terminal-container-picker">
-              <Select
-                compact
-                triggerProps={{ "aria-label": "Running container" }}
-                value={container}
-                onValueChange={setContainer}
-                disabled={busy}
-                placeholder="Choose a container…"
-                options={connection.containers.map((c) => ({
-                  value: c.id,
-                  label: `${c.name} · ${c.image}`,
-                }))}
-              />
-              <Select
-                compact
-                triggerProps={{ "aria-label": "Container shell" }}
-                value={shell}
-                onValueChange={setShell}
-                disabled={busy}
-                options={[
-                  { value: "/bin/sh", label: "sh" },
-                  { value: "/bin/bash", label: "bash (if installed)" },
-                ]}
-              />
-              <Button
-                type="button"
-                className="button small terminal-open-shell"
-                aria-label="Open container shell"
-                title="Open container shell"
-                disabled={!container || busy}
-                onClick={async () => {
-                  setBusy(true);
-                  setError("");
-                  try {
-                    await start(connection);
-                  } catch (e) {
-                    fail(e);
-                    await disconnect();
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                <Play size={16} aria-hidden="true" />
-              </Button>
-            </div>
-          )}
           <div className="terminal-toolbar">
             <Help label="SSH security">
               Connect to the enrolled VPS over pinned SSH with Touch ID. Root
@@ -424,7 +349,7 @@ export default function TerminalPage({
                 type="button"
                 className="button small"
                 disabled={busy || !native || !server}
-                onClick={() => void connect()}
+                onClick={() => void connect(serviceTarget ?? undefined)}
               >
                 <Fingerprint size={17} />
                 {busy ? "Connecting…" : "Connect with Touch ID"}
@@ -432,21 +357,6 @@ export default function TerminalPage({
             )}
           </div>
         </div>
-        {connection &&
-          mode === "container" &&
-          !connection.containers.length &&
-          !connection.container_warning && (
-            <p className="terminal-security-note">
-              No containers are running. Disconnect and choose VPS root to
-              inspect the server.
-            </p>
-          )}
-        {connection?.container_warning && (
-          <div className="alert error">
-            {connection.container_warning}. Root shell is still available;
-            disconnect to change the target.
-          </div>
-        )}
         {error && (
           <div className="alert error" role="alert">
             {error}

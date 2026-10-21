@@ -50,6 +50,7 @@ export type Project = {
   releases: Release[];
 };
 export type Service = {
+  containers?: { id: string; name: string }[] | null;
   host_ports?: number[] | null;
   depends_on?: string[] | null;
   updatable?: boolean;

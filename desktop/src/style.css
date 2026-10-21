@@ -1448,6 +1448,28 @@ pre {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+.services-container {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+}
+.services-container code {
+  color: #63766c;
+  user-select: text;
+}
+.services-container .button {
+  padding: 2px 5px;
+  min-height: 22px;
+  font-size: 11px;
+}
+.services-container-note {
+  display: block;
+  margin-top: 5px;
+  color: #858e89;
+  font-weight: 400;
+}
 .services-dependencies code {
   display: block;
   font-size: inherit;
@@ -3244,8 +3266,17 @@ body:has(.modal) {
 }
 .terminal-targets {
   display: flex;
+  align-items: center;
   gap: 4px;
-  flex: none;
+  min-width: 0;
+}
+.terminal-targets > code {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #63766c;
 }
 .terminal-target {
   height: 32px;
@@ -3298,29 +3329,6 @@ body:has(.modal) {
   gap: 6px;
   font-size: 12px;
   white-space: nowrap;
-}
-.terminal-controls:has(.terminal-container-picker) .terminal-server {
-  display: none;
-}
-.terminal-container-picker {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-}
-.terminal-container-picker .dockyard-select {
-  height: 32px;
-  font-size: 13px;
-}
-.terminal-container-picker > .dockyard-select-field:last-of-type {
-  width: 85px;
-  flex: none;
-}
-.terminal-open-shell {
-  width: 32px;
-  padding-inline: 0;
-  flex: none;
 }
 .terminal-security-note {
   font-size: 12px;

@@ -640,12 +640,14 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 
 		if project.State == "running" {
 			if detector, ok := e.Docker.(interface {
-				PublishedServicePorts(context.Context, model.Project) (map[string][]int, error)
+				ServiceRuntime(context.Context, model.Project) (map[string]model.ServiceRuntime, error)
 			}); ok {
-				if ports, err := detector.PublishedServicePorts(r.Context(), project); err == nil {
+				if observed, err := detector.ServiceRuntime(r.Context(), project); err == nil {
 					for i := range services {
 						if services[i].Slot == project.Active {
-							services[i].HostPorts = append([]int{}, ports[services[i].Name]...)
+							service := observed[services[i].Name]
+							services[i].HostPorts = append([]int{}, service.HostPorts...)
+							services[i].Containers = append([]model.ServiceContainer{}, service.Containers...)
 						}
 					}
 				}

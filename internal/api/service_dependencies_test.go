@@ -13,6 +13,20 @@ import (
 
 type dependencyRunner struct{ source string }
 
+type runtimeInventoryStub struct {
+	*dockerStub
+	fail  bool
+	reads int
+}
+
+func (s *runtimeInventoryStub) ServiceRuntime(_ context.Context, p model.Project) (map[string]model.ServiceRuntime, error) {
+	s.reads++
+	if s.fail || p.ID != "demo" || p.Active != "blue" {
+		return nil, model.Fail("DOCKER_UNAVAILABLE")
+	}
+	return map[string]model.ServiceRuntime{"web": {Containers: []model.ServiceContainer{{ID: strings.Repeat("a", 64), Name: "live-web-container"}}, HostPorts: []int{32782}}}, nil
+}
+
 func (r dependencyRunner) Run(context.Context, string, string, []string) (process.Result, error) {
 	return process.Result{Output: []byte(r.source)}, nil
 }
@@ -61,6 +75,31 @@ func TestServiceInventoryReportsDependenciesWithoutSecretsOrDockerQueries(t *tes
 		}
 		if docker.calls != 0 || routes.calls != 0 {
 			t.Fatal("dependency metadata queried live runtime adapters")
+		}
+		detector := &runtimeInventoryStub{dockerStub: docker}
+		a.Engine.Docker = detector
+		for _, failed := range []bool{false, true} {
+			detector.fail = failed
+			w = send("GET", "/v1/projects/demo/services", "", "deploy.read", "service-containers")
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &body) != nil {
+				t.Fatal("runtime lookup must preserve recorded inventory", w.Code, w.Body.String())
+			}
+			for _, item := range body.Services {
+				if failed || item.Slot != p.Active {
+					if item.Containers != nil || item.HostPorts != nil {
+						t.Fatal("unavailable or inactive identity must stay unknown", item)
+					}
+				} else if item.Name == "web" {
+					if len(item.Containers) != 1 || item.Containers[0].Name != "live-web-container" || item.Containers[0].ID != strings.Repeat("a", 64) || len(item.HostPorts) != 1 || item.HostPorts[0] != 32782 {
+						t.Fatal("live identity or binding lost", item)
+					}
+				} else if item.Containers == nil || len(item.Containers) != 0 {
+					t.Fatal("missing running container must be an empty array", item)
+				}
+			}
+		}
+		if detector.reads != 2 {
+			t.Fatal("container metadata made extra runtime reads", detector.reads)
 		}
 	}
 }

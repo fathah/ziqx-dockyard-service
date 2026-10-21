@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { mockIPC } from "@tauri-apps/api/mocks";
-import TerminalPage from "../src/TerminalPage";
+import TerminalPage, { type ShellRequest } from "../src/TerminalPage";
 import "../src/style.css";
 
 let output = "";
@@ -12,18 +12,28 @@ mockIPC((command, payload: any) => {
     case "terminal_connect":
       if (payload.remember !== true)
         throw new Error("Password must save by default");
+      if (
+        payload.service &&
+        (payload.service.composeProject !== "dy-fixture-shop-green" ||
+          payload.service.service !== "dy-update-example")
+      )
+        throw new Error("Wrong service target");
+      if (
+        new URLSearchParams(location.search).has("missing") &&
+        payload.service
+      )
+        throw new Error(
+          "No running container found for this service. Refresh Services and try again.",
+        );
       return {
         id: "test-terminal",
         password_saved: true,
-        containers: [
-          {
-            id: "a".repeat(64),
-            name: "shop-web-1",
-            image: "example/shop:latest",
-            status: "Up 1 hour",
-          },
-        ],
-        container_warning: null,
+        container: payload.service
+          ? {
+              id: "a".repeat(64),
+              name: "shop-web-1",
+            }
+          : null,
       };
     case "terminal_start":
       if (
@@ -56,12 +66,26 @@ mockIPC((command, payload: any) => {
 });
 function Fixture() {
   const [visible, setVisible] = useState(true);
+  const [request, setRequest] = useState<ShellRequest | null>(null);
   return (
     <div className="app-shell terminal-layout">
       <aside className="sidebar">
         <p>TEST FIXTURE · NO SERVER ACCESS</p>
         <button onClick={() => setVisible((v) => !v)}>
           Toggle terminal visibility
+        </button>
+        <button
+          onClick={() => {
+            setVisible(true);
+            setRequest({
+              composeProject: "dy-fixture-shop-green",
+              composeService: "dy-update-example",
+              service: "web",
+              nonce: Date.now(),
+            });
+          }}
+        >
+          Open web service terminal
         </button>
       </aside>
       <main className="main">
@@ -70,6 +94,7 @@ function Fixture() {
             visible={visible}
             native={true}
             server="192.0.2.40"
+            request={request}
             report={(e) => {
               throw e;
             }}

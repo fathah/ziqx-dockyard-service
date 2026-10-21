@@ -81,6 +81,17 @@ mockIPC((command, payload: any) => {
       if (mode !== "legacy") {
         items[0] = {
           ...items[0],
+          containers:
+            mode === "stopped"
+              ? []
+              : [
+                  {
+                    id: "a".repeat(64),
+                    name: replaced
+                      ? "dy-vps-shop-blue-dy-update-example-1"
+                      : "dy-vps-shop-blue-web-1",
+                  },
+                ],
           depends_on: ["postgres"],
           updatable: mode !== "unavailable",
           seamless: mode !== "unavailable",
@@ -92,6 +103,10 @@ mockIPC((command, payload: any) => {
         };
         items[1] = {
           ...items[1],
+          containers:
+            mode === "stopped"
+              ? []
+              : [{ id: "b".repeat(64), name: "database-fixed" }],
           depends_on: [],
           updatable: true,
           seamless: false,
