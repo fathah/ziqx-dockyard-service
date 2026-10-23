@@ -27,3 +27,11 @@ sudo install -o root -g root -m 0755 dockyardctl-linux-amd64 /usr/local/bin/dock
 ```
 
 Then follow [installation and credentials](INSTALL.md). The daemon requires Linux/root, Docker Compose, Caddy and private policy/credentials before it can start. The downloaded operator client runs as a regular user with its authorized credentials.
+
+## 0.7.36 · Desktop 0.1.8 — 2026-10-23
+
+- Connect domains while a Compose project is stopped. Assignments show **Pending activation** and activate routing after a successful start and health checks.
+- Unlink individual service domains while running or stopped. DNS records and containers are preserved, and verified unlinking frees the hostname for another service or project.
+- Recover interrupted domain changes by verifying their reviewed Caddy state, including removal of the last domain.
+
+These features require VPS service **0.7.36+** and desktop **0.1.8+**. Rebuild the Ubuntu bundle with `npm run server:bundle` before packaging the desktop app so its updater includes the matching service binaries.

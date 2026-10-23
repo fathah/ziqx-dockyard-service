@@ -18,13 +18,24 @@ import (
 
 type routeSetupDocker struct {
 	*dockerStub
-	upstream   string
-	observeErr error
+	upstream      string
+	observeErr    error
+	healthCalls   int
+	upstreamCalls int
+	preparer      *runtime.Docker
 }
 
 func (d *routeSetupDocker) PrepareServiceRoutes(ctx context.Context, p model.Project, r model.Release) (model.Release, error) {
+	if d.preparer != nil {
+		return d.preparer.PrepareServiceRoutes(ctx, p, r)
+	}
 	// A verified immutable manifest for the admission test, not a Docker call.
 	return r, nil
+}
+
+func (d *routeSetupDocker) Healthy(ctx context.Context, p model.Project, slot string, r model.Release) error {
+	d.healthCalls++
+	return d.dockerStub.Healthy(ctx, p, slot, r)
 }
 
 func TestServiceDomainsPreserveSiblingRoutesAndRecheckReview(t *testing.T) {
@@ -154,6 +165,7 @@ func TestPublicProjectDoesNotExposeImportedCaddyCredentials(t *testing.T) {
 }
 
 func (d *routeSetupDocker) PublishedUpstream(context.Context, model.Project, string, int) (string, error) {
+	d.upstreamCalls++
 	return d.upstream, d.observeErr
 }
 
@@ -239,7 +251,7 @@ func TestRouteSetupReviewAdmissionAndReplay(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 	d.observeErr = nil
-	p.State = "stopped"
+	p.State = "awaiting_release"
 	a.Engine.Store.Update(job, &p)
 	w = send("POST", "/v1/projects/demo/route-setup-preview", string(raw), scopes, "stopped")
 	if w.Code != 409 || !strings.Contains(w.Body.String(), "PROJECT_NOT_RUNNING") {
@@ -268,5 +280,96 @@ func TestRouteSetupReviewAdmissionAndReplay(t *testing.T) {
 	acceptedJob, err := a.Engine.Store.Job(acceptedJob.ID)
 	if err != nil || acceptedJob.Input.Project.PublishedRoute.HostPort != 3031 || acceptedJob.Input.Project.RouteService != "" || acceptedJob.Input.Project.Slots["blue"] != release || acceptedJob.Input.Release != nil {
 		t.Fatal("route changed release or containers", err, acceptedJob)
+	}
+}
+
+func TestStoppedServiceDomainsAreReviewedWithoutLiveContainers(t *testing.T) {
+	for _, mode := range []string{"primary", "sibling", "adopted", "missing-service", "unsupported-network"} {
+		t.Run(mode, func(t *testing.T) {
+			a, base, routes, send := apiFixture(t)
+			a.Engine.Config.Keys[0].Projects = []string{"*"}
+			a.Engine.Config.Keys[0].Scopes = append(a.Engine.Config.Keys[0].Scopes, "compose.admin")
+			a.Auth, _ = auth.New(a.Engine.Config)
+			d := &routeSetupDocker{dockerStub: base, preparer: &runtime.Docker{Config: a.Engine.Config}}
+			a.Engine.Docker = d
+			r := model.Release{ID: "rel-original", Environment: "env-" + strings.Repeat("a", 32)}
+			apiService := map[string]any{"image": "api:stable"}
+			if mode == "unsupported-network" {
+				apiService["network_mode"] = "host"
+			}
+			envHash := sha256.Sum256(nil)
+			source := []byte("services: {web: {image: 'web:stable'}, api: {image: 'api:stable'}}")
+			sourceHash := sha256.Sum256(source)
+			doc, _ := json.Marshal(map[string]any{"services": map[string]any{"web": map[string]any{"image": "web:stable"}, "api": apiService}, "x-dockyard-env-sha256": hex.EncodeToString(envHash[:]), "x-dockyard-source-sha256": hex.EncodeToString(sourceHash[:])})
+			hash := sha256.Sum256(doc)
+			r.Compose = "cmp-" + hex.EncodeToString(hash[:])
+			folder := filepath.Join(a.Engine.Config.ProjectsRoot, "demo")
+			for _, sub := range []string{"compose", "env", "source"} {
+				if err := os.MkdirAll(filepath.Join(folder, sub), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			os.WriteFile(filepath.Join(folder, "compose", r.Compose+".yml"), doc, 0600)
+			os.WriteFile(filepath.Join(folder, "source", r.Compose+".yml"), source, 0600)
+			os.WriteFile(filepath.Join(folder, "env", r.Environment+".env"), nil, 0600)
+			p := model.Project{ID: "demo", AppID: "tasks", Mode: "compose", Environment: model.Production, State: "stopped", Active: "blue", RouteService: "web", RoutePort: 3000, BluePort: 3031, Domains: []string{"app.example.com"}, Slots: map[string]model.Release{"blue": r}, Releases: []model.Release{r}}
+			if mode == "adopted" {
+				p.Adoption = &model.Adoption{SourceName: "tasks", ComposeProject: "tasks"}
+				p.Domains, p.RouteService, p.RoutePort, p.BluePort = nil, "", 0, 0
+				os.Mkdir(filepath.Join(a.Engine.Config.ProjectsRoot, "tasks"), 0700)
+				if err := runtime.ConsolidateAdoptedProjectDirectory(a.Engine.Config, p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			original := model.Job{ID: "original", ProjectID: p.ID, Status: "succeeded", Created: time.Now(), Input: model.Input{Project: &p}}
+			if err := a.Engine.Store.Accept(original, &p, "original", "original", 10, 10); err != nil {
+				t.Fatal(err)
+			}
+			input := routeSetupRequest{ExpectedRelease: r.ID, Domains: []string{"api.example.com"}, Service: "api", ContainerPort: 3040}
+			if mode == "primary" {
+				input.Service, input.ContainerPort = "web", 3000
+			}
+			if mode == "missing-service" {
+				input.Service = "missing"
+			}
+			raw, _ := json.Marshal(input)
+			w := send("POST", "/v1/projects/demo/route-setup-preview", string(raw), "projects.write sites.write", "preview")
+			if mode == "missing-service" || mode == "unsupported-network" {
+				if w.Code < 400 {
+					t.Fatal("invalid stopped target accepted", w.Body.String())
+				}
+				return
+			}
+			var review struct {
+				Hash      string `json:"review_sha256"`
+				Pending   bool   `json:"pending_activation"`
+				Preserved bool   `json:"containers_unchanged"`
+			}
+			json.Unmarshal(w.Body.Bytes(), &review)
+			if w.Code != 200 || !review.Pending || !review.Preserved || len(review.Hash) != 64 || d.healthCalls != 0 || d.upstreamCalls != 0 {
+				t.Fatal("stopped connection depended on live containers", w.Code, w.Body.String(), d)
+			}
+			input.Review = review.Hash
+			raw, _ = json.Marshal(input)
+			w = send("POST", "/v1/projects/demo/route-setup", string(raw), "projects.write sites.write", "connect")
+			if w.Code != 202 {
+				t.Fatal(w.Code, w.Body.String())
+			}
+			var job model.Job
+			json.Unmarshal(w.Body.Bytes(), &job)
+			job, _ = a.Engine.Store.Job(job.ID)
+			next := job.Input.Project
+			if job.Input.Release != nil || next.State != "stopped" || next.Slots["blue"] != r || len(next.Releases) != 1 || d.healthCalls != 0 || d.upstreamCalls != 0 {
+				t.Fatal("connection planned a deployment", job.Input, d)
+			}
+			if mode != "primary" && (len(next.ServiceRoutes) != 1 || next.ServiceRoutes[0].HostPort != 0 || !next.ServiceRoutes[0].Managed) {
+				t.Fatal("missing deferred binding", next)
+			}
+			calls := base.calls + routes.calls
+			retry := send("POST", "/v1/projects/demo/route-setup", string(raw), "projects.write sites.write", "connect")
+			if retry.Code != 202 || retry.Body.String() != w.Body.String() || base.calls+routes.calls != calls {
+				t.Fatal("retry repeated planning", retry.Code)
+			}
+		})
 	}
 }

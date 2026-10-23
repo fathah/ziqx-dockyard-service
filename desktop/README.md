@@ -4,7 +4,9 @@ A Tauri 2 desktop control room with a Rust API client and a bundled React interf
 
 ## Run on this Mac
 
-The latest local Apple Silicon app is **0.1.7**, in `releases/dockyard-0.1.7/Dockyard.app`. Services terminal buttons open the selected container directly without loading a container catalog. Service rows show the live VPS container name and ID, with copy actions. Its bundled VPS service is **0.7.35**; install it through **Server details → Updates** to enable container identity metadata. From the repository root:
+The desktop source version is **0.1.8**, targeting VPS service **0.7.36**. It adds domain connections while stopped, pending activation after health checks, and service-domain unlinking. Rebuild the Ubuntu bundle before packaging this version using the commands below.
+
+The existing local Apple Silicon app is **0.1.7**, in `releases/dockyard-0.1.7/Dockyard.app`. Services terminal buttons open the selected container directly without loading a container catalog. Service rows show the live VPS container name and ID, with copy actions. Its bundled VPS service is **0.7.35**; install it through **Server details → Updates** to enable container identity metadata. From the repository root:
 
 ```sh
 open desktop/releases/dockyard-0.1.7/Dockyard.app
@@ -31,7 +33,7 @@ For development: `npm run desktop:dev`. For a browser-only visual preview: `npm 
 
 ## Connect service domains and repair readiness checks
 
-Use **Services → Connect domain** on a running Compose service. Dockyard fills the detected container port and keeps sibling services' domains. Choose **Use a domain**, or **Cloudflare subdomain** to select an account, domain and subdomain. The DNS review fills the record value from the enrolled VPS IP, creates an A/AAAA record, or reviews an existing record update. Matching records are reused on retries. An account can be connected from the same form; its token is entered through the secure native prompt.
+Use **Services → Connect domain** on a running or stopped Compose service. Dockyard fills the detected container port and keeps sibling services' domains. With desktop **0.1.8+** and VPS service **0.7.36+**, a stopped project's domain shows **Pending activation** until Start passes health checks. **Domains → Unlink** removes a selected service assignment without changing DNS records or containers. Choose **Use a domain**, or **Cloudflare subdomain** to select an account, domain and subdomain. The DNS review fills the record value from the enrolled VPS IP, creates an A/AAAA record, or reviews an existing record update. Matching records are reused on retries. An account can be connected from the same form; its token is entered through the secure native prompt.
 
 The connection review reuses an existing published binding where possible. A missing binding is published privately through a reviewed controlled deployment, preserving resolved inputs and images from individual service updates. These service routes require VPS Dockyard **0.7.21** or later; use **Server details → Updates** to install the bundled update. Whole-stack blue/green projects retain their existing route workflow.
 

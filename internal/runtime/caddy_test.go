@@ -108,6 +108,21 @@ func TestCaddyDivergenceBlocksSwitch(t *testing.T) {
 	}
 }
 
+func TestUnlinkLastDomainClearsManagedSnippet(t *testing.T) {
+	c, p, f := caddyFixture(t, "success")
+	p.Mode, p.Domains = "compose", []string{}
+	if err := c.Set(context.Background(), p, "blue"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(f.path)
+	if err != nil || len(b) != 0 {
+		t.Fatal("last unlinked domain still routed", string(b), err)
+	}
+	if err := c.Ensure(context.Background(), p); err != nil {
+		t.Fatal("empty route cannot be verified for recovery", err)
+	}
+}
+
 func TestDNSDoesNotOverwriteForeignRecord(t *testing.T) {
 	c := config.Config{ServerID: "vps-01", AllowedDomains: []string{"example.com"}, Cloudflare: &config.Cloudflare{Zones: map[string]string{"example.com": "zone"}, OriginIP: "203.0.113.10", TokenFile: filepath.Join(t.TempDir(), "token")}}
 	os.WriteFile(c.Cloudflare.TokenFile, []byte("secret-token"), 0600)

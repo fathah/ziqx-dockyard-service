@@ -1,6 +1,10 @@
 import Button from "./Button";
 import useRecentProjects from "./useRecentProjects";
 import DomainHTTPS from "./DomainHTTPS";
+import {
+  domainTarget,
+  serviceDomains as domainsForService,
+} from "./domainRoutes";
 import ServerDetailsTabs from "./ServerDetailsTabs";
 import ServerDiagnostics from "./ServerDiagnostics";
 import ServerUpdater from "./ServerUpdater";
@@ -96,7 +100,13 @@ type Page =
   | "terminal";
 type Modal =
   | { kind: "create"; appID?: string }
-  | { kind: "routes"; project: Project; service?: string; domains?: string[] }
+  | {
+      kind: "routes";
+      project: Project;
+      service?: string;
+      domains?: string[];
+      unlink?: boolean;
+    }
   | { kind: "deploy" | "stop" | "rollback"; project: Project }
   | null;
 type Audit = { event_id: number; event: Record<string, unknown> };
@@ -140,6 +150,7 @@ const activityVerb = (action: string) =>
     deploy: "Deploying",
     rollback: "Rolling back",
     route_setup: "Connecting domain for",
+    route_unlink: "Unlinking domain from",
     "route-setup": "Connecting domain for",
     service_update: "Updating",
     "service-update": "Updating",
@@ -2197,18 +2208,7 @@ export function ProjectDetail({
                                 ? "Checking GHCR for updates…"
                                 : "Image recorded at deploy";
                     const serviceDomains = active
-                      ? (p.service_routes?.find(
-                          (route) => route.service === s.name,
-                        )?.domains ??
-                        (s.name ===
-                        (p.route_service || p.published_route?.service)
-                          ? p.domains.filter(
-                              (name) =>
-                                !p.service_routes?.some((route) =>
-                                  route.domains.includes(name),
-                                ),
-                            )
-                          : []))
+                      ? domainsForService(p, s.name)
                       : [];
                     const blocked =
                       p.mode === "compose" && active
@@ -2253,7 +2253,11 @@ export function ProjectDetail({
                                 {s.image || "Built from Compose"}
                               </code>
                               {serviceDomains.length > 0 && (
-                                <small>{serviceDomains.join(", ")}</small>
+                                <small>
+                                  {serviceDomains.join(", ")}
+                                  {p.state === "stopped" &&
+                                    " · Pending activation"}
+                                </small>
                               )}
                               {s.containers?.map((container) => (
                                 <div
@@ -2503,17 +2507,10 @@ export function ProjectDetail({
                 <p>
                   {p.mode === "compose" && !p.zerodowntime
                     ? (() => {
-                        const route = p.service_routes?.find((route) =>
-                          route.domains.includes(d.hostname),
-                        );
-                        const service =
-                          route?.service ||
-                          p.route_service ||
-                          p.published_route?.service;
-                        const port =
-                          route?.container_port ||
-                          p.route_port ||
-                          p.published_route?.container_port;
+                        if (!d.assigned) return "No service assigned";
+                        const target = domainTarget(p, d.hostname);
+                        const service = target?.service;
+                        const port = target?.container_port;
                         return service
                           ? `${service}${port ? ` · container port ${port}` : ""}`
                           : "Service domain";
@@ -2522,19 +2519,30 @@ export function ProjectDetail({
                       ? "Cloudflare record tracked"
                       : "DNS record not tracked"}
                 </p>
-                <DomainHTTPS
-                  project={p.id}
-                  hostname={d.hostname}
-                  revision={JSON.stringify([
-                    p.service_routes,
-                    p.service_instances,
-                    p.active_slot,
-                    p.slots,
-                  ])}
-                  disabled={preview || !d.assigned}
-                />
+                {d.assigned && p.state === "stopped" ? (
+                  <small>Routing activates after a healthy start.</small>
+                ) : (
+                  <DomainHTTPS
+                    project={p.id}
+                    hostname={d.hostname}
+                    revision={JSON.stringify([
+                      p.service_routes,
+                      p.service_instances,
+                      p.active_slot,
+                      p.slots,
+                      p.state,
+                    ])}
+                    disabled={preview || !d.assigned}
+                  />
+                )}
               </div>
-              <Tag tone="green">{d.assigned ? "Assigned" : "Unassigned"}</Tag>
+              <Tag tone={d.assigned && p.state === "running" ? "green" : ""}>
+                {d.assigned
+                  ? p.state === "stopped"
+                    ? "Pending activation"
+                    : "Assigned"
+                  : "Unassigned"}
+              </Tag>
               <Button
                 type="button"
                 className="button small"
@@ -2552,12 +2560,9 @@ export function ProjectDetail({
                     open({
                       kind: "routes",
                       project: p,
-                      service:
-                        p.service_routes?.find((route) =>
-                          route.domains.includes(d.hostname),
-                        )?.service ||
-                        p.route_service ||
-                        p.published_route?.service,
+                      service: d.assigned
+                        ? domainTarget(p, d.hostname)?.service
+                        : undefined,
                       domains: [d.hostname],
                     });
                     return;
@@ -2574,6 +2579,26 @@ export function ProjectDetail({
                   ? "Connect / DNS"
                   : "Create DNS"}
               </Button>
+              {d.assigned && p.mode === "compose" && !p.zerodowntime && (
+                <Button
+                  type="button"
+                  className="button small"
+                  disabled={Boolean(
+                    recoveryJob || projectOperation || status?.busy,
+                  )}
+                  onClick={() =>
+                    open({
+                      kind: "routes",
+                      project: p,
+                      service: domainTarget(p, d.hostname)?.service,
+                      domains: [d.hostname],
+                      unlink: true,
+                    })
+                  }
+                >
+                  Unlink
+                </Button>
+              )}
             </div>
           ))}
         </section>
@@ -2703,18 +2728,44 @@ function Domains({
                   {d} <ArrowUpRight size={13} />
                 </Button>
                 <p>
-                  {p.id} · 127.0.0.1:
-                  {p.active_slot === "green" ? p.green_port : p.blue_port}
+                  {p.app_id} · {domainTarget(p, d)?.service || "Website"}
+                  {p.state === "stopped"
+                    ? " · Pending activation"
+                    : ` · 127.0.0.1:${domainTarget(p, d)?.host_port || (p.active_slot === "green" ? p.green_port : p.blue_port)}`}
                 </p>
               </div>
               <Tag>{labels[p.environment]}</Tag>
               <Button
                 type="button"
                 className="button small"
-                onClick={() => open({ kind: "routes", project: p })}
+                onClick={() =>
+                  open({
+                    kind: "routes",
+                    project: p,
+                    service: domainTarget(p, d)?.service,
+                    domains: [d],
+                  })
+                }
               >
                 Edit route
               </Button>
+              {p.mode === "compose" && !p.zerodowntime && (
+                <Button
+                  type="button"
+                  className="button small"
+                  onClick={() =>
+                    open({
+                      kind: "routes",
+                      project: p,
+                      service: domainTarget(p, d)?.service,
+                      domains: [d],
+                      unlink: true,
+                    })
+                  }
+                >
+                  Unlink
+                </Button>
+              )}
             </div>
           )),
         )}
@@ -4091,6 +4142,7 @@ function OperationModal({
         project={p}
         initialService={m.kind === "routes" ? m.service : undefined}
         domains={m.kind === "routes" ? m.domains : undefined}
+        unlink={m.kind === "routes" ? m.unlink : undefined}
         preview={preview}
         execute={perform}
         close={close}

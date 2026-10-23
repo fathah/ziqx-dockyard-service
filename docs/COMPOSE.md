@@ -102,4 +102,6 @@ Then submit to `/v1/projects/demo-production/deploy`:
 
 Existing Compose domain bindings move to Docker-assigned ports on their next full deployment, start, restart, or rollback. Connecting an already-published service can reuse its verified current binding without recreating containers; subsequent full deployments manage that binding automatically. Ports belonging to services or targets without domain routes are retained as supplied.
 
+With VPS service **0.7.36+** and desktop **0.1.8+**, you can connect a domain from **Services** while the project is stopped. The assignment shows **Pending activation** and serves an unavailable page until **Start** creates the service bindings and passes health checks. Saving the domain leaves the project stopped. In **Domains**, choose **Unlink** to remove a domain from its service while running or stopped. This removes its managed Caddy route and frees the hostname for another service or project; DNS records and containers stay in place.
+
 Existing template-managed projects keep their previous behavior; see [legacy Compose policy](LEGACY_COMPOSE.md). Existing VPS inventory can be adopted conservatively in place. Migration assessment does not require templates or pinned images.

@@ -307,6 +307,19 @@ func (s *Store) Update(j model.Job, p *model.Project) error {
 		if e = syncMetadata(tx, *p); e != nil {
 			return e
 		}
+		if j.Action == "route_unlink" && j.Input.Previous != nil {
+			assigned := map[string]bool{}
+			for _, host := range p.Domains {
+				assigned[host] = true
+			}
+			for _, host := range j.Input.Previous.Domains {
+				if !assigned[host] {
+					if _, e = tx.Exec("DELETE FROM domains WHERE hostname=? AND project_id=?", host, p.ID); e != nil {
+						return e
+					}
+				}
+			}
+		}
 		if j.Input.Hostname != "" && j.Input.DNSRecordID != "" {
 			if _, e = tx.Exec("INSERT INTO dns_records(project_id,hostname,record_id) VALUES(?,?,?) ON CONFLICT(project_id,hostname) DO UPDATE SET record_id=excluded.record_id", p.ID, j.Input.Hostname, j.Input.DNSRecordID); e != nil {
 				return e

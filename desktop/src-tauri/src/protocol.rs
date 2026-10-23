@@ -330,8 +330,10 @@ fn is_false(value: &bool) -> bool { !value }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RouteSetup {
-	#[serde(default, skip_serializing_if = "is_false")]
-	pub replace_existing_rules: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unlink: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub replace_existing_rules: bool,
     pub expected_release_id: String,
     pub domains: Vec<String>,
     pub service: String,
@@ -340,9 +342,13 @@ pub struct RouteSetup {
     pub review_sha256: String,
 }
 impl RouteSetup {
+    pub fn scopes(&self) -> &'static str {
+        if self.unlink { "projects.write sites.write" } else { "deploy.execute projects.write sites.write" }
+    }
     pub fn valid(&self) -> bool {
         token(&self.expected_release_id) && domains_ok(&self.domains)
         && service_name(&self.service) && self.container_port > 0
+        && !(self.unlink && self.replace_existing_rules)
     }
 }
 #[derive(Deserialize)]
@@ -429,7 +435,7 @@ impl Mutation {
                 if !data.valid() || data.review_sha256.len() != 64 || !data.review_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
                     return Err("Review the route first".into());
                 }
-                ("POST", project, "route-setup", "deploy.execute projects.write sites.write", serde_json::to_string(&data))
+                ("POST", project, "route-setup", data.scopes(), serde_json::to_string(&data))
             }
             Self::ServiceUpdate { project, data } => {
                 if !data.valid() || data.review_sha256.len()!=64 || !data.review_sha256.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
@@ -890,6 +896,12 @@ mod tests {
         let mut replacement=base.clone();replacement["data"]["replace_existing_rules"]=serde_json::json!(true);
         let replace_op=serde_json::from_value::<Mutation>(replacement).unwrap().plan().unwrap();
         assert_eq!(serde_json::from_str::<serde_json::Value>(&replace_op.body).unwrap()["replace_existing_rules"],true);
+        let mut unlink=base.clone();unlink["data"]["unlink"]=serde_json::json!(true);
+        let unlink_op=serde_json::from_value::<Mutation>(unlink.clone()).unwrap().plan().unwrap();
+        assert_eq!(unlink_op.scopes,"projects.write sites.write");
+        assert_eq!(serde_json::from_str::<serde_json::Value>(&unlink_op.body).unwrap()["unlink"],true);
+        unlink["data"]["replace_existing_rules"]=serde_json::json!(true);
+        assert!(serde_json::from_value::<Mutation>(unlink).unwrap().plan().is_err());
         for (field,value) in [("service",serde_json::json!("../app")),("container_port",serde_json::json!(0)),("domains",serde_json::json!([])),("review_sha256",serde_json::json!(""))] {
             let mut bad=base.clone();bad["data"][field]=value;
             assert!(serde_json::from_value::<Mutation>(bad).unwrap().plan().is_err());

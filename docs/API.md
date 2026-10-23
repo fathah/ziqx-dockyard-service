@@ -23,6 +23,8 @@ The agent defaults to `https://127.0.0.1:9123`; it can bind an explicitly config
 | GET | `/v1/audit?after=0` | `deploy.read` plus all-project access | Next 100 transactional audit events |
 | POST | `/v1/projects` | `projects.write` | Create project files, reserve ports/domain, install maintenance route |
 | PUT | `/v1/projects/{id}/routes` | `sites.write` | Replace assigned domain list; update ports while stopped |
+| POST | `/v1/projects/{id}/route-setup-preview` | `projects.write sites.write` | Review connecting or unlinking domains for one Compose service |
+| POST | `/v1/projects/{id}/route-setup` | `projects.write sites.write` | Apply the reviewed service domain connection or unlink |
 | POST | `/v1/projects/{id}/dns` | `dns.write` | Create a Cloudflare record for an already assigned subdomain |
 | POST | `/v1/projects/{id}/draft` | `deploy.environment` plus server-wide `compose.admin` | Save Compose and environment files without deploying |
 | POST | `/v1/projects/{id}/deploy` | `deploy.execute`; also `deploy.environment` when new environments supplied | Validate Compose YAML; full-stack deployment or `mode: seamless` configuration rollout (also requires `projects.write sites.write`) |
@@ -77,7 +79,17 @@ Project, release, service and domain inventory reads use SQLite without accessin
 {"domains":["new.example.com"],"port":3005,"secondary_port":3006}
 ```
 
-Port changes require the project to be stopped; omitted ports stay unchanged. Domain-only changes can apply to running projects. Caddy manual sites/control-plane domains are protected. Removed domains/ports stay reserved in this first version. Mode/template migration and automatic retirement are deferred.
+Port changes require the project to be stopped; omitted ports stay unchanged. Domain-only changes can apply to running projects. Caddy manual sites/control-plane domains are protected. Domains/ports removed through this endpoint stay reserved; use the reviewed service-domain unlink below to release a hostname. Mode/template migration and automatic retirement are deferred.
+
+For individual Compose service domains, use `POST /v1/projects/demo/route-setup-preview` with server-wide `compose.admin` authority:
+
+```json
+{"expected_release_id":"rel-current","domains":["api.example.com"],"service":"api","container_port":3000}
+```
+
+Submit the same body plus the returned `review_sha256` to `/route-setup`. Running projects reuse a verified published binding or review a controlled deployment to add one (`deploy.execute` is also required for that deployment). Stopped projects return `pending_activation: true` and `containers_unchanged: true`: the assignment is saved with a Caddy unavailable page, while the release and stopped containers stay in place. Start compiles the saved private bindings, discovers Docker's assigned ports, checks health, and only then activates proxy routing. A failed start leaves the domains pending. The desktop displays **Pending activation** for assigned domains while the project is stopped.
+
+To unlink, include `"unlink": true` in both preview and apply, naming the currently assigned service and container port. This returns a `route_unlink` job that removes only the selected domains and their imported Caddy templates. It does not inspect, restart, or stop containers and works while running or stopped. DNS records are preserved. Explicit unlink releases the hostname reservation after the route change is verified, allowing another service or project to use it; known DNS records remain visible as unassigned. An unassigned domain returns `409 DOMAIN_NOT_ASSIGNED`, and a changed service or port returns `409 DOMAIN_TARGET_MISMATCH`. Unlink cannot be combined with `replace_existing_rules`. Both operations reject stale releases/reviews, active jobs, recovery blockers, and whole-stack blue/green projects.
 
 `POST /v1/projects/demo/dns`:
 

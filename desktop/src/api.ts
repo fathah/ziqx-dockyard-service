@@ -223,6 +223,7 @@ export const serviceImages = (
   });
 
 export type RouteSetupInput = {
+  unlink?: boolean;
   replace_existing_rules?: boolean;
   expected_release_id: string;
   domains: string[];
@@ -231,6 +232,8 @@ export type RouteSetupInput = {
   review_sha256?: string;
 };
 export type RouteSetupReview = {
+  pending_activation?: boolean;
+  unlink?: boolean;
   existing_routes?: {
     domains: string[];
     previous_upstream?: string;

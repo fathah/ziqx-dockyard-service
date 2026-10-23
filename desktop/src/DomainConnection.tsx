@@ -15,6 +15,7 @@ export default function DomainConnection({
   execute,
   close,
   blocked = false,
+  unlink = false,
 }: {
   project: Project;
   service?: Service;
@@ -24,6 +25,7 @@ export default function DomainConnection({
   execute: (mutation: unknown) => Promise<void>;
   close: () => void;
   blocked?: boolean;
+  unlink?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [services, setServices] = useState<Service[]>(service ? [service] : []);
@@ -35,7 +37,7 @@ export default function DomainConnection({
     dialog.current?.showModal();
   }, []);
   useEffect(() => {
-    if (service || preview) {
+    if (service || preview || unlink) {
       setLoading(false);
       return;
     }
@@ -60,12 +62,12 @@ export default function DomainConnection({
     return () => {
       alive = false;
     };
-  }, [project.id, service, preview, revision]);
+  }, [project.id, service, preview, revision, unlink]);
   return createPortal(
     <dialog
       ref={dialog}
       className="modal domain-connection-modal"
-      aria-label="Connect a domain"
+      aria-label={unlink ? "Unlink a domain" : "Connect a domain"}
       onCancel={(e) => {
         e.preventDefault();
         if (!busy) close();
@@ -77,8 +79,10 @@ export default function DomainConnection({
             {project.app_id} · {project.environment}
           </div>
           <h2>
-            <Globe2 size={22} /> Connect {service ? service.name : "a service"}{" "}
-            to a domain
+            <Globe2 size={22} />
+            {unlink
+              ? "Unlink domain"
+              : `Connect ${service ? service.name : "a service"} to a domain`}
           </h2>
         </div>
         <Button
@@ -111,6 +115,7 @@ export default function DomainConnection({
             initialService={service?.name ?? initialService}
             initialDomains={domains}
             onBusyChange={setBusy}
+            unlink={unlink}
           />
         )}
       </div>

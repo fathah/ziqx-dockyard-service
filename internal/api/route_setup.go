@@ -19,6 +19,7 @@ import (
 )
 
 type routeSetupRequest struct {
+	Unlink          bool     `json:"unlink,omitempty"`
 	ReplaceRules    bool     `json:"replace_existing_rules,omitempty"`
 	ExpectedRelease string   `json:"expected_release_id"`
 	Domains         []string `json:"domains"`
@@ -84,7 +85,7 @@ func (a *API) routeSetup(w http.ResponseWriter, r *http.Request, principal auth.
 		problem(w, 409, "ROUTE_SETUP_UNAVAILABLE", request)
 		return
 	}
-	if p.State != "running" {
+	if p.State != "running" && p.State != "stopped" {
 		problem(w, 409, "PROJECT_NOT_RUNNING", request)
 		return
 	}
@@ -97,6 +98,10 @@ func (a *API) routeSetup(w http.ResponseWriter, r *http.Request, principal auth.
 		fail(w, err, request)
 		return
 	}
+	if input.Unlink {
+		a.unlinkServiceDomains(w, r, principal, input, p, fingerprint, preview)
+		return
+	}
 	d, ok := e.Docker.(interface {
 		PublishedUpstream(context.Context, model.Project, string, int) (string, error)
 	})
@@ -104,8 +109,14 @@ func (a *API) routeSetup(w http.ResponseWriter, r *http.Request, principal auth.
 		problem(w, 409, "ROUTE_SETUP_UNAVAILABLE", request)
 		return
 	}
-	if err = e.Docker.Healthy(r.Context(), p, p.Active, current); err != nil {
-		fail(w, err, request)
+	if p.State == "running" {
+		if err = e.Docker.Healthy(r.Context(), p, p.Active, current); err != nil {
+			fail(w, err, request)
+			return
+		}
+	}
+	if p.State == "stopped" {
+		a.serviceRouteSetup(w, r, principal, input, p, current, fingerprint, preview, d)
 		return
 	}
 	if _, supported := e.Routes.(serviceRouteImporter); supported {
@@ -290,12 +301,19 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 	}
 	upstream := ""
 	var err error
+	pending := p.State == "stopped"
 	if primary {
 		upstream = net.JoinHostPort("127.0.0.1", strconv.Itoa(p.Port(p.Active)))
+	} else if pending {
+		port := 0
+		if index >= 0 {
+			port = p.ServiceRoutes[index].HostPort
+		}
+		upstream = net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	} else {
 		upstream, err = d.PublishedUpstream(r.Context(), p, input.Service, input.ContainerPort)
 	}
-	managed := index >= 0 && p.ServiceRoutes[index].Managed
+	managed := index >= 0 && p.ServiceRoutes[index].Managed || pending && index < 0
 	var release *model.Release
 	if err != nil {
 		if err.Error() != "BLUE_GREEN_ROUTE_TARGET_MISMATCH" || index >= 0 {
@@ -319,7 +337,7 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 			if instance, ok := p.ServiceInstances[input.Service]; ok && instance.Port > 0 && (instance.ContainerPort == 0 || instance.ContainerPort == input.ContainerPort) {
 				expectedPort = instance.Port
 			}
-			if expectedPort != hostPort {
+			if !pending && expectedPort != hostPort {
 				problem(w, 409, "CONTAINER_BINDING_DIVERGED", request)
 				return
 			}
@@ -354,7 +372,7 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 		return
 	}
 	if managed && index < 0 {
-		if !require(w, principal, "deploy.execute", p.ID) {
+		if !pending && !require(w, principal, "deploy.execute", p.ID) {
 			return
 		}
 		preparer, ok := e.Docker.(interface {
@@ -385,12 +403,17 @@ func (a *API) serviceRouteSetup(w http.ResponseWriter, r *http.Request, principa
 	sum := sha256.Sum256(encoded)
 	review := hex.EncodeToString(sum[:])
 	if preview {
-		write(w, 200, map[string]any{"review_sha256": review, "domains": input.Domains, "service": input.Service, "container_port": input.ContainerPort, "upstream": upstream, "imports_routes": len(transfer.Edits) > 0, "existing_routes": transfer.Existing, "containers_unchanged": release == nil})
+		write(w, 200, map[string]any{"review_sha256": review, "domains": input.Domains, "service": input.Service, "container_port": input.ContainerPort, "upstream": upstream, "imports_routes": len(transfer.Edits) > 0, "existing_routes": transfer.Existing, "containers_unchanged": release == nil || pending, "pending_activation": pending})
 		return
 	}
 	if approved != review {
 		problem(w, 409, "ROUTE_REVIEW_CHANGED", request)
 		return
+	}
+	// Stopped projects retain their release and containers. Start compiles all
+	// saved service bindings, discovers their ports, then activates healthy routes.
+	if pending {
+		release = nil
 	}
 	if release != nil {
 		release.ID = state.NewID("rel-")

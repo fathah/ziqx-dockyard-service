@@ -1026,7 +1026,7 @@ async fn service_images(c: State<'_, Control>, project: String, data: protocol::
 #[tauri::command]
 async fn preview_route_setup(c: State<'_, Control>, project: String, data: protocol::RouteSetup) -> Result<Value,String> {
     if !protocol::id(&project) || !data.valid() { return Err("Invalid route setup".into()); }
-    let op=Operation {method:"POST".into(),target:format!("/v1/projects/{project}/route-setup-preview"),scopes:"deploy.execute projects.write sites.write".into(),project,action:"route-setup-preview".into(),body:serde_json::to_string(&data).map_err(|_|"Invalid request")?,idempotency:format!("preview-{}",uuid::Uuid::new_v4()),request_id:format!("req-{}",uuid::Uuid::new_v4())};
+    let op=Operation {method:"POST".into(),target:format!("/v1/projects/{project}/route-setup-preview"),scopes:data.scopes().into(),project,action:"route-setup-preview".into(),body:serde_json::to_string(&data).map_err(|_|"Invalid request")?,idempotency:format!("preview-{}",uuid::Uuid::new_v4()),request_id:format!("req-{}",uuid::Uuid::new_v4())};
     let mut inner=c.inner.lock().await; let s=session(&mut inner)?;
     let result=send(s,&op).await?;
     if s.generation!=c.generation.load(Ordering::SeqCst){return Err("SESSION_LOCKED".into());}
@@ -1203,11 +1203,16 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
     }
     if op.action == "migrate" { review.push_str("\nAdopt the reviewed existing Compose stack into Dockyard. Containers, ports and Caddy routes stay in place. Future deployments use a single instance."); }
     if op.action == "route-setup" {
-        review.push_str("\nConnect the reviewed domains to this service. Any reviewed sites already in the main Caddyfile move into Dockyard management. Other domains in shared site blocks stay in the main Caddyfile. Reuse the published port when available; otherwise add a private binding through a controlled deployment.");
-        if body.get("replace_existing_rules").and_then(Value::as_bool) == Some(true) {
-            review.push_str("\nReplace existing custom site rules for these domains with a standard service route. Custom authentication, redirects, headers and certificate settings are removed.");
+        if body.get("unlink").and_then(Value::as_bool) == Some(true) {
+            review.push_str("\nUnlink the reviewed domains from this service and remove their Dockyard Caddy routes. DNS records and containers are unchanged. The domains become available for another service or project.");
         } else {
-            review.push_str("\nKeep imported site rules and change only the proxy destination. Existing service domains are preserved.");
+            review.push_str("\nConnect the reviewed domains to this service. Any reviewed sites already in the main Caddyfile move into Dockyard management. Other domains in shared site blocks stay in the main Caddyfile. Reuse the published port when available; otherwise add a private binding through a controlled deployment.");
+            review.push_str("\nIf the project is stopped, save the domain assignment with an unavailable page. Routing activates after the project starts and passes health checks; containers remain stopped until then.");
+            if body.get("replace_existing_rules").and_then(Value::as_bool) == Some(true) {
+                review.push_str("\nReplace existing custom site rules for these domains with a standard service route. Custom authentication, redirects, headers and certificate settings are removed.");
+            } else {
+                review.push_str("\nKeep imported site rules and change only the proxy destination. Existing service domains are preserved.");
+            }
         }
     }
     let sensitive = op.action != "create";

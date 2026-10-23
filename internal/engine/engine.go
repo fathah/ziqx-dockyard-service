@@ -246,7 +246,7 @@ func (e *Engine) execute(ctx context.Context, j model.Job) {
 	}
 	if err == nil {
 		switch j.Action {
-		case "route_setup":
+		case "route_setup", "route_unlink":
 			err = e.setupRoute(ctx, &j, &p)
 		case "route_repair":
 			err = e.repairRoutes(ctx, &j, &p)
@@ -709,7 +709,12 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if j.Action == "configuration_update" {
+	if routeOnlyJob(j) {
+		p, err = e.reconcileRouteChange(ctx, &j)
+		if err != nil {
+			return err
+		}
+	} else if j.Action == "configuration_update" {
 		p, err = e.reconcileConfiguration(ctx, &j)
 		if err != nil {
 			return err
@@ -823,7 +828,9 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 	j.Error = "JOB_INTERRUPTED_RECONCILED"
 	j.Phase = "reconciled"
 	j.Warning = "CONTAINERS_PRESERVED"
-	p.RecoveryDrain = j.Action != "service_update" && j.Action != "configuration_update" && j.Action != "route_repair"
+	if !routeOnlyJob(j) {
+		p.RecoveryDrain = j.Action != "service_update" && j.Action != "configuration_update" && j.Action != "route_repair"
+	}
 	now := time.Now().UTC()
 	j.Finished = &now
 	return e.Store.Update(j, &p)

@@ -107,6 +107,37 @@ func TestMetadataCommitsAtomicallyAndKeepsRetiredDomains(t *testing.T) {
 	}
 }
 
+func TestUnlinkReleasesHostnameAndKeepsTrackedDNS(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	p := project("demo")
+	j := job("one", p.ID)
+	j.Input.Project = &p
+	if err := s.Accept(j, &p, "original", "fp", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	j.Input.Hostname, j.Input.DNSRecordID = p.Domains[0], "cloudflare-id"
+	if err := s.Update(j, &p); err != nil {
+		t.Fatal(err)
+	}
+	previous := p
+	p.Domains = []string{}
+	j.Action, j.Input = "route_unlink", model.Input{Previous: &previous, Project: &p}
+	if err := s.Update(j, &p); err != nil {
+		t.Fatal(err)
+	}
+	if owner, _ := s.DomainOwner(previous.Domains[0]); owner != "" {
+		t.Fatal("unlink retained reservation", owner)
+	}
+	domains, err := s.Domains(p.ID)
+	if err != nil || len(domains) != 1 || domains[0].Assigned || domains[0].DNSRecordID != "cloudflare-id" {
+		t.Fatal("unlink deleted tracked DNS", domains, err)
+	}
+}
+
 func TestComposeMetadataImmutableAndProjectIsolated(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "state"))
 	if err != nil {

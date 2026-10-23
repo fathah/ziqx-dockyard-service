@@ -245,7 +245,7 @@ func (s *Store) Services(project string) ([]model.ServiceInfo, error) {
 }
 
 func (s *Store) Domains(project string) ([]model.DomainInfo, error) {
-	rows, err := s.DB.Query(`SELECT h.hostname,CASE WHEN a.hostname IS NULL THEN 0 ELSE 1 END,COALESCE(d.record_id,'') FROM (SELECT hostname FROM domains WHERE project_id=? UNION SELECT hostname FROM project_domains WHERE project_id=?) h LEFT JOIN project_domains a ON a.hostname=h.hostname AND a.project_id=? LEFT JOIN dns_records d ON d.hostname=h.hostname AND d.project_id=? ORDER BY h.hostname`, project, project, project, project)
+	rows, err := s.DB.Query(`SELECT h.hostname,CASE WHEN a.hostname IS NULL THEN 0 ELSE 1 END,COALESCE(d.record_id,'') FROM (SELECT hostname FROM domains WHERE project_id=? UNION SELECT hostname FROM project_domains WHERE project_id=? UNION SELECT hostname FROM dns_records WHERE project_id=?) h LEFT JOIN project_domains a ON a.hostname=h.hostname AND a.project_id=? LEFT JOIN dns_records d ON d.hostname=h.hostname AND d.project_id=? ORDER BY h.hostname`, project, project, project, project, project)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,7 @@ import ServiceDomainPicker, {
 import { ConnectionHealth } from "./ServerRepair";
 import ServerUpdater from "./ServerUpdater";
 import type { Project, Service } from "./types";
+import { routeReleaseId } from "./domainRoutes";
 
 function explain(error: unknown) {
   const message = String(error);
@@ -27,7 +28,7 @@ function explain(error: unknown) {
     RECOVERY_REQUIRED:
       "Resolve the interrupted operation in Deployments before configuring this route.",
     PROJECT_NOT_RUNNING:
-      "Dockyard must verify a running release before configuring its route.",
+      "This project is not ready for domain changes. Finish its deployment or recovery first.",
     PROJECT_BUSY:
       "Wait for the current operation to finish, then review again.",
     CONTAINER_OWNERSHIP_UNKNOWN:
@@ -48,6 +49,10 @@ function explain(error: unknown) {
       "Saved and live Caddy routes differ. Review the repair below, then retry the connection.",
     DOMAIN_IN_USE:
       "This domain is already assigned to another service. Choose another hostname.",
+    DOMAIN_NOT_ASSIGNED:
+      "This domain is no longer assigned. Refresh the project.",
+    DOMAIN_TARGET_MISMATCH:
+      "This domain's service assignment changed. Refresh and review again.",
     SERVICE_ROUTE_BINDING_UNAVAILABLE:
       "Docker hasn't created a usable local port for this service yet. Review the service deployment.",
     COMPOSE_ROUTE_NETWORK_UNSUPPORTED:
@@ -82,6 +87,7 @@ export default function RouteSetup({
   initialService,
   initialDomains,
   onBusyChange,
+  unlink = false,
 }: {
   project: Project;
   services: Service[];
@@ -96,12 +102,15 @@ export default function RouteSetup({
   initialService?: string;
   initialDomains?: string[];
   onBusyChange?: (busy: boolean) => void;
+  unlink?: boolean;
 }) {
   const candidates = services.filter(
     (service) => service.slot === project.active_slot,
   );
   const savedRoute = project.service_routes?.find(
-    (route) => route.service === initialService,
+    (route) =>
+      route.service === initialService &&
+      (!unlink || initialDomains?.some((name) => route.domains.includes(name))),
   );
   const primaryService =
     project.route_service || project.published_route?.service;
@@ -156,6 +165,7 @@ export default function RouteSetup({
   const sequence = useRef(0);
   const selected = candidates.find((item) => item.name === service);
   useEffect(() => {
+    if (unlink) return;
     if (!selected && candidates.length) {
       const first =
         candidates.find((item) => item.name === primaryService) ??
@@ -169,10 +179,11 @@ export default function RouteSetup({
         setPort(String(detected));
       }
     }
-  }, [JSON.stringify(candidates), selected, port, portEdited]);
+  }, [JSON.stringify(candidates), selected, port, portEdited, unlink]);
   const data: api.RouteSetupInput = {
+    ...(unlink ? { unlink: true } : {}),
     ...(replaceRules ? { replace_existing_rules: true } : {}),
-    expected_release_id: project.slots[project.active_slot ?? "blue"]?.id ?? "",
+    expected_release_id: routeReleaseId(project),
     domains: domains.split(/[\s,]+/).filter(Boolean),
     service,
     container_port: Number(port),
@@ -180,7 +191,7 @@ export default function RouteSetup({
   const key = JSON.stringify([project, data, dns]);
   const review = checked?.key === key ? checked.review : undefined;
   const valid =
-    !!selected &&
+    (unlink ? !!service : !!selected) &&
     !!data.expected_release_id &&
     data.domains.length > 0 &&
     data.domains.length <= 10 &&
@@ -202,7 +213,9 @@ export default function RouteSetup({
     [],
   );
   const disabled =
-    blocked || project.state !== "running" || loading || unavailable;
+    blocked ||
+    !["running", "stopped"].includes(project.state) ||
+    (!unlink && (loading || unavailable));
 
   async function check() {
     if (!valid || disabled) return;
@@ -220,6 +233,8 @@ export default function RouteSetup({
             upstream: "127.0.0.1:3031",
             imports_routes: !!project.external_domains?.length,
             containers_unchanged: true,
+            pending_activation: project.state === "stopped",
+            unlink,
           }
         : await api.previewRouteSetup(project.id, data);
       const dnsResult = dns
@@ -266,8 +281,6 @@ export default function RouteSetup({
       if (sequence.current === current) setBusy(false);
     }
   }
-  const notRunning = project.state !== "running";
-  const [starting, setStarting] = useState(false);
   // One clear blocker at a time, each with the action that resolves it.
   if (blocked)
     return (
@@ -284,41 +297,32 @@ export default function RouteSetup({
         )}
       </div>
     );
-  if (notRunning)
-    return (
-      <div className="route-setup route-blocked">
-        <span>Start {project.app_id} to connect a domain.</span>
-        <Button
-          type="button"
-          className="button small primary"
-          disabled={starting || preview}
-          onClick={async () => {
-            setStarting(true);
-            try {
-              await execute({ action: "start", project: project.id });
-            } catch (e) {
-              setError(explain(e));
-            } finally {
-              setStarting(false);
-            }
-          }}
-        >
-          {starting ? "Starting…" : "Start"}
-        </Button>
-        {error && <small className="route-error">{error}</small>}
-      </div>
-    );
   return (
     <div className="route-setup">
-      <ServiceDomainPicker
-        service={service}
-        domains={domains}
-        setDomains={setDomains}
-        onDNS={setDNS}
-        disabled={busy || disabled}
-        preview={preview}
-      />
-      {unavailable && (
+      {unlink ? (
+        <p>
+          Unlink {data.domains.join(", ")} from {service}. DNS records and
+          containers will stay as they are.
+        </p>
+      ) : (
+        <>
+          {project.state === "stopped" && (
+            <p className="alert" role="status">
+              Pending activation · Save the domain now. Traffic will reach this
+              service after the project starts and passes its health checks.
+            </p>
+          )}
+          <ServiceDomainPicker
+            service={service}
+            domains={domains}
+            setDomains={setDomains}
+            onDNS={setDNS}
+            disabled={busy || disabled}
+            preview={preview}
+          />
+        </>
+      )}
+      {unavailable && !unlink && (
         <p className="alert error" role="alert">
           Couldn't read services.{" "}
           <Button type="button" className="text-button" onClick={refresh}>
@@ -327,37 +331,41 @@ export default function RouteSetup({
         </p>
       )}
       <div className="route-fields">
-        <div className="route-service">
-          <Select
-            label="Service"
-            value={service}
-            disabled={busy || loading || !candidates.length}
-            options={candidates.map((item) => ({
-              value: item.name,
-              label: item.name,
-            }))}
-            onValueChange={(value) => {
-              setService(value);
-              setPortEdited(false);
-              setPort(String(preferredPort(value) ?? ""));
-            }}
-          />
-        </div>
-        <label className="route-port">
-          <span>Container port</span>
-          <input
-            type="number"
-            min={1}
-            max={65535}
-            value={port}
-            disabled={busy}
-            title="The port the app listens on inside its container"
-            onChange={(event) => {
-              setPortEdited(true);
-              setPort(event.target.value);
-            }}
-          />
-        </label>
+        {!unlink && (
+          <>
+            <div className="route-service">
+              <Select
+                label="Service"
+                value={service}
+                disabled={busy || loading || !candidates.length}
+                options={candidates.map((item) => ({
+                  value: item.name,
+                  label: item.name,
+                }))}
+                onValueChange={(value) => {
+                  setService(value);
+                  setPortEdited(false);
+                  setPort(String(preferredPort(value) ?? ""));
+                }}
+              />
+            </div>
+            <label className="route-port">
+              <span>Container port</span>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={port}
+                disabled={busy}
+                title="The port the app listens on inside its container"
+                onChange={(event) => {
+                  setPortEdited(true);
+                  setPort(event.target.value);
+                }}
+              />
+            </label>
+          </>
+        )}
         {review ? (
           <Button
             type="button"
@@ -367,10 +375,16 @@ export default function RouteSetup({
           >
             <Fingerprint size={15} />
             {busy
-              ? "Connecting…"
-              : review.imports_routes
-                ? "Move to this service"
-                : "Connect"}
+              ? unlink
+                ? "Unlinking…"
+                : "Connecting…"
+              : unlink
+                ? "Unlink"
+                : review.pending_activation
+                  ? "Save domain"
+                  : review.imports_routes
+                    ? "Move to this service"
+                    : "Connect"}
           </Button>
         ) : (
           <Button
@@ -383,7 +397,7 @@ export default function RouteSetup({
           </Button>
         )}
       </div>
-      {selected?.container_ports?.length ? (
+      {unlink ? null : selected?.container_ports?.length ? (
         <p className="muted">
           Detected container ports: {selected.container_ports.join(", ")}.
           Docker assigns the host port automatically.
@@ -452,9 +466,13 @@ export default function RouteSetup({
           <ShieldCheck size={14} />
           {review.domains.join(", ")} → {review.service}:{review.container_port}
           <span>
-            {review.imports_routes
-              ? "Moves the existing Caddy site"
-              : "New Caddy route"}{" "}
+            {review.unlink
+              ? "Removes the service route · DNS records unchanged"
+              : review.pending_activation
+                ? "Pending activation · activates after a healthy start"
+                : review.imports_routes
+                  ? "Moves the existing Caddy site"
+                  : "New Caddy route"}{" "}
             ·
             {review.containers_unchanged
               ? "containers unchanged"

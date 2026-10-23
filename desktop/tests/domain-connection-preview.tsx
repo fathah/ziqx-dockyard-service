@@ -41,6 +41,19 @@ let diverged = true;
 let dnsApplied = false;
 const params = new URLSearchParams(location.search);
 if (params.has("ready")) diverged = false;
+if (params.has("stopped")) project.state = "stopped";
+if (params.has("unlink")) {
+  project.domains.push("api.ziqx.cc");
+  project.service_routes = [
+    {
+      service: "api",
+      container_port: 3040,
+      host_port: 3041,
+      domains: ["api.ziqx.cc"],
+      managed: true,
+    },
+  ];
+}
 const report = () => ({
   root_ssh: true,
   update_directory: "ready",
@@ -105,6 +118,8 @@ mockIPC((command, payload: any) => {
             ]
           : [],
         containers_unchanged: !params.has("publish"),
+        pending_activation: project.state === "stopped",
+        unlink: !!payload.data.unlink,
       };
     case "server_access_check":
       return report();
@@ -155,6 +170,8 @@ function Fixture() {
           project={project}
           service={params.has("async") ? undefined : service}
           initialService="api"
+          domains={params.has("unlink") ? ["api.ziqx.cc"] : undefined}
+          unlink={params.has("unlink")}
           preview={false}
           close={() => setOpen(false)}
           execute={async (mutation) => {

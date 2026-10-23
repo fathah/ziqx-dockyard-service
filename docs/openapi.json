@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "Ziqx Dockyard Service API",
-    "version": "0.7.25",
+    "version": "0.7.36",
     "summary": "Privileged VPS deployment agent \u2014 initial staging implementation",
     "description": "All /v1/* calls require TLS 1.3 mTLS plus seven signed request headers. The client leaf certificate DER SHA-256 is pinned to the HMAC key; root policy limits its scopes/projects. HMAC signing keys stay on the backend/operator client. A browser viewing docs uses a trusted operator client certificate through its certificate store.\n\nSigning input is LF-separated UTF-8 with no trailing LF:\n\ndeploy-agent-v1\nserverID\nkeyID\ntimestamp\nidempotencyKey\nactorID\nrequestID\ncanonicalScopes\nHTTPMethod\nexactRequestTarget\nlowercaseHex(SHA256(rawBody))\n\nX-Deploy-Signature is lowercase hex HMAC-SHA256 of that input. serverID comes from root policy. exactRequestTarget includes the escaped path and exact raw query in transmitted order. Scopes are sorted, unique, single-space-separated; timestamp skew is at most 60 seconds. Duplicate headers/JSON keys/query keys, unknown JSON/query fields, encoded/noncanonical paths and controls are rejected. GET bodies are forbidden. Maximum body is 128 KiB.\n\nMutations return durable 202 jobs. Reuse operation/request IDs and identical actor, method, target, scopes and exact raw body for retries; refresh timestamp/signature. Transport keys may rotate. The original acceptance envelope remains queued; poll the job for current status. One outstanding job per project; one global FIFO worker. Unknown side effects block mutations pending local recovery.\n\nThese are custom signed scopes, not OAuth scopes. x-required-scopes documents each operation's permissions. New environment snapshots, including inline Compose environments, additionally need deploy.environment. All new deployments require compose_yaml; stateless blue-green stacks support multiple services, and stacks with managed named volumes require single-slot mode. Health/documentation resources require only mTLS at the agent listener. The bundled documentation viewer is read-only and never executes API operations or contacts external services.\n\nSQLite is the authoritative metadata store. Project, domain, release, job and audit inventory reads use stored state without project file/Docker/Caddy reads. Native service update eligibility additionally verifies the current immutable Compose manifest. Status/log/deploy/recovery operations still inspect live dependencies and verify immutable files. Service inventory describes recorded slot bindings, not current running health.\n\nExisting /docker projects and effective Caddyfile host/upstream metadata are observed into SQLite at startup and every five minutes. Legacy projects are classified as production inventory without adopting Docker/Caddy ownership. GET /v1/inventory requires deploy.read and all-project access, and reads only cached safe metadata. Source warnings/timestamps distinguish stale observations; observed ports remain reserved.\n\nIndividual service updates preserve the complete Compose project and its dependencies. Seamless service updates are production-only and switch only the routed stateless app; stateful services use restart."
   },
@@ -2375,7 +2375,7 @@
         "operationId": "previewRouteSetup",
         "summary": "Review existing Compose route setup",
         "tags": ["Deployments"],
-        "description": "Requires server-wide compose.admin, sites.write and projects.write. Connect a running Compose service to domains while preserving sibling routes. Reuse a verified published IPv4 binding, or review a controlled deployment to add a private host binding (also requires deploy.execute). Adopted plain existing site groups can be imported completely without recreating containers. Preview has no route or container side effects; apply requires its review hash and returns a durable route_setup job. Active/recovery jobs, whole-stack blue/green mode and stale reviews block admission. Unknown outcomes require recovery in Dockyard.",
+        "description": "Requires server-wide compose.admin, sites.write and projects.write. Connect domains to a running or stopped Compose service while preserving sibling routes. Running projects reuse a verified binding or review a controlled deployment to add one (also requires deploy.execute). Stopped projects save the assignment with pending_activation=true and an unavailable page; Start discovers ports and checks health before activating traffic. Set unlink=true to remove the selected assignments and Caddy templates without changing containers or DNS; the verified unlink frees hostname reservations. Preview has no route or container side effects. Apply requires the review hash and returns a durable route_setup or route_unlink job. Active/recovery jobs, whole-stack blue/green mode and stale reviews block admission. Unknown outcomes require recovery in Dockyard.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -2733,7 +2733,7 @@
         "operationId": "configureRoute",
         "summary": "Configure reviewed existing Compose route",
         "tags": ["Deployments"],
-        "description": "Requires server-wide compose.admin, sites.write and projects.write. Connect a running Compose service to domains while preserving sibling routes. Reuse a verified published IPv4 binding, or review a controlled deployment to add a private host binding (also requires deploy.execute). Adopted plain existing site groups can be imported completely without recreating containers. Preview has no route or container side effects; apply requires its review hash and returns a durable route_setup job. Active/recovery jobs, whole-stack blue/green mode and stale reviews block admission. Unknown outcomes require recovery in Dockyard.",
+        "description": "Requires server-wide compose.admin, sites.write and projects.write. Connect domains to a running or stopped Compose service while preserving sibling routes. Running projects reuse a verified binding or review a controlled deployment to add one (also requires deploy.execute). Stopped projects save the assignment with pending_activation=true and an unavailable page; Start discovers ports and checks health before activating traffic. Set unlink=true to remove the selected assignments and Caddy templates without changing containers or DNS; the verified unlink frees hostname reservations. Preview has no route or container side effects. Apply requires the review hash and returns a durable route_setup or route_unlink job. Active/recovery jobs, whole-stack blue/green mode and stale reviews block admission. Unknown outcomes require recovery in Dockyard.",
         "parameters": [
           {
             "$ref": "#/components/parameters/KeyID"
@@ -3030,6 +3030,7 @@
           "project_create",
           "routes_update",
           "route_setup",
+          "route_unlink",
           "dns_create",
           "deploy",
           "rollback",
@@ -4572,6 +4573,11 @@
           "container_port"
         ],
         "properties": {
+          "unlink": {
+            "type": "boolean",
+            "default": false,
+            "description": "Remove these domains from the specified service and container port. Preserves DNS and containers, releases hostname reservations after verification, and cannot be combined with replace_existing_rules."
+          },
           "replace_existing_rules": {
             "type": "boolean",
             "default": false,
@@ -4619,6 +4625,14 @@
           "containers_unchanged"
         ],
         "properties": {
+          "pending_activation": {
+            "type": "boolean",
+            "description": "The stopped project saves this assignment without deploying. Proxy traffic activates after a healthy start."
+          },
+          "unlink": {
+            "type": "boolean",
+            "description": "This review removes the specified service domain assignments."
+          },
           "existing_routes": {
             "type": "array",
             "description": "Safe metadata for sites found in the configured main Caddyfile. Raw site rules and credentials remain private to the server. Applying the reviewed job moves only these domains and preserves remaining hosts in shared blocks.",
