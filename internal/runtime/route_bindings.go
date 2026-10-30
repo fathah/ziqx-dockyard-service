@@ -21,22 +21,21 @@ func (d Docker) ResolveRouteBindings(ctx context.Context, p *model.Project, slot
 	if err != nil {
 		return err
 	}
+	next := *p
 	resolve := func(service string, port int) (int, error) {
-		var found *Container
-		for i := range containers {
-			if containers[i].Config.Labels["com.docker.compose.service"] == service {
-				if found != nil {
-					return 0, model.Fail("SERVICE_ROUTE_REPLICAS_UNSUPPORTED")
-				}
-				found = &containers[i]
+		found := []Container{}
+		for _, c := range containers {
+			if c.Config.Labels["com.docker.compose.service"] == service {
+				found = append(found, c)
 			}
 		}
-		if found == nil || !found.State.Running {
-			return 0, model.Fail("CONTAINER_UNAVAILABLE")
+		ports, err := replicaRoutePorts(found, port, true)
+		if err != nil {
+			return 0, err
 		}
-		return privateRoutePort(*found, port)
+		setRouteBindings(&next, slot, service, port, ports)
+		return ports[0], nil
 	}
-	next := *p
 	next.ServiceRoutes = append([]model.ServiceRoute(nil), p.ServiceRoutes...)
 	setPrimary := func(port int) {
 		if slot == "green" {
@@ -88,15 +87,22 @@ func privateRoutePort(c Container, containerPort int) (int, error) {
 
 func (d Docker) ResolveServiceRouteBindings(ctx context.Context, p *model.Project, plan *model.ServiceUpdate) error {
 	if plan.Mode == "seamless" {
-		c, err := d.inspectServiceInstance(ctx, *p, plan.Instance)
+		containers, err := d.inspectServiceContainers(ctx, *p, plan.Instance)
 		if err != nil {
 			return err
 		}
-		port, err := privateRoutePort(c, serviceInstancePort(*p, plan.Service, plan.Instance))
+		if len(containers) != instanceReplicas(plan.Instance) || len(plan.Instance.ContainerIDs) > 0 && !instanceIdentity(plan.Instance, containers) {
+			return model.Uncertain("SERVICE_IDENTITY_CHANGED")
+		}
+		ports, err := replicaRoutePorts(containers, serviceInstancePort(*p, plan.Service, plan.Instance), true)
 		if err != nil {
 			return err
 		}
-		plan.Instance.Port = port
+		plan.Instance.Port, plan.Instance.Ports = ports[0], ports
+		plan.Instance.ContainerIDs = nil
+		for _, c := range containers {
+			plan.Instance.ContainerIDs = append(plan.Instance.ContainerIDs, c.ID)
+		}
 	} else {
 		// A controlled service restart can also receive a fresh ephemeral port.
 		// Only refresh bindings compiled as automatic in this release. Legacy
@@ -128,32 +134,40 @@ func resolveRestartRouteBindings(d Docker, ctx context.Context, p *model.Project
 	if len(automatic) == 0 {
 		return nil
 	}
-	c, err := d.inspectServiceInstance(ctx, *p, plan.Instance)
+	containers, err := d.inspectServiceContainers(ctx, *p, plan.Instance)
 	if err != nil {
 		return err
 	}
-	ports := map[int]int{}
+	if len(containers) != instanceReplicas(plan.Instance) {
+		return model.Fail("SERVICE_REPLICAS_CHANGED")
+	}
+	ports := map[int][]int{}
 	for target := range automatic {
-		port, err := privateRoutePort(c, target)
+		values, err := replicaRoutePorts(containers, target, true)
 		if err != nil {
 			return err
 		}
-		ports[target] = port
+		ports[target] = values
 	}
 	next := *p
 	next.ServiceRoutes = append([]model.ServiceRoute(nil), p.ServiceRoutes...)
+	for target, values := range ports {
+		setRouteBindings(&next, p.Active, plan.Service, target, values)
+	}
 	for i, route := range next.ServiceRoutes {
-		if route.Service == plan.Service && ports[route.ContainerPort] > 0 {
-			next.ServiceRoutes[i].HostPort = ports[route.ContainerPort]
+		if route.Service == plan.Service && len(ports[route.ContainerPort]) > 0 {
+			next.ServiceRoutes[i].HostPort = ports[route.ContainerPort][0]
 		}
 	}
 	primary := 0
 	if p.RouteService == plan.Service {
-		primary = ports[p.RoutePort]
+		if values := ports[p.RoutePort]; len(values) > 0 {
+			primary = values[0]
+		}
 	}
-	if pin := p.PublishedRoute; pin != nil && pin.Service == plan.Service && ports[pin.ContainerPort] > 0 {
+	if pin := p.PublishedRoute; pin != nil && pin.Service == plan.Service && len(ports[pin.ContainerPort]) > 0 {
 		copy := *pin
-		copy.HostPort = ports[pin.ContainerPort]
+		copy.HostPort = ports[pin.ContainerPort][0]
 		next.PublishedRoute = &copy
 		primary = copy.HostPort
 	}
@@ -165,9 +179,10 @@ func resolveRestartRouteBindings(d Docker, ctx context.Context, p *model.Project
 		}
 	}
 	plan.Instance.Port = 0
+	plan.Instance.Ports = nil
 	if len(ports) == 1 {
-		for _, port := range ports {
-			plan.Instance.Port = port
+		for _, values := range ports {
+			plan.Instance.Port, plan.Instance.Ports = values[0], values
 		}
 	}
 	*p = next

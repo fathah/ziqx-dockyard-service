@@ -32,6 +32,10 @@ function explain(error: unknown) {
     CONFIGURATION_CHANGED:
       "The project changed. Close this dialog and refresh the project.",
     SERVICE_NETWORK_CHANGED: "The service's network changed. Review again.",
+    SERVICE_REPLICAS_CHANGED:
+      "The running replica count differs from Compose. Restore the expected replicas, then review again.",
+    SERVICE_IDENTITY_CHANGED:
+      "A service container changed. Refresh the project, then review again.",
     SERVICE_HAS_STORAGE:
       "This service has writable storage. Choose Controlled restart; the other services stay running.",
     SERVICE_IMAGE_HAS_STORAGE:
@@ -44,7 +48,28 @@ function explain(error: unknown) {
       "This service publishes additional ports. Use Controlled restart or keep only its website port.",
     SERVICE_IMAGE_REQUIRED:
       "This service is built locally. Use Edit & deploy to rebuild it.",
-    SERVICE_DOMAIN_REQUIRED: "Assign a domain before using Seamless updates.",
+    SERVICE_DOMAIN_REQUIRED:
+      "Assign a domain or configure the HAProxy update integration for this internal service.",
+    SERVICE_PROXY_CONTROL_REQUIRED:
+      "Enable HAProxy’s private Runtime API and make sure nc is installed in its container, then review again.",
+    SERVICE_PROXY_INVALID:
+      "Check this service’s HAProxy labels: load balancer service, backend name and app port. Use this integration for internal services without direct domain routes.",
+    SERVICE_PROXY_UNAVAILABLE:
+      "Start the configured load balancer and wait for it to become healthy, then review again.",
+    SERVICE_PROXY_NOT_READY:
+      "HAProxy has not accepted every replacement replica. Check its Docker DNS resolver, health checks and available server-template slots. The old replicas are retained.",
+    SERVICE_PROXY_BACKEND_REQUIRED:
+      "The configured backend was not found in HAProxy. Check its backend name, then review again.",
+    SERVICE_PROXY_NETWORK_AMBIGUOUS:
+      "The API and HAProxy must share exactly one network for this integration.",
+    SERVICE_PROXY_BACKEND_CHANGED:
+      "HAProxy lists an unexpected active backend address. Check its backend configuration before updating.",
+    SERVICE_PROXY_CHANGED:
+      "The load balancer container or its network changed. Refresh and review again.",
+    SERVICE_PROXY_RECOVERY_REQUIRED:
+      "The load balancer update needs recovery. Both app versions are retained; open Deployments to inspect the operation.",
+    SERVICE_PROXY_DRAIN_REQUIRED:
+      "The old backends still have active requests or their drain state could not be verified. They remain running; retry recovery after the requests finish.",
     SERVICE_ROUTE_MISMATCH:
       "Use the container port assigned to this service's domains, then review again.",
     CADDY_UNAVAILABLE:
@@ -168,6 +193,8 @@ export default function ServiceUpdate({
         ? {
             review_sha256: "sample",
             service: service.name,
+            replicas: service.containers?.length || 1,
+            load_balancer: service.load_balancer,
             mode,
             domains: project.domains,
             container_port: Number(port),
@@ -234,8 +261,8 @@ export default function ServiceUpdate({
       </div>
       <div className="wizard-body">
         <p className="service-update-intro">
-          Pull the latest image and apply the saved .env for this service. Your other services, database
-          and data volumes stay in place.
+          Pull the latest image and apply the saved .env for this service. Your
+          other services, database and data volumes stay in place.
         </p>
         {!preview && (
           <div
@@ -395,11 +422,20 @@ export default function ServiceUpdate({
               </li>
               {mode === "seamless" ? (
                 <>
-                  <li>Start a separate app version and check its health.</li>
                   <li>
-                    Switch {review.domains.join(" · ")} to the new version.
+                    {(review.replicas ?? 1) > 1
+                      ? `Start ${review.replicas} replacement replicas and check every replica’s health.`
+                      : "Start a separate app version and check its health."}
                   </li>
-                  <li>Let requests finish, then stop the previous app.</li>
+                  <li>
+                    {review.load_balancer
+                      ? `Wait for ${review.load_balancer} to accept every new replica, then drain the old backends.`
+                      : `Switch ${review.domains.join(" · ")} to the healthy replacement${(review.replicas ?? 1) > 1 ? " replicas" : ""}.`}
+                  </li>
+                  <li>
+                    Let requests finish, then stop the previous{" "}
+                    {(review.replicas ?? 1) > 1 ? "replicas" : "app"}.
+                  </li>
                 </>
               ) : (
                 <li>

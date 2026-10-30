@@ -19,19 +19,13 @@ const project: Project = {
   environment: "production",
   mode: "compose",
   template_id: "",
-  domains: ["shop.example.com", "api.shop.example.com"],
+  domains: ["shop.example.com"],
   service_routes: [
     {
       service: "web",
       container_port: 3000,
       host_port: 4100,
       domains: ["shop.example.com"],
-    },
-    {
-      service: "api",
-      container_port: 8080,
-      host_port: 4101,
-      domains: ["api.shop.example.com"],
     },
   ],
   zerodowntime: false,
@@ -53,6 +47,11 @@ const services: Service[] = [
     updatable: true,
     seamless: true,
     container_ports: [8080],
+    load_balancer: "loadbalancer",
+    containers: [
+      { id: "a".repeat(64), name: "shop-blue-api-1" },
+      { id: "b".repeat(64), name: "shop-blue-api-2" },
+    ],
   },
   {
     name: "web",
@@ -134,6 +133,11 @@ mockIPC((command, payload: any) => {
     prepared_image: "sha256:" + "2".repeat(64),
     review_sha256: "a".repeat(64),
     service: data.service,
+    replicas:
+      services.find((service) => service.name === data.service)?.containers
+        ?.length ?? 1,
+    load_balancer: services.find((service) => service.name === data.service)
+      ?.load_balancer,
     mode: data.mode,
     domains:
       project.service_routes?.find((route) => route.service === data.service)

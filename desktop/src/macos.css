@@ -16,8 +16,8 @@
   --tertiary: #8e8e93;
   --separator: rgba(0, 0, 0, 0.08);
   --fill: rgba(0, 0, 0, 0.05);
-  --accent-mac: #1f6b4f;
-  --accent-tint: rgba(31, 107, 79, 0.12);
+  --accent-mac: #0271e3;
+  --accent-tint: rgba(2, 113, 227, 0.12);
 }
 .mono,
 code,
@@ -707,7 +707,7 @@ h1 > span:not(.tag) {
   background: transparent;
 }
 .sidebar .nav-item:focus-visible {
-  outline: 2px solid rgba(31, 107, 79, 0.5);
+  outline: 2px solid rgba(2, 113, 227, 0.5);
   outline-offset: -2px;
 }
 
@@ -834,7 +834,7 @@ h1 > span:not(.tag) {
 .route-fields input:focus {
   outline: none;
   border-color: var(--accent-mac);
-  box-shadow: 0 0 0 3px rgba(31, 107, 79, 0.18);
+  box-shadow: 0 0 0 3px rgba(2, 113, 227, 0.18);
 }
 .route-service .dockyard-select-field {
   margin: 0;
@@ -899,7 +899,7 @@ textarea:focus-visible,
 select:focus-visible {
   outline: none;
   border-color: var(--accent-mac);
-  box-shadow: 0 0 0 3px rgba(31, 107, 79, 0.18);
+  box-shadow: 0 0 0 3px rgba(2, 113, 227, 0.18);
 }
 label small,
 .field-hint {
@@ -1205,7 +1205,7 @@ label small,
   outline: none;
 }
 .jobs-row:focus-visible > td {
-  background: rgba(31, 107, 79, 0.08);
+  background: rgba(2, 113, 227, 0.08);
 }
 
 /* ── macOS push buttons (ziqx Button, action variants only) ── */
@@ -1261,11 +1261,11 @@ label small,
     0 0.5px 1px rgba(0, 0, 0, 0.18);
 }
 .dockyard-button[data-variant="primary"]:hover:not(:disabled) {
-  background-color: #1a5c44;
+  background-color: #0068d7;
   box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.18);
 }
 .dockyard-button[data-variant="primary"]:active:not(:disabled) {
-  background-color: #164e3a;
+  background-color: #005dc1;
 }
 /* Small and icon sizes */
 .dockyard-button[data-size="compact"] {
@@ -1309,7 +1309,7 @@ label small,
 }
 .dockyard-button:not(.dockyard-control):focus-visible {
   outline: none;
-  box-shadow: 0 0 0 3px rgba(31, 107, 79, 0.35);
+  box-shadow: 0 0 0 3px rgba(2, 113, 227, 0.3);
 }
 
 /* ── macOS pop-up buttons (ziqx Select) ── */
@@ -1332,7 +1332,7 @@ label small,
 }
 .dockyard-select:focus-visible {
   border-color: var(--accent-mac);
-  box-shadow: 0 0 0 3px rgba(31, 107, 79, 0.25);
+  box-shadow: 0 0 0 3px rgba(2, 113, 227, 0.25);
 }
 .dockyard-select .ziqx-control-icon {
   width: 14px;

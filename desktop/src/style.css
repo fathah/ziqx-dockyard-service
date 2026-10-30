@@ -7,22 +7,19 @@
 }
 :root {
   font-family:
-    Manrope,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-  color: #29352f;
-  background: #f6f7f4;
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Manrope, sans-serif;
+  color: #242428;
+  background: #f5f5f7;
   font-synthesis: none;
   font-size: 14px;
-  --ink: #243a31;
-  --muted: #859088;
-  --line: #e3e8e1;
-  --green: #214e3d;
-  --soft: #edf3e9;
+  --ink: #242428;
+  --muted: #898991;
+  --line: #e5e5ea;
+  --brand: #0271e3;
+  --green: #0271e3;
+  --soft: #f0f0f4;
   --paper: #fff;
-  --accent: #c9e6a8;
+  --accent: #e5f0ff;
 }
 * {
   box-sizing: border-box;
@@ -47,7 +44,7 @@ button:not(.ziqx-button):focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid #6e9e4f;
+  outline: 2px solid var(--brand);
   outline-offset: 3px;
 }
 button:not(.ziqx-button) {
@@ -67,7 +64,7 @@ h1 {
   letter-spacing: -1.35px;
   font-weight: 600;
   line-height: 1.25;
-  color: #243b30;
+  color: var(--ink);
 }
 h1 > span:not(.tag) {
   color: #7e8e82;
@@ -83,7 +80,7 @@ h3 {
   font-weight: 700;
 }
 p {
-  color: #526357;
+  color: #64646c;
   line-height: 1.7;
 }
 hr {
@@ -245,8 +242,9 @@ pre {
 }
 .sidebar {
   width: 232px;
-  background: #173b31;
-  color: #cad5cd;
+  background: #ededf2;
+  color: #686873;
+  border-right: 1px solid #e0e0e7;
   padding: 32px 19px 0;
   display: flex;
   flex-direction: column;
@@ -260,14 +258,14 @@ pre {
   display: flex;
   align-items: center;
   gap: 11px;
-  color: #f3f6ed;
+  color: #303039;
   font-size: 27px;
   font-weight: 650;
   letter-spacing: -0.85px;
   padding: 0 8px 31px;
 }
 .brand-dot {
-  color: #c7e4a3;
+  color: var(--brand);
 }
 .brand-mark {
   display: block;
@@ -280,7 +278,7 @@ pre {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #e4ece2;
+  color: #454550;
   text-align: left;
   flex: 1;
   min-width: 0;
@@ -291,14 +289,14 @@ pre {
   transition: background-color 160ms ease;
 }
 .server-summary:hover {
-  background: #315b4b;
+  background: #e5e5ec;
 }
 .server-symbol {
   width: 24px;
   height: 24px;
   display: grid;
   place-items: center;
-  color: #c0d3b0;
+  color: #858591;
   flex: none;
 }
 .server-summary-copy {
@@ -317,13 +315,13 @@ pre {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #92ad9e;
+  color: #92929d;
   margin-top: 5px;
 }
 .nav-label {
   font-size: 9px;
   letter-spacing: 1.7px;
-  color: #739584;
+  color: #95959f;
   margin: 0 10px 10px;
   font-weight: 600;
 }
@@ -340,33 +338,33 @@ pre {
   border-radius: 7px;
   border: 0;
   background: transparent;
-  color: #d0dfd3;
+  color: #65656f;
   width: 100%;
   text-align: left;
   margin: 2px 0;
   font-size: 14px;
 }
 .nav-item svg {
-  color: #8ea99a;
+  color: #8c8c98;
 }
 .nav-item small {
   margin-left: auto;
-  background: #d4e7bb;
-  color: #315138;
+  background: #e1e7f1;
+  color: #50739c;
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 11px;
 }
 .nav-item:hover {
-  background: #25493c;
+  background: #e4e4ec;
 }
 .nav-item.active {
-  background: #d0e6b8;
-  color: #23402d;
+  background: #deebff;
+  color: #0066d9;
   font-weight: 600;
 }
 .nav-item.active svg {
-  color: #355e3c;
+  color: #0066d9;
 }
 .sidebar-bottom {
   flex: none;
@@ -378,12 +376,12 @@ pre {
   align-items: center;
   gap: 2px;
   padding: 4px;
-  border: 1px solid #36594b;
+  border: 1px solid #dddde5;
   border-radius: 9px;
-  background: #244e40;
+  background: #f6f6f9;
 }
 .server-footer.active {
-  border-color: #a5c692;
+  border-color: #b4d2fa;
 }
 .sidebar-lock {
   width: 29px;
@@ -394,10 +392,10 @@ pre {
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #b8ceb6;
+  color: #858591;
 }
 .sidebar-lock:hover {
-  background: #315b4b;
+  background: #e5e5ec;
 }
 .main {
   margin-left: 232px;
@@ -998,7 +996,7 @@ pre {
   margin-bottom: 15px;
 }
 .project-header {
-  margin-bottom: 24px;
+  margin-bottom: 26px;
 }
 .project-header-top {
   display: flex;
@@ -1013,7 +1011,14 @@ pre {
 }
 .project-header-identity h1 {
   overflow-wrap: anywhere;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+  font-size: 30px;
+  letter-spacing: -0.9px;
+}
+.project-header .project-logo {
+  background: linear-gradient(#fff, #efeff3);
+  border: 1px solid #dddde5;
+  color: #29292f;
 }
 .project-header-badges,
 .project-header-actions,
@@ -1034,7 +1039,7 @@ pre {
   gap: 7px;
   font-size: 12px;
   text-transform: capitalize;
-  color: #69786e;
+  color: #898993;
 }
 .project-status i {
   width: 6px;
@@ -1043,7 +1048,7 @@ pre {
   background: #9ca69b;
 }
 .project-status.running i {
-  background: #648653;
+  background: #34c759;
 }
 .project-summary {
   display: grid;
@@ -1206,9 +1211,77 @@ pre {
   outline: 2px solid #426c37;
   outline-offset: 2px;
 }
-.project-tabs {
+.tabs.project-tabs {
   width: fit-content;
   max-width: 100%;
+  justify-content: flex-start;
+  margin-left: 0;
+  margin-right: auto;
+  padding: 3px;
+  gap: 3px;
+  border: 0;
+  border-radius: 10px;
+  background: #e7e7ed;
+}
+.tabs.project-tabs button {
+  min-height: 34px;
+  padding: 6px 17px;
+  border-radius: 8px;
+  color: #55555e;
+  font-size: 14px;
+  font-weight: 450;
+}
+.tabs.project-tabs button:hover {
+  background: #ffffff60;
+  color: #25252b;
+}
+.tabs.project-tabs button.selected {
+  border-color: #d4d4dc;
+  box-shadow: 0 1px 3px #20203012;
+  color: #25252b;
+  font-weight: 600;
+}
+.tabs.project-tabs button:focus-visible {
+  outline-color: var(--brand);
+}
+.project-header .project-header-badges .tag {
+  border: 0;
+  border-radius: 7px;
+  color: #56565f;
+  background: #eaeaef;
+}
+.project-image-notice {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  margin-bottom: 24px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+}
+.project-image-notice-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: var(--brand);
+  color: white;
+}
+.project-image-notice p {
+  flex: 1;
+  color: #51515b;
+  font-size: 14px;
+}
+.project-image-notice > div {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.project-image-notice .text-button {
+  color: var(--brand);
 }
 .configuration-toolbar .tabs button {
   min-height: 32px;

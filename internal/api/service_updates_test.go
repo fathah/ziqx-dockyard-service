@@ -19,6 +19,7 @@ type servicePreparer struct {
 	bgPreparer
 	network   string
 	busyPorts map[int]bool
+	proxy     *model.ServiceProxy
 }
 
 type assignedServicesRunner struct{}
@@ -35,7 +36,62 @@ func (n *servicePreparer) PlanServiceUpdate(_ context.Context, p model.Project, 
 	r, _ := p.Current()
 	previous := model.ServiceInstance{Name: service, Release: r, Port: p.BluePort}
 	previous.Release.Image = "sha256:" + strings.Repeat("1", 64)
-	return model.ServiceUpdate{Service: service, Mode: mode, Previous: &previous, Instance: model.ServiceInstance{Name: "dy-update-random", Release: r, Port: hostPort, ContainerPort: containerPort}, NetworkAliases: map[string][]string{"network": {service}}, NetworkIDs: map[string]string{"network": n.network}}, nil
+	plan := model.ServiceUpdate{Service: service, Mode: mode, Previous: &previous, Instance: model.ServiceInstance{Name: "dy-update-random", Release: r, Port: hostPort, ContainerPort: containerPort}, NetworkAliases: map[string][]string{"network": {service}}, NetworkIDs: map[string]string{"network": n.network}, Proxy: n.proxy}
+	if n.proxy != nil {
+		plan.Instance.Replicas, previous.Replicas = 2, 2
+	}
+	return plan, nil
+}
+
+func TestInternalServiceReviewBindsProxyWithoutCreatingDomainRoute(t *testing.T) {
+	a, d, _, send := apiFixture(t)
+	a.Engine.Config.Keys[0].Projects = []string{"*"}
+	a.Engine.Config.Keys[0].Scopes = append(a.Engine.Config.Keys[0].Scopes, "compose.admin")
+	a.Auth, _ = auth.New(a.Engine.Config)
+	proxy := &model.ServiceProxy{Service: "loadbalancer", Backend: "api_replicas", AdminPort: 9999, AppPort: 8080, Network: "private-network", Instance: model.ServiceInstance{Name: "loadbalancer", ContainerID: strings.Repeat("a", 64)}}
+	prep := &servicePreparer{bgPreparer: bgPreparer{d, a.Engine.Config}, proxy: proxy}
+	a.Engine.Docker = prep
+	p := model.Project{ID: "demo", AppID: "demo", Mode: "compose", Environment: model.Production, State: "running", Active: "blue", RouteService: "loadbalancer", RoutePort: 8080, BluePort: 3001, Domains: []string{"api.example.com"}, Slots: map[string]model.Release{"blue": {ID: "rel-original"}}}
+	job := model.Job{ID: "original", ProjectID: p.ID, Status: "succeeded", Created: time.Now(), Input: model.Input{Project: &p}}
+	if err := a.Engine.Store.Accept(job, &p, "original", "original", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	input := serviceUpdateRequest{ExpectedRelease: "rel-original", Service: "api", Mode: "seamless", ContainerPort: 8080}
+	raw, _ := json.Marshal(input)
+	scopes := "deploy.execute projects.write sites.write"
+	w := send("POST", "/v1/projects/demo/service-update-preview", string(raw), scopes, "proxy-review")
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var review struct {
+		Hash         string   `json:"review_sha256"`
+		LoadBalancer string   `json:"load_balancer"`
+		Replicas     int      `json:"replicas"`
+		Domains      []string `json:"domains"`
+	}
+	json.Unmarshal(w.Body.Bytes(), &review)
+	if review.LoadBalancer != "loadbalancer" || review.Replicas != 2 || review.Domains == nil || len(review.Domains) != 0 || strings.Contains(w.Body.String(), "private-network") {
+		t.Fatal("internal proxy review leaked its private plan or required a domain", w.Body.String())
+	}
+	input.Review = review.Hash
+	raw, _ = json.Marshal(input)
+	proxy.Instance.ContainerID = strings.Repeat("b", 64)
+	w = send("POST", "/v1/projects/demo/service-update", string(raw), scopes, "proxy-changed")
+	if w.Code != 409 || !strings.Contains(w.Body.String(), "SERVICE_REVIEW_CHANGED") {
+		t.Fatal("proxy identity change bypassed review", w.Code, w.Body.String())
+	}
+	proxy.Instance.ContainerID = strings.Repeat("a", 64)
+	w = send("POST", "/v1/projects/demo/service-update", string(raw), scopes, "proxy-submit")
+	if w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var accepted model.Job
+	json.Unmarshal(w.Body.Bytes(), &accepted)
+	stored, _ := a.Engine.Store.Job(accepted.ID)
+	next := stored.Input.Project
+	if next.RouteService != p.RouteService || next.RoutePort != p.RoutePort || next.BluePort != p.BluePort || len(next.Domains) != 1 || len(next.ServiceRoutes) != 0 || stored.Input.ServiceUpdate.Proxy == nil {
+		t.Fatal("backend update changed the public load balancer route", next)
+	}
 }
 func (n *servicePreparer) PublishedUpstream(context.Context, model.Project, string, int) (string, error) {
 	return "127.0.0.1:8080", nil

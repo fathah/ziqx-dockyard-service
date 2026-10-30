@@ -4,12 +4,14 @@ A Tauri 2 desktop control room with a Rust API client and a bundled React interf
 
 ## Run on this Mac
 
-The desktop source version is **0.1.8**, targeting VPS service **0.7.36**. It adds domain connections while stopped, pending activation after health checks, and service-domain unlinking. Rebuild the Ubuntu bundle before packaging this version using the commands below.
+The desktop source version is **0.1.10**, targeting VPS service **0.7.37**. It adds a compact service browser with a details panel, search, dependency navigation, left-aligned project tabs and a blue accent matching the supplied design reference. Replica-aware service updates remain available. Rebuild the Ubuntu bundle before packaging this version using the commands below.
 
-The existing local Apple Silicon app is **0.1.7**, in `releases/dockyard-0.1.7/Dockyard.app`. Services terminal buttons open the selected container directly without loading a container catalog. Service rows show the live VPS container name and ID, with copy actions. Its bundled VPS service is **0.7.35**; install it through **Server details → Updates** to enable container identity metadata. From the repository root:
+Use **Services → Pull & update → Seamless updates** for a stateless frontend or API with a Compose healthcheck. Dockyard keeps its replica count, checks all replacements and switches traffic before retiring the old group. Other services keep running. An internal API without a direct domain needs the opt-in [HAProxy integration](../docs/HAPROXY_UPDATES.md). Server updates are installed separately through **Server details → Updates** and leave application containers running.
+
+The local Apple Silicon app is **0.1.10**, in `releases/dockyard-0.1.10/Dockyard.app`. Its bundled VPS service is **0.7.37**; install it through **Server details → Updates** to enable replica updates. Service rows show each live container's name and ID, with copy actions. From the repository root:
 
 ```sh
-open desktop/releases/dockyard-0.1.7/Dockyard.app
+open desktop/releases/dockyard-0.1.10/Dockyard.app
 ```
 
 Quit any previously opened Dockyard instance first so the single-instance guard does not bring an older build to the foreground. This local artifact uses an ad-hoc signature; it is not notarized for distribution.

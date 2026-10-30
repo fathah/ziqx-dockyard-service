@@ -76,9 +76,17 @@ func (e *Engine) updateService(ctx context.Context, j *model.Job, p *model.Proje
 	if err := e.phase(j, "service_candidate_intent"); err != nil {
 		return err
 	}
-	started, switched := false, false
+	started, switched, proxyExposed := false, false, false
 	defer func() {
 		var fault *model.Fault
+		if result != nil && proxyExposed {
+			// DNS can already expose healthy candidates before the proxy drain.
+			// Preserve both groups until proxy state is positively reconciled.
+			if !errors.As(result, &fault) || !fault.Recovery {
+				result = model.Uncertain("SERVICE_PROXY_RECOVERY_REQUIRED")
+			}
+			return
+		}
 		if result != nil && started && plan.Mode == "seamless" && !switched && ctx.Err() == nil && (!errors.As(result, &fault) || !fault.Recovery) {
 			if err := d.StopServiceInstance(ctx, next, plan.Instance); err != nil {
 				result = model.Uncertain("SERVICE_CLEANUP_REQUIRED")
@@ -131,6 +139,7 @@ func (e *Engine) updateService(ctx context.Context, j *model.Job, p *model.Proje
 	if err := e.phase(j, "service_network_intent"); err != nil {
 		return err
 	}
+	proxyExposed = plan.Proxy != nil
 	if err := d.PromoteServiceUpdate(ctx, next, *plan); err != nil {
 		return err
 	}
@@ -150,6 +159,9 @@ func (e *Engine) updateService(ctx context.Context, j *model.Job, p *model.Proje
 	}
 	if err := d.HealthyServiceUpdate(ctx, next, *plan); err != nil {
 		return err
+	}
+	if plan.Proxy != nil {
+		return e.finishProxyService(ctx, j, p, old, next, *plan, d)
 	}
 	if err := e.Routes.Ensure(ctx, old); err != nil {
 		return err
@@ -224,6 +236,9 @@ func (e *Engine) reconcileService(ctx context.Context, j *model.Job) (model.Proj
 	d, ok := e.Docker.(serviceDocker)
 	if !ok {
 		return old, model.Uncertain("RECOVERY_UNAVAILABLE")
+	}
+	if plan.Proxy != nil {
+		return e.reconcileProxyService(ctx, j, old, next, plan, d)
 	}
 	instance, journaled := next.ServiceInstances[plan.Service]
 	journaled = journaled && instance.Name == plan.Instance.Name && instance.Release.Compose == plan.Instance.Release.Compose && instance.Release.Image == plan.Instance.Release.Image

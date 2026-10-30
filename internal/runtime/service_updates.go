@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,11 +22,12 @@ import (
 )
 
 type ServiceOptions struct {
-	DependsOn []string `json:"depends_on"`
-	Updatable bool     `json:"updatable"`
-	Seamless  bool     `json:"seamless"`
-	Reason    string   `json:"update_reason"`
-	Ports     []int    `json:"container_ports"`
+	LoadBalancer string   `json:"load_balancer,omitempty"`
+	DependsOn    []string `json:"depends_on"`
+	Updatable    bool     `json:"updatable"`
+	Seamless     bool     `json:"seamless"`
+	Reason       string   `json:"update_reason"`
+	Ports        []int    `json:"container_ports"`
 }
 
 // ServiceUpdateTarget includes only the selected service's hostnames. A
@@ -142,6 +144,11 @@ func ServiceUpdateOptions(c config.Config, p model.Project) (map[string]ServiceO
 			}
 		}
 		sort.Ints(ports)
+		proxy, proxyErr := serviceProxySpec(svc)
+		if proxy != nil && !seen[proxy.AppPort] {
+			ports = append(ports, proxy.AppPort)
+			sort.Ints(ports)
+		}
 		image, _ := svc["image"].(string)
 		_, domains, routeErr := ServiceUpdateTarget(p, name)
 		updatable := p.State == "running" && !p.ZeroDowntime && image != ""
@@ -153,21 +160,26 @@ func ServiceUpdateOptions(c config.Config, p model.Project) (map[string]ServiceO
 			reason = "This flavor uses a controlled restart."
 		} else if routeErr != nil {
 			reason = "This service routes multiple container ports. Use a controlled restart."
-		} else if len(domains) == 0 && reason == "" {
-			reason = "Assign a domain to this service to enable seamless updates."
+		} else if proxyErr != nil {
+			reason = "Complete this service's HAProxy update labels to enable seamless updates."
+		} else if proxy != nil && len(domains) > 0 {
+			reason = "This service has direct domain routes. Remove its internal HAProxy update labels or use a controlled restart."
+		} else if len(domains) == 0 && reason == "" && proxy == nil {
+			reason = "Assign a domain or configure the HAProxy update integration for this internal service."
 		}
-		if n, ok := svc["scale"].(float64); ok && n != 1 {
+		if serviceReplicas(svc) < 1 {
 			updatable = false
-			reason = "Individual updates currently support one container per service."
-		}
-		if n, ok := object(svc["deploy"])["replicas"].(float64); ok && n != 1 {
-			updatable = false
-			reason = "Individual updates currently support one container per service."
+			reason = "Start at least one replica before updating this service."
 		}
 		if p.State != "running" {
 			reason = "Start this project before updating individual services."
 		}
 		out[name] = ServiceOptions{DependsOn: dependencies, Updatable: updatable, Seamless: updatable && reason == "", Reason: reason, Ports: ports}
+		if proxy != nil {
+			option := out[name]
+			option.LoadBalancer = proxy.Service
+			out[name] = option
+		}
 	}
 	return out, nil
 }
@@ -181,11 +193,8 @@ func serviceSeamlessReason(svc map[string]any) string {
 	if svc["network_mode"] != nil || svc["pid"] != nil || svc["ipc"] != nil || svc["privileged"] == true || len(array(svc["devices"])) > 0 || len(array(svc["links"])) > 0 || len(object(svc["develop"])) > 0 {
 		return "This service shares runtime resources and requires a controlled restart."
 	}
-	if n, ok := svc["scale"].(float64); ok && n != 1 {
-		return "Multiple replicas need a dedicated rollout strategy."
-	}
-	if n, ok := object(svc["deploy"])["replicas"].(float64); ok && n != 1 {
-		return "Multiple replicas need a dedicated rollout strategy."
+	if serviceReplicas(svc) < 1 {
+		return "Start at least one replica before updating this service."
 	}
 	for _, raw := range object(svc["networks"]) {
 		cfg := object(raw)
@@ -199,6 +208,51 @@ func serviceSeamlessReason(svc map[string]any) string {
 		return "Add a Compose healthcheck to enable seamless updates."
 	}
 	return ""
+}
+
+func serviceReplicas(svc map[string]any) int {
+	want := 1
+	for _, value := range []any{svc["scale"], object(svc["deploy"])["replicas"]} {
+		if value == nil {
+			continue
+		}
+		n, ok := value.(float64)
+		if !ok || n < 0 || n > 1000 || n != float64(int(n)) {
+			return 0
+		}
+		want = int(n)
+	}
+	return want
+}
+
+func instanceReplicas(instance model.ServiceInstance) int {
+	if instance.Replicas > 0 {
+		return instance.Replicas
+	}
+	return 1 // Journals created before replica-aware updates.
+}
+
+func instanceIdentity(instance model.ServiceInstance, containers []Container) bool {
+	if len(containers) != instanceReplicas(instance) {
+		return false
+	}
+	if len(instance.ContainerIDs) > 0 {
+		ids := make([]string, 0, len(containers))
+		for _, c := range containers {
+			ids = append(ids, c.ID)
+		}
+		if !slices.Equal(ids, instance.ContainerIDs) {
+			return false
+		}
+	} else if instance.ContainerID != "" && containers[0].ID != instance.ContainerID {
+		return false
+	}
+	for _, c := range containers {
+		if instance.Release.Image != "" && c.Image != instance.Release.Image {
+			return false
+		}
+	}
+	return true
 }
 
 func (d Docker) serviceCommand(ctx context.Context, p model.Project, instance model.ServiceInstance, args ...string) (process.Result, error) {
@@ -225,22 +279,42 @@ func (d Docker) serviceCommand(ctx context.Context, p model.Project, instance mo
 }
 
 func (d Docker) inspectServiceInstance(ctx context.Context, p model.Project, instance model.ServiceInstance) (Container, error) {
-	var zero Container
+	cs, err := d.inspectServiceContainers(ctx, p, instance)
+	if err != nil {
+		return Container{}, err
+	}
+	if len(cs) != 1 {
+		return Container{}, model.Fail("SERVICE_ROUTE_REPLICAS_UNSUPPORTED")
+	}
+	return cs[0], nil
+}
+
+func (d Docker) inspectServiceContainers(ctx context.Context, p model.Project, instance model.ServiceInstance) ([]Container, error) {
 	result, err := d.serviceCommand(ctx, p, instance, "ps", "--all", "--quiet", instance.Name)
-	id := strings.TrimSpace(string(result.Output))
-	if err != nil || result.Truncated || len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" {
-		return zero, model.Fail("CONTAINER_UNAVAILABLE")
+	ids := strings.Fields(string(result.Output))
+	if err != nil || result.Truncated || len(ids) == 0 || len(ids) > 1000 {
+		return nil, model.Fail("CONTAINER_UNAVAILABLE")
 	}
-	result, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"inspect", "--type", "container", id})
+	expected := map[string]bool{}
+	for _, id := range ids {
+		if len(id) != 64 || strings.Trim(id, "0123456789abcdef") != "" || expected[id] {
+			return nil, model.Uncertain("CONTAINER_OWNERSHIP_UNKNOWN")
+		}
+		expected[id] = true
+	}
+	result, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), append([]string{"inspect", "--type", "container"}, ids...))
 	var cs []Container
-	if err != nil || result.Truncated || json.Unmarshal(result.Output, &cs) != nil || len(cs) != 1 {
-		return zero, model.Fail("DOCKER_UNAVAILABLE")
+	if err != nil || result.Truncated || json.Unmarshal(result.Output, &cs) != nil || len(cs) != len(ids) {
+		return nil, model.Fail("DOCKER_UNAVAILABLE")
 	}
-	c := cs[0]
-	if c.ID != id || c.Config.Labels["com.docker.compose.service"] != instance.Name || !d.ownsNative(p, p.Active, c) {
-		return zero, model.Uncertain("CONTAINER_OWNERSHIP_UNKNOWN")
+	for _, c := range cs {
+		if !expected[c.ID] || c.Config.Labels["com.docker.compose.service"] != instance.Name || !d.ownsNative(p, p.Active, c) {
+			return nil, model.Uncertain("CONTAINER_OWNERSHIP_UNKNOWN")
+		}
+		delete(expected, c.ID)
 	}
-	return c, nil
+	sort.Slice(cs, func(i, j int) bool { return cs[i].ID < cs[j].ID })
+	return cs, nil
 }
 
 // Review checks the selected service, not the database or other siblings.
@@ -274,22 +348,37 @@ func (d Docker) PlanServiceUpdate(ctx context.Context, p model.Project, service,
 			previous.Port = p.Port(p.Active)
 		}
 	}
-	c, err := d.inspectServiceInstance(ctx, p, previous)
+	containers, err := d.inspectServiceContainers(ctx, p, previous)
 	if err != nil {
 		return zero, err
 	}
-	if !c.State.Running {
-		return zero, model.Fail("SERVICE_NOT_RUNNING")
+	want := serviceReplicas(svc)
+	if want < 1 || len(containers) != want {
+		return zero, model.Fail("SERVICE_REPLICAS_CHANGED")
 	}
-	if previous.Release.Image != "" && previous.Release.Image != c.Image {
+	previous.Replicas = want
+	// The review pins the live IDs. A normal Docker recreation since the last
+	// successful deployment may have changed IDs without changing the image.
+	if previous.Release.Image != "" && previous.Release.Image != containers[0].Image {
 		return zero, model.Uncertain("IMAGE_IDENTITY_UNKNOWN")
 	}
-	previous.Release.Image = c.Image
-	previous.ContainerID = c.ID
+	previous.Release.Image = containers[0].Image
+	previous.ContainerID = containers[0].ID
+	previous.ContainerIDs = nil
+	for _, c := range containers {
+		if !c.State.Running {
+			return zero, model.Fail("SERVICE_NOT_RUNNING")
+		}
+		if c.Image != previous.Release.Image {
+			return zero, model.Uncertain("IMAGE_IDENTITY_UNKNOWN")
+		}
+		previous.ContainerIDs = append(previous.ContainerIDs, c.ID)
+	}
 	plan := model.ServiceUpdate{Service: service, Mode: mode, Previous: &previous, NetworkAliases: map[string][]string{}, NetworkIDs: map[string]string{}}
 	if mode == "restart" {
 		plan.Instance = previous
 		plan.Instance.ContainerID = "" // Docker recreates the selected container.
+		plan.Instance.ContainerIDs = nil
 		return plan, nil
 	}
 	if mode != "seamless" || p.Environment != model.Production || containerPort < 1 || containerPort > 65535 || hostPort < 0 || hostPort > 65535 {
@@ -299,8 +388,15 @@ func (d Docker) PlanServiceUpdate(ctx context.Context, p model.Project, service,
 	if err != nil {
 		return zero, err
 	}
-	if len(domains) == 0 {
+	proxy, proxyErr := serviceProxySpec(svc)
+	if proxyErr != nil {
+		return zero, proxyErr
+	}
+	if len(domains) == 0 && proxy == nil {
 		return zero, model.Fail("SERVICE_DOMAIN_REQUIRED")
+	}
+	if proxy != nil && (len(domains) > 0 || proxy.AppPort != containerPort) {
+		return zero, model.Fail("SERVICE_PROXY_INVALID")
 	}
 	if targetPort > 0 && targetPort != containerPort {
 		return zero, model.Fail("SERVICE_ROUTE_MISMATCH")
@@ -308,9 +404,14 @@ func (d Docker) PlanServiceUpdate(ctx context.Context, p model.Project, service,
 	if serviceSeamlessReason(svc) != "" {
 		return zero, model.Fail("SERVICE_SEAMLESS_INCOMPATIBLE")
 	}
-	for _, m := range c.Mounts {
-		if m.Type != "tmpfs" && m.RW {
-			return zero, model.Fail("SERVICE_HAS_STORAGE")
+	for _, c := range containers {
+		for _, m := range c.Mounts {
+			if m.Type != "tmpfs" && m.RW {
+				return zero, model.Fail("SERVICE_HAS_STORAGE")
+			}
+		}
+		if c.State.Health == nil || c.State.Health.Status != "healthy" {
+			return zero, model.Fail("SERVICE_HEALTHCHECK_REQUIRED")
 		}
 	}
 	for _, raw := range array(svc["ports"]) {
@@ -319,13 +420,13 @@ func (d Docker) PlanServiceUpdate(ctx context.Context, p model.Project, service,
 			return zero, model.Fail("SERVICE_EXTRA_PORTS")
 		}
 	}
-	if c.State.Health == nil || c.State.Health.Status != "healthy" {
-		return zero, model.Fail("SERVICE_HEALTHCHECK_REQUIRED")
+	if want > 1 && hostPort != 0 {
+		return zero, model.Fail("SERVICE_UPDATE_INVALID")
 	}
-	plan.Instance = model.ServiceInstance{Name: "dy-update-" + strings.TrimPrefix(stateID(), "svc-")[:16], Release: r, Port: hostPort, ContainerPort: containerPort, ReadinessPath: readiness}
+	plan.Instance = model.ServiceInstance{Name: "dy-update-" + strings.TrimPrefix(stateID(), "svc-")[:16], Replicas: want, Release: r, Port: hostPort, ContainerPort: containerPort, ReadinessPath: readiness}
 	// Candidate gets a unique DNS name until its readiness checks pass. Original
 	// service aliases are attached only during promotion, while the old app is live.
-	for network, connection := range c.NetworkSettings.Networks {
+	for network, connection := range containers[0].NetworkSettings.Networks {
 		if len(connection.NetworkID) != 64 || strings.Trim(connection.NetworkID, "0123456789abcdef") != "" {
 			return zero, model.Uncertain("SERVICE_NETWORK_CHANGED")
 		}
@@ -333,7 +434,11 @@ func (d Docker) PlanServiceUpdate(ctx context.Context, p model.Project, service,
 		plan.NetworkAliases[network] = []string{service}
 		// Preserve reviewed aliases per network, excluding ephemeral container names.
 		for _, alias := range connection.Aliases {
-			if alias != service && alias != previous.Name && alias != strings.TrimPrefix(c.Name, "/") && alias != c.ID[:12] && config.ServiceName.MatchString(alias) {
+			ephemeral := false
+			for _, c := range containers {
+				ephemeral = ephemeral || alias == strings.TrimPrefix(c.Name, "/") || alias == c.ID[:12]
+			}
+			if alias != service && alias != previous.Name && !ephemeral && config.ServiceName.MatchString(alias) {
 				plan.NetworkAliases[network] = append(plan.NetworkAliases[network], alias)
 			}
 		}
@@ -342,7 +447,23 @@ func (d Docker) PlanServiceUpdate(ctx context.Context, p model.Project, service,
 	if len(plan.NetworkAliases) == 0 {
 		return zero, model.Fail("SERVICE_NETWORK_REQUIRED")
 	}
+	for _, c := range containers {
+		if len(c.NetworkSettings.Networks) != len(plan.NetworkIDs) {
+			return zero, model.Uncertain("SERVICE_NETWORK_CHANGED")
+		}
+		for name, id := range plan.NetworkIDs {
+			if c.NetworkSettings.Networks[name].NetworkID != id {
+				return zero, model.Uncertain("SERVICE_NETWORK_CHANGED")
+			}
+		}
+	}
 	plan.Instance.NetworkAliases = plan.NetworkAliases
+	if proxy != nil {
+		if err := d.planServiceProxy(ctx, p, &plan, proxy, containers); err != nil {
+			return zero, err
+		}
+		plan.Proxy = proxy
+	}
 	return plan, nil
 }
 
@@ -435,6 +556,11 @@ func (d Docker) PullServiceUpdate(ctx context.Context, p model.Project, plan *mo
 		delete(svc, "container_name")
 		delete(svc, "hostname")
 		delete(svc, "links")
+		// Retain the reviewed replica count in the isolated candidate manifest.
+		svc["scale"] = instanceReplicas(plan.Instance)
+		if deploy := object(svc["deploy"]); deploy != nil {
+			deploy["replicas"] = instanceReplicas(plan.Instance)
+		}
 		binding := automaticRouteBinding(serviceInstancePort(p, plan.Service, plan.Instance))
 		if plan.Instance.Port > 0 {
 			binding["published"] = strconv.Itoa(plan.Instance.Port) // Older accepted jobs.
@@ -494,35 +620,49 @@ func (d Docker) StartServiceUpdate(ctx context.Context, p model.Project, plan mo
 	return nil
 }
 func (d Docker) HealthyServiceUpdate(ctx context.Context, p model.Project, plan model.ServiceUpdate) error {
-	c, err := d.inspectServiceInstance(ctx, p, plan.Instance)
+	containers, err := d.inspectServiceContainers(ctx, p, plan.Instance)
 	if err != nil {
 		return err
 	}
+	if len(containers) != instanceReplicas(plan.Instance) {
+		return model.Fail("SERVICE_REPLICAS_CHANGED")
+	}
+	if len(plan.Instance.ContainerIDs) > 0 && !instanceIdentity(plan.Instance, containers) {
+		return model.Uncertain("SERVICE_IDENTITY_CHANGED")
+	}
+	for _, c := range containers {
+		if err := healthyServiceContainer(ctx, p, plan, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func healthyServiceContainer(ctx context.Context, p model.Project, plan model.ServiceUpdate, c Container) error {
 	if !c.State.Running || c.Image != plan.Instance.Release.Image || c.State.Health != nil && c.State.Health.Status != "healthy" || plan.Mode == "seamless" && c.State.Health == nil {
 		return model.Fail("SERVICE_UNHEALTHY")
 	}
 	if plan.Mode == "restart" {
-		verify := func(target, host int) error {
-			for _, binding := range c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", target)] {
-				if (binding.HostIP == "127.0.0.1" || binding.HostIP == "0.0.0.0") && binding.HostPort == strconv.Itoa(host) && host > 0 {
-					return nil
-				}
+		verify := func(target int, hosts []int) error {
+			port, err := livePort(c, target)
+			if err != nil || !slices.Contains(hosts, port) {
+				return model.Uncertain("CONTAINER_BINDING_DIVERGED")
 			}
-			return model.Uncertain("CONTAINER_BINDING_DIVERGED")
+			return nil
 		}
 		if p.RouteService == plan.Service {
-			if err := verify(p.RoutePort, p.Port(p.Active)); err != nil {
+			if err := verify(p.RoutePort, serviceRoutePorts(p, p.Active, plan.Service, p.RoutePort, p.Port(p.Active))); err != nil {
 				return err
 			}
 		}
 		if pin := p.PublishedRoute; pin != nil && pin.Service == plan.Service {
-			if err := verify(pin.ContainerPort, pin.HostPort); err != nil {
+			if err := verify(pin.ContainerPort, serviceRoutePorts(p, p.Active, plan.Service, pin.ContainerPort, pin.HostPort)); err != nil {
 				return err
 			}
 		}
 		for _, route := range p.ServiceRoutes {
 			if route.Service == plan.Service {
-				if err := verify(route.ContainerPort, routeHostPort(p, route.Domains[0], p.Active)); err != nil {
+				if err := verify(route.ContainerPort, routeHostPorts(p, route.Domains[0], p.Active)); err != nil {
 					return err
 				}
 			}
@@ -534,8 +674,12 @@ func (d Docker) HealthyServiceUpdate(ctx context.Context, p model.Project, plan 
 				return model.Fail("SERVICE_HAS_STORAGE")
 			}
 		}
-		ports := c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", serviceInstancePort(p, plan.Service, plan.Instance))]
-		if len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(plan.Instance.Port) {
+		port, err := privateRoutePort(c, serviceInstancePort(p, plan.Service, plan.Instance))
+		ports := plan.Instance.Ports
+		if len(ports) == 0 {
+			ports = []int{plan.Instance.Port}
+		}
+		if err != nil || !slices.Contains(ports, port) {
 			return model.Uncertain("CONTAINER_BINDING_DIVERGED")
 		}
 		readiness := plan.Instance.ReadinessPath
@@ -543,41 +687,61 @@ func (d Docker) HealthyServiceUpdate(ctx context.Context, p model.Project, plan 
 			readiness = p.ReadinessPath // Older journaled primary-service candidates.
 		}
 		if readiness != "" {
-			return checkServiceHTTP(ctx, plan.Instance.Port, readiness)
+			return checkServiceHTTP(ctx, port, readiness)
 		}
 	}
 	return nil
 }
 func (d Docker) PromoteServiceUpdate(ctx context.Context, p model.Project, plan model.ServiceUpdate) error {
-	c, err := d.inspectServiceInstance(ctx, p, plan.Instance)
+	containers, err := d.inspectServiceContainers(ctx, p, plan.Instance)
 	if err != nil {
 		return err
+	}
+	if !instanceIdentity(plan.Instance, containers) {
+		return model.Uncertain("SERVICE_IDENTITY_CHANGED")
 	}
 	names := []string{}
 	for name := range plan.NetworkAliases {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	for _, name := range names {
-		if connection, ok := c.NetworkSettings.Networks[name]; !ok || connection.NetworkID != plan.NetworkIDs[name] {
-			return model.Uncertain("SERVICE_NETWORK_CHANGED")
+	if plan.Proxy != nil {
+		// Reconnect dependency networks before publishing the discovery alias
+		// on the proxy network. HAProxy must never admit a half-connected app.
+		for i, name := range names {
+			if name == plan.Proxy.Network {
+				names = append(append(names[:i:i], names[i+1:]...), name)
+				break
+			}
 		}
-		if _, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"network", "disconnect", plan.NetworkIDs[name], c.ID}); err != nil {
-			return model.Fail("SERVICE_NETWORK_PROMOTION_FAILED")
+	}
+	// Validate every replica before changing any network membership.
+	for _, c := range containers {
+		for _, name := range names {
+			if connection, ok := c.NetworkSettings.Networks[name]; !ok || connection.NetworkID != plan.NetworkIDs[name] {
+				return model.Uncertain("SERVICE_NETWORK_CHANGED")
+			}
 		}
-		args := []string{"network", "connect"}
-		for _, alias := range plan.NetworkAliases[name] {
-			args = append(args, "--alias", alias)
-		}
-		args = append(args, plan.NetworkIDs[name], c.ID)
-		if _, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), args); err != nil {
-			return model.Fail("SERVICE_NETWORK_PROMOTION_FAILED")
+	}
+	for _, c := range containers {
+		for _, name := range names {
+			if _, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), []string{"network", "disconnect", plan.NetworkIDs[name], c.ID}); err != nil {
+				return model.Fail("SERVICE_NETWORK_PROMOTION_FAILED")
+			}
+			args := []string{"network", "connect"}
+			for _, alias := range plan.NetworkAliases[name] {
+				args = append(args, "--alias", alias)
+			}
+			args = append(args, plan.NetworkIDs[name], c.ID)
+			if _, err = d.Runner.Run(ctx, d.Config.DockerBinary, projectDir(d.Config, p), args); err != nil {
+				return model.Fail("SERVICE_NETWORK_PROMOTION_FAILED")
+			}
 		}
 	}
 	return nil
 }
 func (d Docker) StopServiceInstance(ctx context.Context, p model.Project, instance model.ServiceInstance) error {
-	c, err := d.inspectServiceInstance(ctx, p, instance)
+	containers, err := d.inspectServiceContainers(ctx, p, instance)
 	if err != nil {
 		// A journaled replacement may not have been created before interruption.
 		// An empty, successful query proves absence; never treat inspect failure as absence.
@@ -589,18 +753,32 @@ func (d Docker) StopServiceInstance(ctx context.Context, p model.Project, instan
 		}
 		return err
 	}
-	if !c.State.Running {
-		return nil
+	if len(instance.ContainerIDs) > 0 || instance.ContainerID != "" {
+		if !instanceIdentity(instance, containers) {
+			return model.Uncertain("SERVICE_IDENTITY_CHANGED")
+		}
 	}
-	if instance.ContainerID != "" && c.ID != instance.ContainerID || instance.Release.Image != "" && c.Image != instance.Release.Image {
-		return model.Uncertain("SERVICE_IDENTITY_CHANGED")
+	running := false
+	for _, c := range containers {
+		if instance.Release.Image != "" && c.Image != instance.Release.Image {
+			return model.Uncertain("SERVICE_IDENTITY_CHANGED")
+		}
+		running = running || c.State.Running
+	}
+	if !running {
+		return nil
 	}
 	if _, err = d.serviceCommand(ctx, p, instance, "stop", "--timeout", "30", instance.Name); err != nil {
 		return model.Uncertain("SERVICE_STOP_FAILED")
 	}
-	c, err = d.inspectServiceInstance(ctx, p, instance)
-	if err != nil || c.State.Running {
+	stopped, err := d.inspectServiceContainers(ctx, p, instance)
+	if err != nil || len(stopped) != len(containers) {
 		return model.Uncertain("SERVICE_STOP_FAILED")
+	}
+	for i, c := range stopped {
+		if c.State.Running || c.ID != containers[i].ID {
+			return model.Uncertain("SERVICE_STOP_FAILED")
+		}
 	}
 	return nil
 }
@@ -609,25 +787,37 @@ func (d Docker) VerifyServiceUpdate(ctx context.Context, p model.Project, plan m
 	if plan.Previous == nil {
 		return model.Fail("SERVICE_UPDATE_INVALID")
 	}
-	c, err := d.inspectServiceInstance(ctx, p, *plan.Previous)
+	containers, err := d.inspectServiceContainers(ctx, p, *plan.Previous)
 	if err != nil {
 		return err
 	}
-	if !c.State.Running || c.Image != plan.Previous.Release.Image || plan.Previous.ContainerID != "" && c.ID != plan.Previous.ContainerID {
+	if !instanceIdentity(*plan.Previous, containers) {
 		return model.Fail("SERVICE_REVIEW_CHANGED")
 	}
-	if plan.Mode == "seamless" {
-		if c.State.Health == nil || c.State.Health.Status != "healthy" {
+	for _, c := range containers {
+		if !c.State.Running {
 			return model.Fail("SERVICE_REVIEW_CHANGED")
 		}
-		if len(c.NetworkSettings.Networks) != len(plan.NetworkAliases) {
-			return model.Fail("SERVICE_NETWORK_CHANGED")
-		}
-		for n := range plan.NetworkAliases {
-			if connection, ok := c.NetworkSettings.Networks[n]; !ok || connection.NetworkID != plan.NetworkIDs[n] {
+		if plan.Mode == "seamless" {
+			if c.State.Health == nil || c.State.Health.Status != "healthy" {
+				return model.Fail("SERVICE_REVIEW_CHANGED")
+			}
+			if len(c.NetworkSettings.Networks) != len(plan.NetworkAliases) {
 				return model.Fail("SERVICE_NETWORK_CHANGED")
 			}
+			for n := range plan.NetworkAliases {
+				if connection, ok := c.NetworkSettings.Networks[n]; !ok || connection.NetworkID != plan.NetworkIDs[n] {
+					return model.Fail("SERVICE_NETWORK_CHANGED")
+				}
+			}
 		}
+	}
+	if plan.Proxy != nil {
+		if _, err := d.proxyInstanceAddresses(ctx, p, plan, *plan.Previous); err != nil {
+			return err
+		}
+		_, err := d.proxyStats(ctx, p, plan.Proxy)
+		return err
 	}
 	return nil
 }

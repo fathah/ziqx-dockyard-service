@@ -131,10 +131,6 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 			next.Domains = append([]string{}, p.ExternalDomains...)
 			next.ExternalDomains = nil
 		}
-		if len(domains) == 0 {
-			problem(w, 409, "SERVICE_DOMAIN_REQUIRED", request)
-			return
-		}
 		if err = a.nativeDomains(domains, id); err != nil {
 			fail(w, err, request)
 			return
@@ -172,6 +168,10 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 		fail(w, err, request)
 		return
 	}
+	if input.Mode == "seamless" && len(domains) == 0 && plan.Proxy == nil {
+		problem(w, 409, "SERVICE_DOMAIN_REQUIRED", request)
+		return
+	}
 	approved := input.Review
 	if planner, ok := e.Docker.(interface {
 		PrepareServiceEnvironment(context.Context, model.Project, *model.ServiceUpdate) error
@@ -191,11 +191,19 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 	if plan.SourceRelease != nil {
 		environmentRevision = plan.SourceRelease.Compose
 	}
-	b, _ := json.Marshal([]any{input, p, next.ServicePorts, hostPort, plan.Previous, plan.NetworkAliases, plan.NetworkIDs, edits, plan.PreparedImage, environmentRevision})
+	b, _ := json.Marshal([]any{input, p, next.ServicePorts, hostPort, plan.Previous, plan.NetworkAliases, plan.NetworkIDs, plan.Proxy, edits, plan.PreparedImage, environmentRevision})
 	sum := sha256.Sum256(b)
 	review := hex.EncodeToString(sum[:])
 	if preview {
-		write(w, 200, map[string]any{"review_sha256": review, "service": input.Service, "mode": input.Mode, "domains": domains, "container_port": input.ContainerPort, "host_port": hostPort, "imports_routes": len(edits) > 0, "dependencies_unchanged": true, "prepared_image": plan.PreparedImage})
+		replicas := plan.Instance.Replicas
+		if replicas == 0 {
+			replicas = 1
+		}
+		proxy := ""
+		if plan.Proxy != nil {
+			proxy = plan.Proxy.Service
+		}
+		write(w, 200, map[string]any{"review_sha256": review, "service": input.Service, "mode": input.Mode, "replicas": replicas, "load_balancer": proxy, "domains": domains, "container_port": input.ContainerPort, "host_port": hostPort, "imports_routes": len(edits) > 0, "dependencies_unchanged": true, "prepared_image": plan.PreparedImage})
 		return
 	}
 	if approved != review {

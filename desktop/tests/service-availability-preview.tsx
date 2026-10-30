@@ -113,6 +113,12 @@ mockIPC((command, payload: any) => {
           container_ports: [5432],
           update_reason: "Persistent storage requires a controlled restart.",
         };
+        if (mode === "replicated") {
+          items[0].containers!.push({
+            id: "c".repeat(64),
+            name: "dy-vps-shop-blue-web-2",
+          });
+        }
       }
       return { services: items };
     }
@@ -150,6 +156,7 @@ function Fixture() {
         {[
           "legacy",
           "current",
+          "replicated",
           "stopped",
           "busy",
           "start-failed",

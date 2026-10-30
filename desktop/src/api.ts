@@ -178,6 +178,8 @@ export type ServiceUpdateInput = {
   review_sha256?: string;
 };
 export type ServiceUpdateReview = {
+  load_balancer?: string;
+  replicas?: number;
   prepared_image?: string;
   review_sha256: string;
   service: string;

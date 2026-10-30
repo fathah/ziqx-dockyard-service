@@ -1,10 +1,7 @@
 import Button from "./Button";
 import useRecentProjects from "./useRecentProjects";
 import DomainHTTPS from "./DomainHTTPS";
-import {
-  domainTarget,
-  serviceDomains as domainsForService,
-} from "./domainRoutes";
+import { domainTarget } from "./domainRoutes";
 import ServerDetailsTabs from "./ServerDetailsTabs";
 import ServerDiagnostics from "./ServerDiagnostics";
 import ServerUpdater from "./ServerUpdater";
@@ -64,6 +61,11 @@ import ProjectLogo, { ProjectLogoScope } from "./ProjectLogo";
 import ProjectHeader, { ProjectSummary } from "./ProjectHeader";
 import ProjectLogs from "./ProjectLogs";
 import ServiceUpdate from "./ServiceUpdate";
+import ServicesWorkspace, { serviceKey } from "./ServicesWorkspace";
+import {
+  serviceUpdatesNeedServerUpgrade,
+  serviceUpdateUnavailableReason,
+} from "./serviceUpdateAvailability";
 import useServiceImages from "./useServiceImages";
 import JobsTable from "./JobsTable";
 import CopyButton from "./CopyButton";
@@ -1635,6 +1637,8 @@ export function ProjectDetail({
     useState<HealthcheckRequest>();
   const [services, setServices] = useState<Service[]>([]);
   const [updatingService, setUpdatingService] = useState<Service>();
+  const [selectedServiceKey, setSelectedServiceKey] = useState("");
+  const [logsTarget, setLogsTarget] = useState<Service>();
   const [connectingService, setConnectingService] = useState<Service>();
   const [servicesLoading, setServicesLoading] = useState(!preview);
   const [servicesError, setServicesError] = useState(false);
@@ -1693,12 +1697,7 @@ export function ProjectDetail({
   const needsServerUpdate =
     p.mode === "compose" &&
     services.some(
-      (s) =>
-        s.slot === p.active_slot &&
-        s.updatable === undefined &&
-        s.seamless === undefined &&
-        !s.update_reason &&
-        !s.container_ports,
+      (s) => s.slot === p.active_slot && serviceUpdatesNeedServerUpgrade(s),
     );
   function updateBlockedReason(s: Service) {
     if (servicesLoading || (!preview && !status && !statusError))
@@ -1711,13 +1710,7 @@ export function ProjectDetail({
       return "Start this project before updating services.";
     if (starting || projectOperation || status?.busy)
       return "Another operation is running. Refresh when it finishes.";
-    if (!s.updatable)
-      return (
-        s.update_reason ||
-        (s.updatable === false
-          ? "Individual updates are unavailable for this service."
-          : "Update Dockyard on the server to enable this action.")
-      );
+    if (!s.updatable) return serviceUpdateUnavailableReason(s);
     return "";
   }
   useEffect(() => {
@@ -1881,7 +1874,7 @@ export function ProjectDetail({
           { id: "releases", label: "Releases", icon: History },
           { id: "logs", label: "Logs", icon: Terminal },
           { id: "domains", label: "Domains", icon: Globe2 },
-        ].map(({ id, label, icon: Icon }) => (
+        ].map(({ id, label }) => (
           <Button
             key={id}
             type="button"
@@ -1897,11 +1890,69 @@ export function ProjectDetail({
               setTab(id);
             }}
           >
-            <Icon size={19} aria-hidden="true" />
             <span>{label}</span>
           </Button>
         ))}
       </nav>
+      {(tab === "overview" || tab === "services") &&
+        imageUpdates.length > 0 && (
+          <div className="project-image-notice" role="status">
+            <span className="project-image-notice-icon">
+              <ArrowUpRight size={18} />
+            </span>
+            <p>
+              A new image is available for{" "}
+              <strong>
+                {imageUpdates.map((item) => item.service).join(", ")}
+              </strong>
+              .
+            </p>
+            <div>
+              <Button
+                type="button"
+                className="text-button"
+                onClick={() => {
+                  const service = services.find(
+                    (item) =>
+                      item.slot === p.active_slot &&
+                      item.name === imageUpdates[0].service,
+                  );
+                  if (service) setSelectedServiceKey(serviceKey(service));
+                  setTab("services");
+                }}
+              >
+                Review
+              </Button>
+              <Button
+                type="button"
+                className="button primary small"
+                disabled={
+                  servicesLoading ||
+                  !services.some(
+                    (service) =>
+                      service.slot === p.active_slot &&
+                      service.name === imageUpdates[0].service &&
+                      !updateBlockedReason(service),
+                  )
+                }
+                onClick={() => {
+                  const service = services.find(
+                    (item) =>
+                      item.slot === p.active_slot &&
+                      item.name === imageUpdates[0].service,
+                  );
+                  if (service && !updateBlockedReason(service)) {
+                    setSelectedServiceKey(serviceKey(service));
+                    setUpdatingService(service);
+                    setTab("services");
+                  }
+                }}
+              >
+                Update
+              </Button>
+            </div>
+          </div>
+        )}
       {tab === "configuration" && (
         <ProjectConfiguration
           project={p}
@@ -1914,17 +1965,6 @@ export function ProjectDetail({
       )}
       {tab === "overview" && (
         <>
-          {imageUpdates.length > 0 && (
-            <div className="alert pending" role="status">
-              <span>
-                A new image version is available for{" "}
-                {imageUpdates.map((s) => s.service).join(", ")}.
-              </span>
-              <Button type="button" onClick={() => setTab("services")}>
-                View updates
-              </Button>
-            </div>
-          )}
           <ProjectSummary
             project={p}
             onConfigure={() => setTab("services")}
@@ -2066,32 +2106,7 @@ export function ProjectDetail({
         </>
       )}
       {tab === "services" && (
-        <section className="panel services-panel">
-          <div className="services-header">
-            <div>
-              <h2>Services</h2>
-              <p>
-                Update one service at a time. Its dependencies keep running.
-              </p>
-            </div>
-            <div className="service-heading-actions">
-              {!servicesLoading && !servicesError && (
-                <Tag>{services.length} recorded services</Tag>
-              )}
-              <Button
-                type="button"
-                className="button small"
-                disabled={servicesLoading}
-                onClick={() => {
-                  setServicesRefresh((n) => n + 1);
-                  if (!preview) void refreshWorkspace?.();
-                }}
-              >
-                <RefreshCw size={14} />{" "}
-                {servicesLoading ? "Refreshing…" : "Refresh"}
-              </Button>
-            </div>
-          </div>
+        <section className="services-section">
           {p.mode === "compose" && p.state === "stopped" && !recoveryJob && (
             <div className="service-update-notice" role="status">
               <div>
@@ -2122,9 +2137,10 @@ export function ProjectDetail({
               <div>
                 <strong>Server update required</strong>
                 <p>
-                  This server hasn’t reported support for individual updates. In
-                  Server details → Updates, check and update Dockyard to version
-                  0.7.0 or later. Then refresh Services.
+                  Install the latest Dockyard server in Server details →
+                  Updates, then refresh Services to check individual and replica
+                  updates. Updating Dockyard keeps your application containers
+                  running.
                 </p>
               </div>
               <Button
@@ -2156,231 +2172,30 @@ export function ProjectDetail({
               )}
             </div>
           )}
-          {servicesError && (
-            <div className="service-update-notice" role="alert">
-              Could not load service availability. Refresh to try again.
-            </div>
-          )}
-          {servicesLoading && (
-            <SkeletonRows count={3} label="Loading services" />
-          )}
-          {!!services.length && (
-            <div className="services-table-scroll">
-              <table className="services-table" aria-label="Project services">
-                <colgroup>
-                  <col className="services-column-name" />
-                  <col className="services-column-dependencies" />
-                  <col />
-                  <col className="services-column-action" />
-                </colgroup>
-                <thead>
-                  <tr>
-                    <th scope="col">Service</th>
-                    <th scope="col">Depends on</th>
-                    <th scope="col">Status</th>
-                    <th scope="col">
-                      <span className="services-sr-only">Actions</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {services.map((s) => {
-                    const active = s.slot === p.active_slot;
-                    const imageState = active
-                      ? imageCheck?.services?.find(
-                          (item) => item.service === s.name,
-                        )?.status
-                      : undefined;
-                    const ghcrImage = active && s.image?.startsWith("ghcr.io/");
-                    const imageNote =
-                      imageState === "available"
-                        ? "New image available"
-                        : imageState === "current"
-                          ? "Image is up to date"
-                          : imageState === "pinned"
-                            ? "Image pinned to a digest"
-                            : imageState === "unknown" ||
-                                (ghcrImage && imageCheck?.status === "failed")
-                              ? "Image update check unavailable"
-                              : ghcrImage &&
-                                  (!imageCheck ||
-                                    imageCheck.status === "checking")
-                                ? "Checking GHCR for updates…"
-                                : "Image recorded at deploy";
-                    const serviceDomains = active
-                      ? domainsForService(p, s.name)
-                      : [];
-                    const blocked =
-                      p.mode === "compose" && active
-                        ? updateBlockedReason(s)
-                        : "";
-                    const showReason =
-                      blocked &&
-                      !(needsServerUpdate && !s.update_reason && !s.updatable);
-                    const recordedState = active
-                      ? p.state.replaceAll("_", " ")
-                      : "Recorded";
-                    return (
-                      <tr key={s.slot + s.name}>
-                        <th scope="row">
-                          <div className="services-identity">
-                            <span className="services-icon">
-                              <Box size={20} aria-hidden="true" />
-                            </span>
-                            <div>
-                              <div className="services-name-line">
-                                <strong>{s.name}</strong>
-                                {s.host_ports == null ? (
-                                  <Tag>
-                                    {!active
-                                      ? "Host port not checked"
-                                      : p.state === "running"
-                                        ? "Host port unavailable"
-                                        : "Not running"}
-                                  </Tag>
-                                ) : s.host_ports.length ? (
-                                  s.host_ports.map((port) => (
-                                    <Tag key={port}>Host :{port}</Tag>
-                                  ))
-                                ) : (
-                                  <Tag>No host port</Tag>
-                                )}
-                                {imageState === "available" && (
-                                  <Tag>New image available</Tag>
-                                )}
-                              </div>
-                              <code title={s.image}>
-                                {s.image || "Built from Compose"}
-                              </code>
-                              {serviceDomains.length > 0 && (
-                                <small>
-                                  {serviceDomains.join(", ")}
-                                  {p.state === "stopped" &&
-                                    " · Pending activation"}
-                                </small>
-                              )}
-                              {s.containers?.map((container) => (
-                                <div
-                                  className="services-container"
-                                  key={container.id}
-                                >
-                                  <code title={container.id}>
-                                    Container:{" "}
-                                    {container.name ||
-                                      container.id.slice(0, 12)}{" "}
-                                    · {container.id.slice(0, 12)}
-                                  </code>
-                                  <CopyButton
-                                    text={container.name || container.id}
-                                    label="Name"
-                                  />
-                                  <CopyButton text={container.id} label="ID" />
-                                </div>
-                              ))}
-                              {active && !s.containers?.length && (
-                                <small className="services-container-note">
-                                  {s.containers == null
-                                    ? "Container identity unavailable"
-                                    : "No running container"}
-                                </small>
-                              )}
-                            </div>
-                          </div>
-                        </th>
-                        <td className="services-dependencies">
-                          {s.depends_on == null ? (
-                            <span title="Dependency metadata is available with Dockyard 0.7.1 or later on the server.">
-                              Not recorded
-                            </span>
-                          ) : s.depends_on.length ? (
-                            s.depends_on.map((dependency) => (
-                              <code key={dependency}>{dependency}</code>
-                            ))
-                          ) : (
-                            <span aria-label="No dependencies">–</span>
-                          )}
-                        </td>
-                        <td>
-                          <div
-                            className="services-status"
-                            title="Recorded project state. Check Overview to verify live container health."
-                          >
-                            <i
-                              data-state={active ? p.state : "recorded"}
-                              aria-hidden="true"
-                            />
-                            <span className="services-state-label">
-                              {recordedState}
-                            </span>
-                            <span>· {instanceLabel(s.slot)}</span>
-                          </div>
-                          <p
-                            className={`services-status-note ${showReason ? "blocked" : ""}`}
-                          >
-                            {showReason ? blocked : imageNote}
-                          </p>
-                        </td>
-                        <td className="services-action">
-                          <div className="services-action-buttons">
-                            {p.mode === "compose" && active && (
-                              <Button
-                                type="button"
-                                className="button"
-                                variant="outline"
-                                disabled={Boolean(
-                                  recoveryJob ||
-                                  projectOperation ||
-                                  status?.busy,
-                                )}
-                                onClick={() => setConnectingService(s)}
-                                title={`Connect domain to ${s.name}`}
-                                aria-label={`Connect domain to ${s.name}`}
-                              >
-                                <Globe2 size={16} />
-                              </Button>
-                            )}
-                            {openShell && active && (
-                              <Button
-                                type="button"
-                                className="button services-shell"
-                                variant="outline"
-                                title={`Open a shell in ${s.name}`}
-                                aria-label={`Open terminal in ${s.name}`}
-                                onClick={() => openShell(s)}
-                              >
-                                <Terminal size={16} />
-                              </Button>
-                            )}
-                            {p.mode === "compose" && active && (
-                              <Button
-                                type="button"
-                                className="button"
-                                variant="outline"
-                                disabled={Boolean(blocked)}
-                                title={
-                                  blocked ||
-                                  `Pull & update ${s.name} · ${s.seamless ? "Seamless updates" : "Controlled restart"}`
-                                }
-                                aria-label={`Pull & update ${s.name}`}
-                                onClick={() => setUpdatingService(s)}
-                              >
-                                <RefreshCw size={16} />
-                              </Button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-          {!services.length && !servicesLoading && !servicesError && (
-            <Empty title="No services recorded">
-              Deploy your first validated Compose stack.
-            </Empty>
-          )}
+          <ServicesWorkspace
+            project={p}
+            services={services}
+            loading={servicesLoading}
+            error={servicesError}
+            images={imageCheck}
+            selectedKey={selectedServiceKey}
+            onSelect={setSelectedServiceKey}
+            blockedReason={updateBlockedReason}
+            controlsBlocked={Boolean(
+              recoveryJob || projectOperation || status?.busy,
+            )}
+            onRefresh={() => {
+              setServicesRefresh((n) => n + 1);
+              if (!preview) void refreshWorkspace?.();
+            }}
+            onUpdate={setUpdatingService}
+            onConnect={setConnectingService}
+            onLogs={(service) => {
+              setLogsTarget(service);
+              setTab("logs");
+            }}
+            onShell={openShell}
+          />
           {updatingService && (
             <ServiceUpdate
               key={p.id + updatingService.name}
@@ -2458,7 +2273,9 @@ export function ProjectDetail({
       )}
       {tab === "logs" && (
         <ProjectLogs
-          key={p.id}
+          key={`${p.id}/${logsTarget ? serviceKey(logsTarget) : "default"}`}
+          initialService={logsTarget?.name}
+          initialSlot={logsTarget?.slot}
           project={p}
           services={services}
           servicesLoading={servicesLoading}

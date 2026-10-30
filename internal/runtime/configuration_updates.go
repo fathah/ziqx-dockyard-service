@@ -100,6 +100,7 @@ func (d Docker) PlanConfigurationUpdates(ctx context.Context, p model.Project, r
 			return nil, err
 		}
 		plan.SourceRelease = &release
+		plan.Instance.Replicas = serviceReplicas(svc)
 		plans = append(plans, plan)
 	}
 	return plans, nil

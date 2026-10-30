@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -127,14 +128,16 @@ func (d Docker) nativeHealthy(ctx context.Context, p model.Project, slot string,
 		}
 		if name == p.RouteService {
 			ports := c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", p.RoutePort)]
-			if len(ports) != 1 || ports[0].HostIP != "127.0.0.1" || ports[0].HostPort != strconv.Itoa(p.Port(slot)) {
+			port, bindingErr := privateRoutePort(c, p.RoutePort)
+			if len(ports) != 1 || bindingErr != nil || !slices.Contains(serviceRoutePorts(p, slot, name, p.RoutePort, p.Port(slot)), port) {
 				return model.Uncertain("CONTAINER_BINDING_DIVERGED")
 			}
 		}
 		if pin := p.PublishedRoute; pin != nil && name == pin.Service {
 			ipv4 := false
 			for _, binding := range c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", pin.ContainerPort)] {
-				if binding.HostPort != strconv.Itoa(pin.HostPort) {
+				port, _ := strconv.Atoi(binding.HostPort)
+				if !slices.Contains(serviceRoutePorts(p, slot, name, pin.ContainerPort, pin.HostPort), port) {
 					return model.Uncertain("CONTAINER_BINDING_DIVERGED")
 				}
 				if binding.HostIP == "127.0.0.1" || binding.HostIP == "0.0.0.0" {
@@ -151,7 +154,8 @@ func (d Docker) nativeHealthy(ctx context.Context, p model.Project, slot string,
 			}
 			found := false
 			for _, binding := range c.NetworkSettings.Ports[fmt.Sprintf("%d/tcp", route.ContainerPort)] {
-				if (binding.HostIP == "127.0.0.1" || binding.HostIP == "0.0.0.0") && binding.HostPort == strconv.Itoa(route.HostPort) {
+				port, _ := strconv.Atoi(binding.HostPort)
+				if (binding.HostIP == "127.0.0.1" || binding.HostIP == "0.0.0.0") && slices.Contains(serviceRoutePorts(p, slot, name, route.ContainerPort, route.HostPort), port) {
 					found = true
 				}
 			}
@@ -340,11 +344,13 @@ func (d Docker) ServiceRuntime(ctx context.Context, p model.Project) (map[string
 		add(name, c)
 	}
 	for name, instance := range p.ServiceInstances {
-		c, err := d.inspectServiceInstance(ctx, p, instance)
+		containers, err := d.inspectServiceContainers(ctx, p, instance)
 		if err != nil {
 			return nil, err
 		}
-		add(name, c)
+		for _, c := range containers {
+			add(name, c)
+		}
 	}
 	for name, service := range services {
 		seen := map[int]bool{}

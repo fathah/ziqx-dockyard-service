@@ -36,9 +36,9 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
         size ??
         (icon ? "icon" : classes.has("small") || text ? "compact" : "default")
       }
-      bgColor={bgColor ?? (primary ? "#244e39" : "#ffffff")}
+      bgColor={bgColor ?? (primary ? "#0271e3" : "#ffffff")}
       fgColor={
-        fgColor ?? (danger ? "#af594f" : primary ? "#f7faed" : "#314a38")
+        fgColor ?? (danger ? "#af594f" : primary ? "#ffffff" : "#303039")
       }
     />
   );

@@ -61,6 +61,8 @@ type Project struct {
 	Releases         []Release                  `json:"releases"`
 	DNS              []string                   `json:"dns_records,omitempty"`
 	RecoveryDrain    bool                       `json:"recovery_drain_pending,omitempty"`
+	// RouteBindings records all Docker-assigned backends, keyed by slot/service/target.
+	RouteBindings map[string][]int `json:"route_bindings,omitempty" api:"private"`
 }
 
 // CaddyRoute keeps reviewed site rules imported from the operator Caddyfile.
@@ -203,6 +205,7 @@ type ServiceSpec struct {
 }
 
 type ServiceInfo struct {
+	LoadBalancer   string             `json:"load_balancer,omitempty"`
 	Containers     []ServiceContainer `json:"containers"`
 	HostPorts      []int              `json:"host_ports"`
 	DependsOn      []string           `json:"depends_on"`
@@ -233,6 +236,9 @@ type ServiceRuntime struct {
 // immutable manifest is separate so pulls cannot recreate sibling services.
 type ServiceInstance struct {
 	Name           string              `json:"name"`
+	Replicas       int                 `json:"replicas,omitempty"`
+	ContainerIDs   []string            `json:"container_ids,omitempty"`
+	Ports          []int               `json:"ports,omitempty"`
 	ContainerPort  int                 `json:"container_port,omitempty"`
 	ReadinessPath  string              `json:"readiness_path,omitempty"`
 	ContainerID    string              `json:"container_id,omitempty"`
@@ -241,6 +247,7 @@ type ServiceInstance struct {
 	NetworkAliases map[string][]string `json:"network_aliases,omitempty"`
 }
 type ServiceUpdate struct {
+	Proxy *ServiceProxy `json:"proxy,omitempty"`
 	// PreparedImage pins a completed background pull; execution never repulls a mutable tag.
 	PreparedImage string `json:"prepared_image,omitempty"`
 	// Configuration deployments use this submitted full release, even if the image is unchanged.
@@ -251,6 +258,19 @@ type ServiceUpdate struct {
 	Previous       *ServiceInstance    `json:"previous,omitempty"`
 	NetworkAliases map[string][]string `json:"network_aliases,omitempty"`
 	NetworkIDs     map[string]string   `json:"network_ids,omitempty"`
+}
+
+// ServiceProxy pins a private HAProxy Runtime API and the network shared with
+// the app. The control port is reachable only inside the proxy container.
+type ServiceProxy struct {
+	Service   string            `json:"service"`
+	Backend   string            `json:"backend"`
+	AdminPort int               `json:"admin_port"`
+	AppPort   int               `json:"app_port"`
+	Network   string            `json:"network"`
+	NetworkID string            `json:"network_id"`
+	Addresses map[string]string `json:"addresses"`
+	Instance  ServiceInstance   `json:"instance"`
 }
 
 type DomainInfo struct {

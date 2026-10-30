@@ -31,6 +31,8 @@ export default function ProjectLogs({
   preview,
   enabled = true,
   report,
+  initialService,
+  initialSlot,
 }: {
   project: Project;
   services: Service[];
@@ -39,9 +41,13 @@ export default function ProjectLogs({
   preview: boolean;
   enabled?: boolean;
   report: (error: unknown) => void;
+  initialService?: string;
+  initialSlot?: string;
 }) {
-  const [service, setService] = useState(project.route_service ?? "");
-  const [slot, setSlot] = useState("active");
+  const [service, setService] = useState(
+    initialService ?? project.route_service ?? "",
+  );
+  const [slot, setSlot] = useState(initialSlot ?? "active");
   const [since, setSince] = useState("30m");
   const [result, setResult] = useState<LogResult>();
   const cancelRequest = useRef<(() => void) | undefined>(undefined);

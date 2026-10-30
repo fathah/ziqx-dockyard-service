@@ -72,9 +72,19 @@ func (d Docker) CheckServiceImages(ctx context.Context, p model.Project) ([]Imag
 		if !ok {
 			previous = model.ServiceInstance{Name: name, Release: r}
 		}
-		c, e := d.inspectServiceInstance(ctx, p, previous)
-		if e != nil || !c.State.Running {
+		containers, e := d.inspectServiceContainers(ctx, p, previous)
+		if e != nil {
 			status.Error = "SERVICE_NOT_RUNNING"
+			statuses = append(statuses, status)
+			continue
+		}
+		c := containers[0]
+		consistent := true
+		for _, replica := range containers {
+			consistent = consistent && replica.State.Running && replica.Image == c.Image
+		}
+		if !consistent {
+			status.Error = "SERVICE_REPLICAS_CHANGED"
 			statuses = append(statuses, status)
 			continue
 		}

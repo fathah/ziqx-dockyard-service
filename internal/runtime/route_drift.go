@@ -31,45 +31,48 @@ func (d Docker) LiveRoutes(ctx context.Context, p model.Project) (model.Project,
 	}
 	var primary []Container
 	loaded := false
-	container := func(service string) (Container, error) {
+	containers := func(service string) ([]Container, error) {
 		if instance, ok := p.ServiceInstances[service]; ok {
-			c, err := d.inspectServiceInstance(ctx, p, instance)
+			cs, err := d.inspectServiceContainers(ctx, p, instance)
 			if err != nil {
-				return c, err
+				return nil, err
 			}
-			if !c.State.Running {
-				return c, model.Fail("CONTAINER_UNAVAILABLE")
+			if len(cs) != instanceReplicas(instance) {
+				return nil, model.Fail("SERVICE_REPLICAS_CHANGED")
 			}
-			return c, nil
+			return cs, nil
 		}
 		if !loaded {
 			var err error
 			if primary, err = d.nativeContainers(ctx, p, p.Active); err != nil {
-				return Container{}, err
+				return nil, err
 			}
 			loaded = true
 		}
-		var found *Container
-		for i := range primary {
-			if primary[i].Config.Labels["com.docker.compose.service"] == service {
-				if found != nil {
-					return Container{}, model.Fail("SERVICE_ROUTE_REPLICAS_UNSUPPORTED")
-				}
-				found = &primary[i]
+		found := []Container{}
+		for _, c := range primary {
+			if c.Config.Labels["com.docker.compose.service"] == service {
+				found = append(found, c)
 			}
 		}
-		if found == nil || !found.State.Running {
-			return Container{}, model.Fail("CONTAINER_UNAVAILABLE")
+		return found, nil
+	}
+	ports := func(service string, target int) ([]int, error) {
+		cs, err := containers(service)
+		if err != nil {
+			return nil, err
 		}
-		return *found, nil
+		return replicaRoutePorts(cs, target, false)
 	}
 	port := func(service string, target int) (int, error) {
-		c, err := container(service)
+		values, err := ports(service, target)
 		if err != nil {
 			return 0, err
 		}
-		return livePort(c, target)
+		setRouteBindings(&next, p.Active, service, target, values)
+		return values[0], nil
 	}
+
 	next.ServiceRoutes = append([]model.ServiceRoute(nil), p.ServiceRoutes...)
 	next.ServiceInstances = maps.Clone(p.ServiceInstances)
 	setPrimary := func(value int) {
@@ -85,11 +88,11 @@ func (d Docker) LiveRoutes(ctx context.Context, p model.Project) (model.Project,
 		if !ok || instance.Port == 0 {
 			return nil
 		}
-		value, err := port(service, serviceInstancePort(p, service, instance))
+		values, err := ports(service, serviceInstancePort(p, service, instance))
 		if err != nil {
 			return err
 		}
-		instance.Port = value
+		instance.Port, instance.Ports = values[0], values
 		next.ServiceInstances[service] = instance
 		return nil
 	}
@@ -128,6 +131,15 @@ func (d Docker) LiveRoutes(ctx context.Context, p model.Project) (model.Project,
 			return p, err
 		}
 		next.ServiceRoutes[i].HostPort = value
+	}
+	// Internal backends also publish private candidate ports for readiness.
+	// Keep their recorded bindings current after daemon/container restarts.
+	for service, instance := range next.ServiceInstances {
+		if instance.Port > 0 {
+			if err := refreshInstance(service); err != nil {
+				return p, err
+			}
+		}
 	}
 	return next, nil
 }

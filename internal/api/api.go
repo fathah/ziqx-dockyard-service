@@ -676,6 +676,7 @@ func (a *API) read(w http.ResponseWriter, r *http.Request, p auth.Principal) {
 					item.DependsOn = option.DependsOn
 					item.Updatable = option.Updatable
 					item.Seamless = option.Seamless
+					item.LoadBalancer = option.LoadBalancer
 					item.UpdateReason = option.Reason
 					item.ContainerPorts = option.Ports
 					if len(item.ContainerPorts) == 0 {
@@ -1461,6 +1462,7 @@ func accepted(w http.ResponseWriter, j model.Job) {
 func publicProject(p model.Project) model.Project {
 	// Imported Caddy bodies can contain auth hashes or private header values.
 	p.CaddyRoutes = nil
+	p.RouteBindings = nil
 	p.StorageFolder = ""
 	return p
 }

@@ -30,6 +30,8 @@ export type Project = {
     string,
     {
       name: string;
+      replicas?: number;
+      ports?: number[];
       port?: number;
       container_port?: number;
       readiness_path?: string;
@@ -50,6 +52,7 @@ export type Project = {
   releases: Release[];
 };
 export type Service = {
+  load_balancer?: string;
   containers?: { id: string; name: string }[] | null;
   host_ports?: number[] | null;
   depends_on?: string[] | null;

@@ -48,6 +48,7 @@ type Container struct {
 	NetworkSettings struct {
 		Networks map[string]struct {
 			NetworkID string
+			IPAddress string
 			Aliases   []string
 		} `json:"Networks"`
 		Ports map[string][]struct{ HostIP, HostPort string } `json:"Ports"`
@@ -376,7 +377,7 @@ func (d Docker) Logs(ctx context.Context, p model.Project, slot, service string,
 	var res process.Result
 	var e error
 	if instance, ok := p.ServiceInstances[service]; ok && slot == p.Active {
-		if _, err := d.inspectServiceInstance(ctx, p, instance); err != nil {
+		if _, err := d.inspectServiceContainers(ctx, p, instance); err != nil {
 			return nil, false, err
 		}
 		res, e = d.serviceCommand(ctx, p, instance, "logs", "--no-color", "--timestamps", "--tail", strconv.Itoa(tail), "--since", since, instance.Name)
