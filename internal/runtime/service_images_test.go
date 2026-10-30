@@ -71,13 +71,17 @@ func TestPreparedServiceImageNeverRepullsMutableTag(t *testing.T) {
 
 type imageCheckRunner struct {
 	*serviceRunner
-	manifest []byte
-	fail     bool
+	manifest   []byte
+	fail       bool
+	onManifest func()
 }
 
 func (r *imageCheckRunner) Run(ctx context.Context, binary, dir string, args []string) (process.Result, error) {
 	if args[0] == "manifest" {
 		r.calls = append(r.calls, args)
+		if r.onManifest != nil {
+			r.onManifest()
+		}
 		if r.fail {
 			return process.Result{}, context.DeadlineExceeded
 		}
@@ -116,9 +120,69 @@ func TestImageCheckReadsRegistryWithoutPullingOrChangingContainers(t *testing.T)
 	if err != nil || statuses[0].Status != "current" {
 		t.Fatal(statuses, err)
 	}
+	// A direct VPS replacement does not change the saved project snapshot.
+	// Discard the old comparison if it finishes after that replacement.
+	runner.manifest = []byte(strings.ReplaceAll(string(runner.manifest), strings.Repeat("1", 64), strings.Repeat("2", 64)))
+	runner.onManifest = func() {
+		c := base.containers["web"]
+		c.ID = strings.Repeat("b", 64)
+		c.Image = "sha256:" + strings.Repeat("2", 64)
+		base.containers["web"] = c
+	}
+	statuses, err = d.CheckServiceImages(context.Background(), p)
+	if err != nil || statuses[0].Status != "unknown" || statuses[0].Error != "SERVICE_IMAGE_CHANGED" || statuses[0].CurrentImage != "" {
+		t.Fatal("comparison crossed a container replacement", statuses, err)
+	}
+	runner.onManifest = nil
+	statuses, err = d.CheckServiceImages(context.Background(), p)
+	if err != nil || statuses[0].Status != "current" || statuses[0].CurrentImage != statuses[0].LatestImage {
+		t.Fatal("updated container still reports an available image", statuses, err)
+	}
 	runner.fail = true
 	statuses, err = d.CheckServiceImages(context.Background(), p)
 	if err != nil || statuses[0].Status != "unknown" || statuses[0].Error != "REGISTRY_CHECK_FAILED" {
 		t.Fatal("registry failure reported current", statuses, err)
+	}
+}
+
+func TestImageCheckComparesEachServiceSharingATag(t *testing.T) {
+	d, p, base := runtimeServiceFixture(t)
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(base.doc), &doc); err != nil {
+		t.Fatal(err)
+	}
+	services := object(doc["services"])
+	web := object(services["web"])
+	web["image"] = "ghcr.io/example/app:latest"
+	services["worker"] = map[string]any{"image": web["image"], "networks": map[string]any{"default": map[string]any{}}}
+	raw, _ := json.Marshal(doc)
+	base.doc = string(raw)
+	rel, err := d.PrepareNative(context.Background(), p, "services: supplied", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel.ID = "shared-tag"
+	p.Slots["blue"] = rel
+	worker := cloneReplica(base.containers["web"])
+	worker.ID = strings.Repeat("b", 64)
+	worker.Config.Labels["com.docker.compose.service"] = "worker"
+	base.containers["worker"] = worker
+	c := base.containers["web"]
+	c.Image = "sha256:" + strings.Repeat("2", 64)
+	base.containers["web"] = c
+	d.Runner = &imageCheckRunner{serviceRunner: base, manifest: []byte(`{"Descriptor":{"platform":{"os":"linux","architecture":"amd64"}},"OCIManifest":{"config":{"digest":"sha256:` + strings.Repeat("2", 64) + `"}}}`)}
+	base.calls = nil
+	statuses, err := d.CheckServiceImages(context.Background(), p)
+	if err != nil || len(statuses) != 2 || statuses[0].Service != "web" || statuses[0].Status != "current" || statuses[1].Service != "worker" || statuses[1].Status != "available" {
+		t.Fatal("shared tag lost per-service identity", statuses, err)
+	}
+	manifests := 0
+	for _, call := range base.calls {
+		if call[0] == "manifest" {
+			manifests++
+		}
+	}
+	if manifests != 1 {
+		t.Fatal("shared tag triggered duplicate registry requests", manifests)
 	}
 }

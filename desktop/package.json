@@ -1,6 +1,6 @@
 {
   "name": "dockyard-desktop",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "type": "module",
   "scripts": {
@@ -21,6 +21,7 @@
     "test:updates": "node --experimental-strip-types --test tests/server-update-cache.test.mjs",
     "test:service-updates": "node --experimental-strip-types --test tests/service-updates.test.mjs",
     "test:services": "node --test tests/services-workspace.test.mjs",
+    "test:images": "node --experimental-strip-types --test tests/service-image-poller.test.mjs",
     "editor:schema": "node scripts/generate-compose-validator.mjs"
   },
   "dependencies": {

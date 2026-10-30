@@ -1662,20 +1662,27 @@ export function ProjectDetail({
       .filter((job) => job.project_id === p.id)
       .map((job) => [job.job_id, job.status, job.finished_at]),
   );
-  const imageCheck = useServiceImages(
-    p.id,
-    p.slots[p.active_slot ?? "blue"]?.id ?? "",
-    !preview && p.mode === "compose" && p.state === "running",
-    undefined,
-    JSON.stringify([servicesRefresh, serviceRevision, operationRevision]),
-  );
-  const imageUpdates =
-    imageCheck?.services?.filter((s) => s.status === "available") ?? [];
   const recoveryJob = jobs.find((job) => job.status === "recovery_required");
   const projectOperation = jobs.find(
     (job) =>
       job.project_id === p.id && ["queued", "running"].includes(job.status),
   );
+  const imageCheck = useServiceImages(
+    p.id,
+    p.slots[p.active_slot ?? "blue"]?.id ?? "",
+    enabled &&
+      !preview &&
+      p.mode === "compose" &&
+      p.state === "running" &&
+      (tab === "overview" || tab === "services") &&
+      !projectOperation &&
+      !recoveryJob &&
+      !status?.busy,
+    undefined,
+    JSON.stringify([servicesRefresh, serviceRevision, operationRevision]),
+  );
+  const imageUpdates =
+    imageCheck?.services?.filter((s) => s.status === "available") ?? [];
   const startBlocked =
     preview ||
     starting ||

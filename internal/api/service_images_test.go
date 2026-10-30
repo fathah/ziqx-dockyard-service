@@ -20,6 +20,101 @@ type imagePreparer struct {
 	finish  chan struct{}
 }
 
+type imageMetadataChecker struct {
+	servicePreparer
+	checks  atomic.Int32
+	started chan struct{}
+	finish  chan struct{}
+}
+
+func (d *imageMetadataChecker) CheckServiceImages(ctx context.Context, _ model.Project) ([]runtime.ImageStatus, error) {
+	d.checks.Add(1)
+	close(d.started)
+	select {
+	case <-d.finish:
+		return []runtime.ImageStatus{{Service: "web", Status: "current"}}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+func (*imageMetadataChecker) PrepareServiceImage(context.Context, model.Project, string) (string, error) {
+	return "", model.Fail("UNEXPECTED_PULL")
+}
+
+func TestImageMetadataRefreshReplacesCompletedChecksAndPreservesPreparedImages(t *testing.T) {
+	a, d, _, send := apiFixture(t)
+	a.Engine.Config.Keys[0].Projects = []string{"*"}
+	a.Auth, _ = auth.New(a.Engine.Config)
+	checker := &imageMetadataChecker{servicePreparer: servicePreparer{bgPreparer: bgPreparer{d, a.Engine.Config}}, started: make(chan struct{}), finish: make(chan struct{})}
+	a.Engine.Docker = checker
+	p := model.Project{ID: "demo", AppID: "demo", Mode: "compose", Environment: model.Production, State: "running", Active: "blue", BluePort: 3001, RouteService: "web", RoutePort: 80, Domains: []string{"app.example.com"}}
+	if err := runtime.Compose(a.Engine.Config, p); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := checker.PrepareNative(context.Background(), p, "services: {}", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel.ID = "rel-original"
+	p.Slots = map[string]model.Release{"blue": rel}
+	p.Releases = []model.Release{rel}
+	job := model.Job{ID: "original", ProjectID: p.ID, Status: "succeeded", Created: time.Now(), Input: model.Input{Project: &p}}
+	if err := a.Engine.Store.Accept(job, &p, "original", "original", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	key := imageTaskKey(p, "")
+	prepared := "sha256:" + strings.Repeat("2", 64)
+	a.images.tasks[key] = imageTask{Status: "ready", Services: []runtime.ImageStatus{{Service: "web", Status: "available"}}, expires: time.Now().Add(time.Minute)}
+	a.images.tasks[imageTaskKey(p, "web")] = imageTask{Status: "ready", Image: prepared, expires: time.Now().Add(10 * time.Minute)}
+	poll := `{"expected_release_id":"rel-original"}`
+	refresh := `{"expected_release_id":"rel-original","refresh":true}`
+	if w := send("POST", "/v1/projects/demo/image-status", poll, "deploy.read", "cached"); w.Code != 200 || !strings.Contains(w.Body.String(), "available") || checker.checks.Load() != 0 {
+		t.Fatal("ordinary polling must reuse the completed check", w.Code, w.Body.String())
+	}
+	if w := send("POST", "/v1/projects/demo/image-status", refresh, "deploy.execute", "denied"); w.Code != 403 {
+		t.Fatal("refresh changed read authority", w.Code, w.Body.String())
+	}
+	if w := send("POST", "/v1/projects/demo/image-status", refresh, "deploy.read", "fresh"); w.Code != 202 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	select {
+	case <-checker.started:
+	case <-time.After(time.Second):
+		t.Fatal("fresh check never started")
+	}
+	if w := send("POST", "/v1/projects/demo/image-status", refresh, "deploy.read", "deduplicated"); w.Code != 200 || !strings.Contains(w.Body.String(), "checking") || checker.checks.Load() != 1 {
+		t.Fatal("refresh must share an in-flight check", w.Code, w.Body.String())
+	}
+	if got := a.preparedImage(p, "web"); got != prepared {
+		t.Fatal("metadata refresh invalidated prepared image", got)
+	}
+	close(checker.finish)
+	deadline := time.Now().Add(time.Second)
+	for {
+		a.images.mu.Lock()
+		task := a.images.tasks[key]
+		a.images.mu.Unlock()
+		if task.Status == "ready" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("fresh check did not finish")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if w := send("POST", "/v1/projects/demo/image-status", poll, "deploy.read", "current"); w.Code != 200 || !strings.Contains(w.Body.String(), "current") || checker.checks.Load() != 1 {
+		t.Fatal("cached stale banner survived refresh", w.Code, w.Body.String())
+	}
+	for path, body := range map[string]string{
+		"image-status":  `{"expected_release_id":"rel-original","retry":true}`,
+		"image-prepare": `{"expected_release_id":"rel-original","service":"web","refresh":true}`,
+	} {
+		if w := send("POST", "/v1/projects/demo/"+path, body, "deploy.read", "invalid-"+path); w.Code != 400 {
+			t.Fatal(path, w.Code, w.Body.String())
+		}
+	}
+}
+
 func (d *imagePreparer) CheckServiceImages(context.Context, model.Project) ([]runtime.ImageStatus, error) {
 	return []runtime.ImageStatus{{Service: "web", Image: "ghcr.io/example/app:latest", Status: "available"}}, nil
 }

@@ -56,8 +56,9 @@ func (a *API) serviceImages(w http.ResponseWriter, r *http.Request, principal au
 		ExpectedRelease string `json:"expected_release_id"`
 		Service         string `json:"service,omitempty"`
 		Retry           bool   `json:"retry,omitempty"`
+		Refresh         bool   `json:"refresh,omitempty"`
 	}
-	if !config.ID.MatchString(id) || secure.Decode(body, &input) != nil || input.ExpectedRelease == "" || prepare && !config.ServiceName.MatchString(input.Service) || !prepare && (input.Service != "" || input.Retry) {
+	if !config.ID.MatchString(id) || secure.Decode(body, &input) != nil || input.ExpectedRelease == "" || prepare && (!config.ServiceName.MatchString(input.Service) || input.Refresh) || !prepare && (input.Service != "" || input.Retry) {
 		problem(w, 400, "REQUEST_INVALID", principal.RequestID)
 		return
 	}
@@ -116,7 +117,8 @@ func (a *API) serviceImages(w http.ResponseWriter, r *http.Request, principal au
 	a.images.mu.Lock()
 	now := time.Now()
 	for k, t := range a.images.tasks {
-		if (input.Retry && k == key && t.Status == "failed") || now.After(t.expires) && t.Status != "pulling" && t.Status != "checking" {
+		refresh := input.Refresh && k == key && t.Status != "checking" && t.Status != "pulling"
+		if refresh || (input.Retry && k == key && t.Status == "failed") || now.After(t.expires) && t.Status != "pulling" && t.Status != "checking" {
 			delete(a.images.tasks, k)
 		}
 	}

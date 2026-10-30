@@ -28,6 +28,14 @@ sudo install -o root -g root -m 0755 dockyardctl-linux-amd64 /usr/local/bin/dock
 
 Then follow [installation and credentials](INSTALL.md). The daemon requires Linux/root, Docker Compose, Caddy and private policy/credentials before it can start. The downloaded operator client runs as a regular user with its authorized credentials.
 
+## 0.7.38 · Desktop 0.1.11 — 2026-10-30
+
+- Refresh image metadata when returning to the app, after deployment completion, on Services refresh, and every minute while the project is visible. Hide previous results during project operations and when the project snapshot changes.
+- Let metadata refresh replace a completed cached check while deduplicating active checks and preserving prepared image downloads.
+- Discard comparisons if containers change during a registry request. Compare each service's running image separately, including services that share the same tag.
+
+Install desktop **0.1.11** and VPS service **0.7.38** for immediate metadata refresh. Older servers remain compatible with their one-minute cache. Installing the Dockyard server update leaves application containers running.
+
 ## Desktop 0.1.10 — 2026-10-30
 
 - Use a compact, searchable service list with a separate details panel for dependencies, container identities, logs, terminal, domains and individual updates.

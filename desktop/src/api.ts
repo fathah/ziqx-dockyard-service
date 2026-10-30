@@ -214,6 +214,7 @@ export const serviceImages = (
   release: string,
   service?: string,
   retry = false,
+  refresh = false,
 ) =>
   invoke<ImageTask>("service_images", {
     project,
@@ -221,6 +222,7 @@ export const serviceImages = (
       expected_release_id: release,
       ...(service ? { service } : {}),
       ...(retry ? { retry: true } : {}),
+      ...(refresh ? { refresh: true } : {}),
     },
   });
 

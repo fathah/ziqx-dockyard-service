@@ -300,11 +300,14 @@ pub struct ServiceImages {
     pub service: String,
     #[serde(default, skip_serializing_if = "is_false")]
     pub retry: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub refresh: bool,
 }
 impl ServiceImages {
     pub fn valid(&self) -> bool {
         token(&self.expected_release_id) && (self.service.is_empty() || service_name(&self.service))
         && (!self.retry || !self.service.is_empty())
+        && (!self.refresh || self.service.is_empty())
     }
     pub fn action(&self) -> &'static str {
         if self.service.is_empty() { "image-status" } else { "image-prepare" }
@@ -917,11 +920,16 @@ mod tests {
         assert!(check.valid());
         assert_eq!(check.action(), "image-status");
         assert_eq!(check.scopes(), "deploy.read");
+        let refresh: ServiceImages = serde_json::from_value(serde_json::json!({"expected_release_id":"rel-current", "refresh":true})).unwrap();
+        assert!(refresh.valid());
+        assert_eq!(refresh.action(), "image-status");
+        assert_eq!(refresh.scopes(), "deploy.read");
+        assert_eq!(serde_json::to_value(&refresh).unwrap()["refresh"], true);
         let prepare: ServiceImages = serde_json::from_value(serde_json::json!({"expected_release_id":"rel-current", "service":"web", "retry":true})).unwrap();
         assert!(prepare.valid());
         assert_eq!(prepare.action(), "image-prepare");
         assert_eq!(prepare.scopes(), "deploy.execute");
-        for bad in [serde_json::json!({"expected_release_id":"../release"}), serde_json::json!({"expected_release_id":"rel-current", "service":"../web"}), serde_json::json!({"expected_release_id":"rel-current", "retry":true})] {
+        for bad in [serde_json::json!({"expected_release_id":"../release"}), serde_json::json!({"expected_release_id":"rel-current", "service":"../web"}), serde_json::json!({"expected_release_id":"rel-current", "retry":true}), serde_json::json!({"expected_release_id":"rel-current", "service":"web", "refresh":true})] {
             assert!(!serde_json::from_value::<ServiceImages>(bad).unwrap().valid());
         }
         assert!(serde_json::from_value::<ServiceImages>(serde_json::json!({"expected_release_id":"rel-current", "image":"ghcr.io/attacker/app"})).is_err());

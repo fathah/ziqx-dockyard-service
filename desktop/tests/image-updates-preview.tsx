@@ -1,9 +1,11 @@
 // Local-only fixture: every native request is simulated, with no VPS access.
 import { createRoot } from "react-dom/client";
+import { useState } from "react";
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { ProjectDetail } from "../src/App";
 import type { Project, Service } from "../src/types";
 import "../src/style.css";
+import "../src/macos.css";
 const release = {
   id: "rel-current",
   image: "",
@@ -38,9 +40,12 @@ const services: Service[] = [
     container_ports: [3000],
     host_ports: [3001],
     depends_on: [],
+    containers: [{ name: "demo-web-1", id: "a".repeat(64) }],
   },
 ];
 let checks = 0;
+let imageState =
+  new URLSearchParams(location.search).get("state") ?? "available";
 mockIPC((command, payload: any) => {
   if (command === "project_logo_read") return null;
   if (command === "read_api") {
@@ -62,8 +67,7 @@ mockIPC((command, payload: any) => {
     if (payload.data.service)
       return { status: "ready", image: "sha256:" + "2".repeat(64) };
     checks++;
-    const state =
-      new URLSearchParams(location.search).get("state") ?? "available";
+    const state = imageState;
     return checks === 1
       ? { status: "checking" }
       : {
@@ -73,7 +77,8 @@ mockIPC((command, payload: any) => {
               service: "web",
               image: services[0].image,
               status: state,
-              current_image: "sha256:" + "1".repeat(64),
+              current_image:
+                "sha256:" + (state === "current" ? "2" : "1").repeat(64),
               latest_image: "sha256:" + "2".repeat(64),
             },
           ],
@@ -99,17 +104,40 @@ mockIPC((command, payload: any) => {
     };
   throw new Error(`Unexpected mock command: ${command}`);
 });
-createRoot(document.getElementById("root")!).render(
-  <main style={{ padding: 32, maxWidth: 1150, margin: "auto" }}>
-    <p>TEST FIXTURE · simulated GHCR · no server access</p>
-    <ProjectDetail
-      project={project}
-      preview={false}
-      open={() => {}}
-      action={async () => {}}
-      execute={async () => {}}
-      report={console.error}
-      openServerDetails={() => {}}
-    />
-  </main>,
-);
+function Fixture() {
+  const [runningImage, setRunningImage] = useState(imageState);
+  function replace(state: string, focus = false) {
+    imageState = state;
+    setRunningImage(state);
+    if (focus) window.dispatchEvent(new Event("focus"));
+  }
+  return (
+    <main style={{ padding: 32, maxWidth: 1200, margin: "auto" }}>
+      <p>
+        TEST FIXTURE · simulated GHCR · no server access · running image:{" "}
+        {runningImage}
+      </p>
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        <button onClick={() => replace("current")}>
+          Simulate external image update
+        </button>
+        <button onClick={() => replace("current", true)}>
+          Simulate update and app focus
+        </button>
+        <button onClick={() => replace("available", true)}>
+          Simulate newer registry image
+        </button>
+      </div>
+      <ProjectDetail
+        project={project}
+        preview={false}
+        open={() => {}}
+        action={async () => {}}
+        execute={async () => {}}
+        report={console.error}
+        openServerDetails={() => {}}
+      />
+    </main>
+  );
+}
+createRoot(document.getElementById("root")!).render(<Fixture />);

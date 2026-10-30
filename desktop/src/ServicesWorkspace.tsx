@@ -108,7 +108,8 @@ export default function ServicesWorkspace({
           ? "Image pinned to a digest."
           : images?.status === "checking"
             ? "Checking for image updates…"
-            : images?.status === "failed"
+            : images?.status === "failed" ||
+                (selected && imageState(selected) === "unknown")
               ? "Image update check unavailable."
               : "Image recorded at deployment.";
 

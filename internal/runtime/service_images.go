@@ -116,6 +116,21 @@ func (d Docker) CheckServiceImages(ctx context.Context, p model.Project) ([]Imag
 		if e != nil {
 			status.Error = "REGISTRY_CHECK_FAILED"
 		} else {
+			// Registry requests can outlive a container replacement. Never attach
+			// the old comparison to the new running group when that happens.
+			after, inspectErr := d.inspectServiceContainers(ctx, p, previous)
+			stable := inspectErr == nil && len(after) == len(containers)
+			if stable {
+				for i, replica := range after {
+					stable = stable && replica.ID == containers[i].ID && replica.Image == c.Image && replica.State.Running
+				}
+			}
+			if !stable {
+				status.CurrentImage = ""
+				status.Error = "SERVICE_IMAGE_CHANGED"
+				statuses = append(statuses, status)
+				continue
+			}
 			status.LatestImage = latest
 			status.Status = "current"
 			if latest != c.Image {

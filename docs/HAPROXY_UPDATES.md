@@ -8,6 +8,8 @@ This requires VPS service **0.7.37+** and desktop **0.1.9+**. Older installed se
 
 Add these labels to `services.api` in the deployed Compose configuration:
 
+In the desktop, open **Configuration → Compose** and merge them into the API's existing `labels` map, at the same indentation as `image`, `depends_on` and `deploy`. These labels describe the service behind HAProxy. A frontend routed directly through a Dockyard-managed domain does not need them. If HAProxy also routes the frontend, configure that service's own backend and container port instead of copying the API backend.
+
 ```yaml
 services:
   api:
@@ -25,6 +27,19 @@ Keep the API's existing healthcheck, dependencies and networks. Add the Runtime 
 global
   stats socket ipv4@127.0.0.1:9999 level admin
 ```
+
+Tanseek's frontend is also behind HAProxy: `frontend nextjs` listens on `3000` and selects `backend frontend_replicas`, which discovers `frontend:3000`. Add these separate labels to the existing frontend service:
+
+```yaml
+services:
+  frontend:
+    labels:
+      io.ziqx.dockyard.haproxy.service: loadbalancer
+      io.ziqx.dockyard.haproxy.backend: frontend_replicas
+      io.ziqx.dockyard.haproxy.port: "3000"
+```
+
+Keep its `server-template app 1-16 frontend:3000 ...` and `/auth` health check. Both services share the same private Runtime API listener; add that listener only once. Compose `depends_on` describes startup order and does not configure HAProxy traffic switching.
 
 The listener binds only to loopback **inside the HAProxy container**. Do not publish port 9999 in Compose. Dockyard accesses it with `docker exec` in the positively identified load balancer container. The proxy image needs `sh` and `nc`; the tested `haproxy:3.2.23-alpine` image includes both. If using a different control port, add the optional label `io.ziqx.dockyard.haproxy.admin-port`.
 
