@@ -161,6 +161,7 @@ function Fixture() {
           "busy",
           "start-failed",
           "recovery",
+          "other-recovery",
           "unavailable",
           "error",
         ].map((value) => (
@@ -237,8 +238,14 @@ function Fixture() {
           execute={rejectMutation}
           openServerDetails={() => setMessage("Server details shortcut works")}
           jobs={
-            mode === "recovery"
-              ? [interrupted]
+            mode === "recovery" || mode === "other-recovery"
+              ? [
+                  {
+                    ...interrupted,
+                    project_id:
+                      mode === "other-recovery" ? "other-project" : original.id,
+                  },
+                ]
               : mode === "busy"
                 ? [running]
                 : mode === "start-failed"

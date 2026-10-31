@@ -17,6 +17,7 @@ import Help from "./Help";
 import CodeEditor, { type CodeEditorHandle } from "./CodeEditor";
 import { composeForEditor, lintCompose } from "./composeLint";
 import { addHealthcheck, suggestHealthcheck } from "./composeHealthcheck";
+import ComposeHealthchecks from "./ComposeHealthchecks";
 import SecretGenerator from "./SecretGenerator";
 import AvailablePorts from "./AvailablePorts";
 import Select from "./Select";
@@ -699,6 +700,20 @@ export default function ProjectConfiguration({
             </>
           )}
           <div hidden={file !== "compose"}>
+            <ComposeHealthchecks
+              source={compose}
+              disabled={busy || preview}
+              blueGreen={project.zerodowntime}
+              onChange={(source, healthcheckDisabled) => {
+                setCompose(source);
+                if (healthcheckDisabled) setDeploymentMode("restart");
+                setNotice(
+                  "Health check settings updated — review Compose, then Deploy.",
+                );
+                setError("");
+                setErrorDetail("");
+              }}
+            />
             <CodeEditor
               ref={composeEditor}
               showToolbar={false}

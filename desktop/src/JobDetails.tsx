@@ -189,7 +189,9 @@ export default function JobDetails({
                       {done
                         ? "Completed"
                         : e.error_code === "JOB_INTERRUPTED_RECONCILED"
-                          ? "Recovered after interruption"
+                          ? job.warning_code === "SERVICE_UNHEALTHY_RECONCILED"
+                            ? "Failed update closed · deploy the corrected configuration"
+                            : "Recovered after interruption"
                           : failed
                             ? sentence(e.error_code!)
                             : (phases[e.phase] ?? sentence(e.phase))}

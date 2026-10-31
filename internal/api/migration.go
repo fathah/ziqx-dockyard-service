@@ -106,8 +106,8 @@ func (a *API) adopt(w http.ResponseWriter, r *http.Request, principal auth.Princ
 		accepted(w, job)
 		return
 	}
-	if !e.Ready() {
-		problem(w, 503, "RECOVERY_REQUIRED", principal.RequestID)
+	if err := e.ProjectAdmission(id); err != nil {
+		fail(w, err, principal.RequestID)
 		return
 	}
 	if _, err = e.Store.Project(id); err == nil {

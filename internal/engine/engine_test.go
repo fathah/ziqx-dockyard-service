@@ -186,7 +186,7 @@ func TestUnknownRouteKeepsBothContainers(t *testing.T) {
 	r.err = model.Uncertain("ROUTE_OUTCOME_UNKNOWN")
 	e.execute(context.Background(), j)
 	got, _ := e.Store.Job(j.ID)
-	if got.Status != "recovery_required" || len(d.stopped) != 0 || e.Ready() {
+	if got.Status != "recovery_required" || len(d.stopped) != 0 || !e.Ready() || e.ProjectAdmission(j.ProjectID) == nil {
 		t.Fatal("unsafe unknown outcome", got, d.stopped)
 	}
 }
@@ -264,7 +264,7 @@ func TestOfflineComposeRecoveryDoesNotRequireCaddyRoute(t *testing.T) {
 			got, _ := e.Store.Job(j.ID)
 			p, _ = e.Store.Project(j.ProjectID)
 			if scenario == "drift" {
-				if err == nil || got.Status != "recovery_required" || e.Ready() || got.Finished != nil {
+				if err == nil || got.Status != "recovery_required" || !e.Ready() || e.ProjectAdmission(j.ProjectID) == nil || got.Finished != nil {
 					t.Fatal("cleared unverified recovery", p, got, err)
 				}
 			} else {

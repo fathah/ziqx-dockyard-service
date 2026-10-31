@@ -75,8 +75,8 @@ func (a *API) serviceImages(w http.ResponseWriter, r *http.Request, principal au
 	e := a.Engine
 	e.Admission.Lock()
 	defer e.Admission.Unlock()
-	if !e.Ready() {
-		problem(w, 503, "RECOVERY_REQUIRED", principal.RequestID)
+	if err := e.ProjectAdmission(id); err != nil {
+		fail(w, err, principal.RequestID)
 		return
 	}
 	p, err := e.Store.Project(id)

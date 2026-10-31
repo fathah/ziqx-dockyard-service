@@ -8,10 +8,10 @@ The desktop source version is **0.1.11**, targeting VPS service **0.7.38**. It r
 
 Use **Services → Pull & update → Seamless updates** for a stateless frontend or API with a Compose healthcheck. Dockyard keeps its replica count, checks all replacements and switches traffic before retiring the old group. Other services keep running. An internal API without a direct domain needs the opt-in [HAProxy integration](../docs/HAPROXY_UPDATES.md). Server updates are installed separately through **Server details → Updates** and leave application containers running.
 
-The local Apple Silicon app is **0.1.11**, in `releases/dockyard-0.1.11/Dockyard.app`. Its bundled VPS service is **0.7.38**; install it through **Server details → Updates** to enable immediate image metadata refresh and replica updates. Service rows show each live container's name and ID, with copy actions. From the repository root:
+The local Apple Silicon app is **0.1.12**, in `releases/dockyard-0.1.12/Dockyard.app`. Its bundled VPS service is **0.7.39**; install it through **Server details → Updates** to enable project-scoped recovery and recovery of verified failed worker updates. Configuration includes optional per-service healthchecks, and rejected deployments no longer leave an unconfirmed write behind. Service rows show each live container's name and ID, with copy actions. From the repository root:
 
 ```sh
-open desktop/releases/dockyard-0.1.11/Dockyard.app
+open desktop/releases/dockyard-0.1.12/Dockyard.app
 ```
 
 Quit any previously opened Dockyard instance first so the single-instance guard does not bring an older build to the foreground. This local artifact uses an ad-hoc signature; it is not notarized for distribution.
@@ -140,7 +140,7 @@ The desktop uses the existing certificate-pinned mTLS + HMAC API protocol. It do
 
 All writes have a native review dialog, separate from the webview. The desktop permits one outstanding write at a time. Before sending, Rust saves the exact JSON bytes, stable operation/request IDs, and an attempted marker in Keychain. A definitive rejection of the first attempt can clear the operation; any rejection after an uncertain attempt retains it, since authentication or policy changes do not prove the earlier request was never accepted. Uncertain outcomes retain them across restarts; **Retry safely** refreshes the timestamp/signature while reusing those bytes and IDs. Successful job acceptance retains the operation until its terminal result is read, then removes the payload from saved state. A saved operation prevents replacing or removing enrollment. A single-instance guard prevents concurrent desktop processes from overwriting the saved state. Never re-submit the same change with new IDs after a network error. If a recorded operation cannot be resolved because of key rotation or state recovery, inspect its IDs and the VPS before removing local state.
 
-Server `recovery_required` blocks API writes until local reconciliation; the API has no arbitrary host shell or recovery bypass. The separate root terminal has full VPS access after Touch ID. Backups, legacy adoption, other root-policy edits, database migrations and destructive cleanup remain explicit VPS operator work.
+From VPS service 0.7.39, `recovery_required` blocks API mutations only for the affected project until verified reconciliation; unrelated projects and Dockyard server updates remain available. A failed unrouted worker restart can be reconciled after its exact image/configuration and unchanged routes are verified, even while unhealthy, allowing a corrected Controlled restart deployment. Desktop 0.1.12 clears definite recovery/maintenance rejections and resolves older unconfirmed writes before new submissions; **Check & clear** performs the same read-only lookup without resending. Older services still apply their global recovery gate. The API has no arbitrary host shell or recovery bypass. The separate root terminal has full VPS access after Touch ID. Backups, legacy adoption, other root-policy edits, database migrations and destructive cleanup remain explicit VPS operator work.
 
 ## Configuring imported routes
 
@@ -187,6 +187,14 @@ Only the bundled `main` window has explicit command capabilities. Release CSP de
 The local artifact has a sealed ad-hoc signature, **not Developer ID notarization**. `desktop:build` applies `tauri.local.conf.json` with the ad-hoc identity. For Developer ID distribution, use `npm run desktop:release` without this local override and configure signing/notarization credentials in your build environment. For production, build with an Apple Developer ID identity using Tauri's documented [macOS signing](https://v2.tauri.app/distribute/sign/macos/) and notarization flow, keep a stable signing identity for Keychain ACLs, and verify the artifact on a clean Mac. Do not disable Gatekeeper, broaden Keychain access to all applications, or add updater/remote-content permissions as a workaround. The app's bundle config enables hardened runtime, but a local ad-hoc build is not equivalent to trusted Developer ID distribution. Do not revoke other legitimate clients until the enrolled desktop has been verified on staging.
 
 ## Validation
+
+Environment-file reads run independently of SSH version, access and repair
+checks. These checks do not reserve the exclusive native-workflow queue while
+waiting on GitHub or the VPS. Only actual macOS dialogs serialize; concurrent
+Touch ID requests recheck the two-minute approval window after waiting.
+Exclusive workflows queue, and session locking revokes work that has not started.
+Environment responses never hold the session mutex during authentication or HTTP
+waits, and are discarded if the session locks before delivery.
 
 Container log reads run independently of other API reads and have a 35-second
 deadline including native request waiting. The Logs panel shows failures and empty

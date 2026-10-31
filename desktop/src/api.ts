@@ -17,7 +17,7 @@ export const checkDomainHTTPS = (project: string, hostname: string) =>
 export const mutate = (mutation: unknown) =>
   invoke<{ job_id: string }>("mutate", { mutation });
 export const reconcileJob = (job: string) =>
-  invoke<{ status: string; error: string; project_state: string }>(
+  invoke<{ status: string; error: string; warning?: string; project_state: string }>(
     "reconcile_job",
     { job },
   );

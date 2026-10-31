@@ -19,6 +19,7 @@ type recoveryRunner struct {
 	hashes     map[string]string
 	reads      int
 	change     bool
+	changeID   bool
 }
 
 func (r *recoveryRunner) Run(_ context.Context, _ string, _ string, args []string) (process.Result, error) {
@@ -32,6 +33,9 @@ func (r *recoveryRunner) Run(_ context.Context, _ string, _ string, args []strin
 		r.reads++
 		if r.change && r.reads > 1 {
 			containers[0].State.Running = !containers[0].State.Running
+		}
+		if r.changeID && r.reads > 1 {
+			containers[0].ID = strings.Repeat("f", 64)
 		}
 		b, _ := json.Marshal(containers)
 		return process.Result{Output: b}, nil

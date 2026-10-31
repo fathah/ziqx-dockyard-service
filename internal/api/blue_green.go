@@ -62,8 +62,8 @@ func (a *API) blueGreen(w http.ResponseWriter, r *http.Request, principal auth.P
 			return
 		}
 	}
-	if !e.Ready() {
-		problem(w, 503, "RECOVERY_REQUIRED", principal.RequestID)
+	if err := e.ProjectAdmission(id); err != nil {
+		fail(w, err, principal.RequestID)
 		return
 	}
 	busy, err := e.Store.Busy(id)

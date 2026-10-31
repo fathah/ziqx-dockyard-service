@@ -3572,6 +3572,34 @@ body:has(.modal) {
   font-size: 14px;
   margin-top: 12px;
 }
+.compose-healthchecks {
+  margin-bottom: 12px;
+}
+.compose-healthchecks .configuration-note {
+  margin: 0;
+}
+.compose-healthchecks .accordion-content,
+.healthcheck-settings {
+  display: grid;
+  gap: 12px;
+}
+.healthcheck-settings > .button {
+  justify-self: start;
+}
+.healthcheck-settings .form-grid {
+  align-items: start;
+  margin-bottom: 0;
+}
+.healthcheck-dependency {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+}
+.healthcheck-dependency input[type="checkbox"] {
+  width: auto;
+  margin: 3px 0 0;
+}
 div.configuration-note {
   display: flex;
   align-items: center;

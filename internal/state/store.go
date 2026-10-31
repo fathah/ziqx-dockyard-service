@@ -16,7 +16,10 @@ import (
 	"time"
 )
 
-type Store struct{ DB *sql.DB }
+type Store struct {
+	DB  *sql.DB
+	dir string
+}
 
 func (s *Store) Capacity(maxQueue, maxProjects int, newProject bool) error {
 	var n int
@@ -82,7 +85,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_pending_project ON jobs(project_id) WHERE 
 		db.Close()
 		return nil, e
 	}
-	s := &Store{DB: db}
+	s := &Store{DB: db, dir: dir}
 	if e = s.migrateMetadata(); e != nil {
 		db.Close()
 		return nil, e
@@ -170,9 +173,9 @@ func (s *Store) RequestJob(key string) (model.Job, bool, error) {
 	j, e := s.Job(id)
 	return j, e == nil, e
 }
-func (s *Store) Blocked() (bool, error) {
+func (s *Store) Blocked(project string) (bool, error) {
 	var n int
-	e := s.DB.QueryRow("SELECT count(*) FROM jobs WHERE status='recovery_required'").Scan(&n)
+	e := s.DB.QueryRow("SELECT count(*) FROM jobs WHERE project_id=? AND status='recovery_required'", project).Scan(&n)
 	return n > 0, e
 }
 func (s *Store) Busy(id string) (bool, error) {

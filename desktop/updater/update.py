@@ -124,7 +124,19 @@ def main():
         fail('Unsafe updater lock file')
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return apply_update()
+        # New agents can work on unrelated projects during recovery. Keep
+        # admission paused until post-restart job preservation is verified,
+        # so rollback can never erase newly accepted deployment work.
+        directory(STATE.parent)
+        maintenance_fd = os.open(STATE.parent / 'maintenance.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            st = os.fstat(maintenance_fd)
+            if not stat.S_ISREG(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o077:
+                fail('Unsafe maintenance lock file')
+            fcntl.flock(maintenance_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return apply_update()
+        finally:
+            os.close(maintenance_fd)
     finally:
         os.close(lock_fd)
 
@@ -214,8 +226,8 @@ def apply_update():
         run('systemctl', 'start', 'dockyard', timeout=60)
         if not healthy():
             fail('Updated Dockyard service did not stay active')
-        # Recovery blocks admission and the worker. A binary update must retain
-        # that exact job/lock; it does not claim to have repaired the deployment.
+        # The maintenance lock pauses new work. Preserve recovery exactly;
+        # installing a binary does not repair the affected deployment.
         if jobs['recovery_count']:
             reviewed_jobs(release['jobs_sha256'])
         return {'status': 'updated', 'hashes': {n: digest(BIN / n) for n in NAMES}}

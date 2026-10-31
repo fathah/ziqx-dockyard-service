@@ -120,8 +120,8 @@ func (e *Engine) checkRoutes(ctx context.Context, observer routeObserver, attemp
 func (e *Engine) queueRouteRepair(projectID string) (string, error) {
 	e.Admission.Lock()
 	defer e.Admission.Unlock()
-	if !e.Ready() {
-		return "", model.Fail("RECOVERY_REQUIRED")
+	if err := e.ProjectAdmission(projectID); err != nil {
+		return "", err
 	}
 	if busy, err := e.Store.Busy(projectID); err != nil || busy {
 		return "", model.Fail("PROJECT_BUSY")

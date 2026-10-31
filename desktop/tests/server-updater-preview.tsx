@@ -21,10 +21,10 @@ function preview(): ServerUpdatePreview {
   const recovery = mode === "recovery";
   return {
     source_commit: "local",
-    candidate_version: "0.7.4",
+    candidate_version: "0.7.39",
     candidate_source: "github",
     release_check_error: null,
-    installed_version: "0.7.2",
+    installed_version: "0.7.38",
     installed_commit: "local",
     version_status: "update_available",
     candidate_dockyard: "a".repeat(64),
@@ -58,7 +58,7 @@ mockIPC((command) => {
       );
     if (mode === "running")
       throw new Error("The fixture must not apply while a job runs");
-    return "0.7.4";
+    return "0.7.39";
   }
   throw new Error("No server access in this fixture");
 });

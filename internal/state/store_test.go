@@ -51,7 +51,7 @@ func TestDurableReplayAndAudit(t *testing.T) {
 	if e = s.InterruptRunning(); e != nil {
 		t.Fatal(e)
 	}
-	blocked, _ := s.Blocked()
+	blocked, _ := s.Blocked(p.ID)
 	if !blocked {
 		t.Fatal("interruption did not block mutations")
 	}

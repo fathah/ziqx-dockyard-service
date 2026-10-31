@@ -28,6 +28,17 @@ sudo install -o root -g root -m 0755 dockyardctl-linux-amd64 /usr/local/bin/dock
 
 Then follow [installation and credentials](INSTALL.md). The daemon requires Linux/root, Docker Compose, Caddy and private policy/credentials before it can start. The downloaded operator client runs as a regular user with its authorized credentials.
 
+## 0.7.39 · Desktop 0.1.12 — unreleased
+
+- Scope recovery locks to the affected project. Other projects can accept and execute operations; recovery evidence and checks remain intact across restart.
+- Serialize online recovery with deployment side effects and keep control-service updates available when only recovery jobs remain. Pause new work briefly during updater verification so rollback cannot discard accepted jobs.
+- Explain the project recovery boundary in Deployments, Services and Server details.
+- Close verified failed worker restarts without requiring their health to pass, so corrected configurations can be deployed. Preserve the failed result and observed identity; keep routed or ambiguous recovery checks intact.
+- Clear definitive recovery/maintenance rejections from the desktop's unconfirmed request slot. Resolve older unconfirmed requests before a new submission and provide Check & clear.
+- Add per-service optional Docker health checks and configurable intervals in Configuration; suggested probes default to one minute. Existing health endpoints remain available for external monitors.
+
+Requires VPS service **0.7.39+** for project isolation and desktop **0.1.12+** for the new controls. Rebuild the Ubuntu bundle before packaging the desktop. This entry describes local source changes until a release is published.
+
 ## 0.7.38 · Desktop 0.1.11 — 2026-10-30
 
 - Refresh image metadata when returning to the app, after deployment completion, on Services refresh, and every minute while the project is visible. Hide previous results during project operations and when the project snapshot changes.

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ziqx/ziqx-dockyard-service/internal/auth"
 	"github.com/ziqx/ziqx-dockyard-service/internal/model"
 )
 
@@ -33,8 +34,8 @@ func TestReconcileJobFromDesktop(t *testing.T) {
 	if err := a.Engine.Store.Update(job, nil); err != nil {
 		t.Fatal(err)
 	}
-	if a.Engine.Ready() {
-		t.Fatal("recovery lock not held")
+	if !a.Engine.Ready() || a.Engine.ProjectAdmission(p.ID) == nil {
+		t.Fatal("recovery should lock only its project")
 	}
 	if w := send("POST", "/v1/jobs/job-dns/reconcile", "{}", "deploy.read", "r1"); w.Code != 403 {
 		t.Fatal("unscoped recovery accepted", w.Code, w.Body.String())
@@ -46,11 +47,48 @@ func TestReconcileJobFromDesktop(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "JOB_INTERRUPTED_RECONCILED") || dns.calls != 1 {
 		t.Fatal(w.Code, w.Body.String())
 	}
-	if !a.Engine.Ready() {
+	if !a.Engine.Ready() || a.Engine.ProjectAdmission(p.ID) != nil {
 		t.Fatal("recovery lock not released")
 	}
 	if w := send("POST", "/v1/jobs/job-dns/reconcile", "{}", "deploy.execute", "r4"); w.Code != 409 || !strings.Contains(w.Body.String(), "JOB_NOT_RECOVERABLE") {
 		t.Fatal("reconciled twice", w.Code, w.Body.String())
+	}
+}
+
+func TestRecoveryBlocksOnlyItsProjectAcrossAPIAdmissions(t *testing.T) {
+	a, _, _, send := apiFixture(t)
+	policy := a.Engine.Config
+	policy.Keys[0].Projects = []string{"*"}
+	var err error
+	a.Auth, err = auth.New(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := model.Project{ID: "broken", AppID: "broken", Environment: model.Production, Template: "node", State: "running", Active: "blue", Slots: map[string]model.Release{}, Releases: []model.Release{}}
+	job := model.Job{ID: "job-broken", ProjectID: p.ID, Action: "service_update", Status: "recovery_required", Phase: "service_candidate_intent", Error: "SERVICE_UPDATE_RECOVERY_REQUIRED", Created: time.Now()}
+	if err := a.Engine.Store.Accept(job, &p, "broken", "broken", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	if w := send("POST", "/v1/projects/broken/stop", "{}", "deploy.stop", "same-project"); w.Code != 503 || !strings.Contains(w.Body.String(), "RECOVERY_REQUIRED") {
+		t.Fatal("affected project was not held for recovery", w.Code, w.Body.String())
+	}
+	if w := send("GET", "/readyz", "", "deploy.read", "ready"); w.Code != 200 {
+		t.Fatal("unrelated work must remain available", w.Code, w.Body.String())
+	}
+	body := `{"id":"demo","app_id":"demo","environment":"production","template_id":"node","domains":["other.example.com"],"zerodowntime":false}`
+	w := send("POST", "/v1/projects", body, "projects.write", "create-unrelated")
+	if w.Code != 202 {
+		t.Fatal("unrelated project creation was blocked", w.Code, w.Body.String())
+	}
+	var queued model.Job
+	if err := json.Unmarshal(w.Body.Bytes(), &queued); err != nil {
+		t.Fatal(err)
+	}
+	if next, err := a.Engine.Store.Next(); err != nil || next.ID != queued.ID || next.ProjectID != "demo" {
+		t.Fatal("unrelated job is not runnable", next, err)
+	}
+	if got, err := a.Engine.Store.Job(job.ID); err != nil || got.Status != "recovery_required" || got.Error != job.Error {
+		t.Fatal("recovery evidence changed", got, err)
 	}
 }
 

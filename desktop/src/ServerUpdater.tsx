@@ -62,7 +62,7 @@ export default function ServerUpdater({
       );
       if (expected.jobs.recovery_count > 0)
         toast(
-          "Control service updated. The recovery job is preserved and still blocks deployments.",
+          "Control service updated. The recovery job is preserved for the affected project.",
         );
     }
   }
@@ -160,7 +160,7 @@ export default function ServerUpdater({
           <p>
             {jobs.active_count > 0
               ? `${jobs.active_count} queued or running operation${jobs.active_count === 1 ? "" : "s"}. Wait for completion, then check again before updating.`
-              : `${jobs.recovery_count} operation${jobs.recovery_count === 1 ? " requires" : "s require"} inspection. Updating the control service is allowed, but will not clear the job or unlock deployments.`}
+              : `${jobs.recovery_count} operation${jobs.recovery_count === 1 ? " requires" : "s require"} inspection. Recovery does not prevent control-service updates. On VPS service 0.7.39+, only the affected projects remain locked.`}
           </p>
           {[...jobs.active_jobs, ...jobs.recovery_jobs].map((job) => (
             <div className="server-update-job" key={job.job_id}>
@@ -202,10 +202,10 @@ export default function ServerUpdater({
           </p>
           {review.jobs.recovery_count > 0 && (
             <p>
-              <strong>The recovery lock stays in place.</strong> This update
-              replaces Dockyard’s binaries and restarts its control service. It
-              does not restart containers, import VPS Compose edits, or repair
-              the failed operation.
+              <strong>The affected project's recovery stays visible.</strong>{" "}
+              This update replaces Dockyard’s binaries and restarts its control
+              service. It does not restart containers, import VPS Compose edits,
+              or repair the failed operation.
             </p>
           )}
           <div className="server-updater-hashes">

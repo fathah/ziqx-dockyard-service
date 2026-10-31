@@ -51,8 +51,11 @@ const sentence = (code: string) =>
 
 // One short human line; raw codes stay in the tooltip.
 function stage(j: Job): string {
-  if (j.status === "succeeded") return j.warning_code ? sentence(j.warning_code) : "Done";
-  if (j.error_code === "JOB_INTERRUPTED_RECONCILED") return "Interrupted · recovered";
+  if (j.warning_code === "SERVICE_UNHEALTHY_RECONCILED") return "Update failed · ready to redeploy";
+  if (j.status === "succeeded")
+    return j.warning_code ? sentence(j.warning_code) : "Done";
+  if (j.error_code === "JOB_INTERRUPTED_RECONCILED")
+    return "Interrupted · recovered";
   if (j.error_code) return sentence(j.error_code);
   return phases[j.phase] ?? sentence(j.phase);
 }
@@ -78,7 +81,15 @@ const textFilter: FilterFn<Row> = (row, _id, value: string) => {
   const q = value.trim().toLowerCase();
   if (!q) return true;
   const j = row.original;
-  return [j.job_id, j.project, j.project_id, j.action, j.error_code, j.phase, j.actor_id]
+  return [
+    j.job_id,
+    j.project,
+    j.project_id,
+    j.action,
+    j.error_code,
+    j.phase,
+    j.actor_id,
+  ]
     .filter(Boolean)
     .some((v) => String(v).toLowerCase().includes(q));
 };
@@ -107,7 +118,9 @@ export default function JobsTable({
   const [status, setStatus] = useState<StatusFilter>("all");
   const [project, setProject] = useState("");
   const [search, setSearch] = useState("");
-  const [sorting, setSorting] = useState<SortingState>([{ id: "created_at", desc: true }]);
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: "created_at", desc: true },
+  ]);
   const [selected, setSelected] = useState<Row>();
 
   const rows = useMemo<Row[]>(
@@ -128,7 +141,8 @@ export default function JobsTable({
   );
   const counts = useMemo(() => {
     const c = {} as Record<StatusFilter, number>;
-    for (const t of statusTabs) c[t.id] = jobs.filter((j) => statusGroups[t.id](j.status)).length;
+    for (const t of statusTabs)
+      c[t.id] = jobs.filter((j) => statusGroups[t.id](j.status)).length;
     return c;
   }, [jobs]);
 
@@ -149,7 +163,9 @@ export default function JobsTable({
       }),
       column.accessor("project", {
         header: "Project",
-        cell: (c) => <span title={c.row.original.project_id}>{c.getValue()}</span>,
+        cell: (c) => (
+          <span title={c.row.original.project_id}>{c.getValue()}</span>
+        ),
       }),
       column.display({
         id: "stage",
@@ -159,7 +175,9 @@ export default function JobsTable({
           return (
             <span
               className="jobs-stage"
-              title={[j.phase, j.error_code, j.warning_code].filter(Boolean).join(" · ")}
+              title={[j.phase, j.error_code, j.warning_code]
+                .filter(Boolean)
+                .join(" · ")}
             >
               {stage(j)}
             </span>
@@ -170,7 +188,9 @@ export default function JobsTable({
         header: "Started",
         sortingFn: "datetime",
         cell: (c) => (
-          <span title={`${new Date(c.getValue()).toLocaleString()} · ${c.row.original.actor_id}`}>
+          <span
+            title={`${new Date(c.getValue()).toLocaleString()} · ${c.row.original.actor_id}`}
+          >
             {when(c.getValue())}
           </span>
         ),
@@ -215,7 +235,11 @@ export default function JobsTable({
   return (
     <>
       <div className="jobs-toolbar">
-        <div className="segments jobs-filters" role="tablist" aria-label="Filter by status">
+        <div
+          className="segments jobs-filters"
+          role="tablist"
+          aria-label="Filter by status"
+        >
           {statusTabs
             .filter((t) => t.id === "all" || counts[t.id] > 0)
             .map((t) => (
@@ -256,7 +280,11 @@ export default function JobsTable({
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={(e) => {
                 const id = search.trim();
-                if (e.key === "Enter" && /^job-[a-f0-9]{32}$/.test(id) && !jobs.some((j) => j.job_id === id))
+                if (
+                  e.key === "Enter" &&
+                  /^job-[a-f0-9]{32}$/.test(id) &&
+                  !jobs.some((j) => j.job_id === id)
+                )
                   void lookup(id);
               }}
             />
@@ -281,10 +309,17 @@ export default function JobsTable({
                     }
                   >
                     {h.column.getCanSort() && h.column.id !== "id" ? (
-                      <button type="button" onClick={h.column.getToggleSortingHandler()}>
+                      <button
+                        type="button"
+                        onClick={h.column.getToggleSortingHandler()}
+                      >
                         {flexRender(h.column.columnDef.header, h.getContext())}
-                        {h.column.getIsSorted() === "asc" && <ArrowUp size={12} />}
-                        {h.column.getIsSorted() === "desc" && <ArrowDown size={12} />}
+                        {h.column.getIsSorted() === "asc" && (
+                          <ArrowUp size={12} />
+                        )}
+                        {h.column.getIsSorted() === "desc" && (
+                          <ArrowDown size={12} />
+                        )}
                       </button>
                     ) : (
                       flexRender(h.column.columnDef.header, h.getContext())
@@ -318,7 +353,12 @@ export default function JobsTable({
                 {r.original.status === "recovery_required" && (
                   <tr className="jobs-detail">
                     <td colSpan={r.getVisibleCells().length}>
-                      <Recovery job={r.original} preview={preview} refresh={refresh} report={report} />
+                      <Recovery
+                        job={r.original}
+                        preview={preview}
+                        refresh={refresh}
+                        report={report}
+                      />
                     </td>
                   </tr>
                 )}
@@ -360,7 +400,10 @@ function Recovery({
   return (
     <div className="job-recovery">
       <div className="job-recovery-actions">
-        <span>Interrupted. New deployments wait until it's recovered.</span>
+        <span>
+          This project needs recovery before its next deployment. Other projects
+          can continue on VPS service 0.7.39+.
+        </span>
         <Button
           type="button"
           className="button small primary"
@@ -369,8 +412,10 @@ function Recovery({
           onClick={async () => {
             setBusy(true);
             try {
-              await api.reconcileJob(job.job_id);
-              toast.success("Recovered");
+              const result = await api.reconcileJob(job.job_id);
+              if (result.warning === "SERVICE_UNHEALTHY_RECONCILED")
+                toast("Failed update closed. Deploy the corrected configuration with Controlled restart.");
+              else toast.success("Recovered");
               await refresh();
             } catch (e) {
               report(e);
@@ -382,7 +427,11 @@ function Recovery({
           <RefreshCw size={14} />
           {busy ? "Recovering…" : "Recover"}
         </Button>
-        <button type="button" className="text-button" onClick={() => setManual(!manual)}>
+        <button
+          type="button"
+          className="text-button"
+          onClick={() => setManual(!manual)}
+        >
           {manual ? "Hide terminal steps" : "Server older than 0.7.6?"}
         </button>
       </div>

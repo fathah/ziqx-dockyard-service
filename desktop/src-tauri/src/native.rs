@@ -1,11 +1,16 @@
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+// Serialize actual macOS dialogs, never the SSH/HTTP work around them.
+static PROMPT_GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static PROMPT_DEPTH: AtomicUsize = AtomicUsize::new(0);
 static PROMPT_EPOCH: AtomicU64 = AtomicU64::new(0);
-struct PromptScope;
+struct PromptScope {
+    _gate: std::sync::MutexGuard<'static, ()>,
+}
 impl PromptScope {
     fn new() -> Self {
+        let gate = PROMPT_GATE.lock().unwrap_or_else(|e| e.into_inner());
         PROMPT_DEPTH.fetch_add(1, Ordering::SeqCst);
-        Self
+        Self { _gate: gate }
     }
 }
 impl Drop for PromptScope {
@@ -119,6 +124,9 @@ pub fn clear_authentication() {
 }
 pub fn authenticate_reason(reason_text: &str) -> Result<(), String> {
     use std::time::{Instant, SystemTime};
+    // Check reuse after waiting: a preceding authentication may have just
+    // approved this action, so concurrent requests need only one Touch ID.
+    let _prompt = PromptScope::new();
     let epoch = authentication().lock().map_err(|_| "Authentication unavailable")?
         .begin(Instant::now(), SystemTime::now());
     let Some(epoch) = epoch else { return Ok(()); };
@@ -129,7 +137,6 @@ pub fn authenticate_reason(reason_text: &str) -> Result<(), String> {
     result
 }
 fn authenticate_fresh(reason_text: &str) -> Result<(), String> {
-    let _prompt = PromptScope::new();
     use objc::runtime::{Object, BOOL, YES};
     use objc::{class, msg_send, sel, sel_impl};
     let (tx, rx) = std::sync::mpsc::channel();
@@ -296,5 +303,43 @@ pub fn app_is_active() -> bool {
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
         let active: BOOL = msg_send![app, isActive];
         active == YES
+    }
+}
+
+#[cfg(test)]
+mod prompt_tests {
+    use super::*;
+    use std::{sync::mpsc, time::Duration};
+
+    #[test]
+    fn macos_prompts_wait_for_each_other_and_release_after_the_dialog() {
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first = std::thread::spawn(move || {
+            with_prompt(|| {
+                started_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            })
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let second = std::thread::spawn(move || {
+            waiting_tx.send(()).unwrap();
+            with_prompt(|| {
+                assert!(prompt_state().0);
+                entered_tx.send(()).unwrap();
+            });
+        });
+        waiting_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            entered_rx.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        release_tx.send(()).unwrap();
+        entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        first.join().unwrap();
+        second.join().unwrap();
+        assert!(!prompt_state().0);
     }
 }

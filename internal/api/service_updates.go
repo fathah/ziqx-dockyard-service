@@ -62,8 +62,8 @@ func (a *API) serviceUpdate(w http.ResponseWriter, r *http.Request, principal au
 			return
 		}
 	}
-	if !e.Ready() {
-		problem(w, 503, "RECOVERY_REQUIRED", request)
+	if err := e.ProjectAdmission(id); err != nil {
+		fail(w, err, request)
 		return
 	}
 	busy, err := e.Store.Busy(id)

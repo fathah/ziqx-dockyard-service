@@ -1,5 +1,6 @@
 """Exercise rollback against disposable binaries and a real SQLite snapshot."""
 from contextlib import closing
+import fcntl
 import importlib.util
 import json
 import os
@@ -83,6 +84,20 @@ class UpdateTest(unittest.TestCase):
                         update.main()
                     run.assert_not_called()
                 self.assertEqual((self.bin / 'dockyard').read_bytes(), b'old-dockyard')
+
+    def test_admission_pauses_until_restart_verification_finishes(self):
+        self.job('recovery_required')
+        self.review_jobs()
+        lock_path = self.db.parent / 'maintenance.lock'
+        def verify():
+            with lock_path.open('rb') as lock:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(lock.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
+            return True
+        with mock.patch.object(update, 'run'), mock.patch.object(update, 'healthy', side_effect=verify):
+            self.assertEqual(update.main()['status'], 'updated')
+        with lock_path.open('rb') as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
 
     def test_recovery_update_preserves_exact_job_and_snapshot(self):
         data = self.job('recovery_required')

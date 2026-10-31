@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc, Mutex as SyncMutex,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -160,7 +160,7 @@ struct Control {
     generation: Arc<AtomicU64>,
     inner: Arc<Mutex<Inner>>,
     read_gate: Arc<Semaphore>,
-    native_prompt: Arc<AtomicBool>,
+    native_gate: Arc<Mutex<()>>,
     provider_gate: Arc<Mutex<()>>,
     setup: Arc<Mutex<Option<setup::Plan>>>,
     away: Arc<SyncMutex<AwayTimer>>,
@@ -179,7 +179,7 @@ impl Control {
             // The private tunnel admits four TCP connections. Keep one slot
             // available for commands, which remain serialized by `inner`.
             read_gate: Arc::new(Semaphore::new(3)),
-            native_prompt: Arc::new(AtomicBool::new(false)),
+            native_gate: Arc::new(Mutex::new(())),
             provider_gate: Arc::new(Mutex::new(())),
             setup: Arc::new(Mutex::new(None)),
             away: Arc::new(SyncMutex::new(AwayTimer::default())),
@@ -377,7 +377,7 @@ async fn setup_resume(app: tauri::AppHandle, c: State<'_, Control>) -> Result<Va
     let handle = app.clone();
     let saved = native_task(&c, move || {
         native::authenticate()?;
-        let bytes = native::with_prompt(native::load)?;
+        let bytes = native::load()?;
         let saved: Saved =
             serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid")?;
         let receipt = saved
@@ -529,23 +529,32 @@ fn named_environment_op(read: &Read) -> Result<Operation, String> {
     op.target.push_str("?env_files=1");
     Ok(op)
 }
-struct PromptGuard(Arc<AtomicBool>);
-impl Drop for PromptGuard {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
-    }
+async fn blocking_task<T: Send + 'static>(
+    task: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(task)
+        .await
+        .map_err(|_| "Native operation failed")?
 }
 async fn native_task<T: Send + 'static>(
     c: &Control,
     task: impl FnOnce() -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
-    if c.native_prompt.swap(true, Ordering::SeqCst) {
-        return Err("A native operation is already running".into());
-    }
-    let _guard = PromptGuard(c.native_prompt.clone());
-    tauri::async_runtime::spawn_blocking(task)
-        .await
-        .map_err(|_| "Native operation failed")?
+    let generation = c.generation.load(Ordering::SeqCst);
+    let current = c.generation.clone();
+    // Exclusive workflows queue instead of failing unrelated user actions.
+    // Reads use blocking_task; individual macOS dialogs serialize in native.
+    let gate = c.native_gate.clone().lock_owned().await;
+    blocking_task(move || {
+        // Keep ownership in the worker: cancelling its async caller cannot
+        // release exclusivity while a blocking operation is still running.
+        let _gate = gate;
+        if generation != current.load(Ordering::SeqCst) {
+            return Err("SESSION_LOCKED".into());
+        }
+        task()
+    })
+    .await
 }
 #[tauri::command]
 async fn session_info(c: State<'_, Control>) -> Result<Value, String> {
@@ -737,7 +746,7 @@ async fn forget_device(c: State<'_, Control>) -> Result<(), String> {
     c.clear().await;
     native_task(&c, || {
         native::authenticate()?;
-        let bytes = native::with_prompt(native::load)?;
+        let bytes = native::load()?;
         let saved: Saved =
             serde_json::from_slice(&bytes).map_err(|_| "Saved enrollment is invalid")?;
         if unresolved(&saved.pending) || saved.setup.is_some() {
@@ -920,7 +929,7 @@ where
 }
 fn definitive_initial_rejection(was_attempted: bool, error: &str) -> bool {
     !was_attempted
-        && [
+        && ([
             "HTTP_400:",
             "HTTP_401:",
             "HTTP_403:",
@@ -934,6 +943,7 @@ fn definitive_initial_rejection(was_attempted: bool, error: &str) -> bool {
         ]
         .iter()
         .any(|status| error.starts_with(status))
+        || matches!(error.lines().next(), Some("HTTP_503: RECOVERY_REQUIRED" | "HTTP_503: UPDATE_IN_PROGRESS")))
 }
 async fn execute_pending(s: &mut Session) -> Result<Value, String> {
     let op = s
@@ -1034,6 +1044,37 @@ async fn preview_route_setup(c: State<'_, Control>, project: String, data: proto
 }
 #[tauri::command]
 async fn read_env(c: State<'_, Control>, project: String) -> Result<Value, String> {
+    read_env_with(
+        &c,
+        project,
+        || native::authenticate_reason("View this project's environment secrets"),
+        |request, op| async move { send_request(request, &op).await },
+    )
+    .await
+}
+async fn environment_request(
+    c: &Control,
+    op: &Operation,
+    generation: u64,
+) -> Result<reqwest::RequestBuilder, String> {
+    let mut inner = c.inner.lock().await;
+    let s = session(&mut inner)?;
+    if s.generation != generation {
+        return Err("SESSION_LOCKED".into());
+    }
+    signed_request(s, op)
+}
+async fn read_env_with<A, F, Fut>(
+    c: &Control,
+    project: String,
+    authenticate: A,
+    mut send: F,
+) -> Result<Value, String>
+where
+    A: FnOnce() -> Result<(), String> + Send + 'static,
+    F: FnMut(reqwest::RequestBuilder, Operation) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
     // Touch ID reuses a success from the last two minutes (auth_window).
     let read = Read::Configuration { project };
     let op = read_op(&read)?;
@@ -1041,13 +1082,24 @@ async fn read_env(c: State<'_, Control>, project: String) -> Result<Value, Strin
         let mut inner = c.inner.lock().await;
         session(&mut inner)?.generation
     };
-    native_task(&c, || native::authenticate_reason("View this project's environment secrets")).await?;
-    let mut inner = c.inner.lock().await;
-    let s = session(&mut inner)?;
+    let lease = terminal::Lease {
+        generation: c.generation.clone(),
+        expected: generation,
+    };
+    blocking_task(move || {
+        lease.check()?;
+        authenticate()?;
+        lease.check()
+    })
+    .await?;
+    // Authentication and network waits must not own the exclusive workflow
+    // gate or the session mutex. Use the same bounded tunnel slots as reads.
+    let _permit = c.read_gate.acquire().await.map_err(|_| "SESSION_LOCKED")?;
+    let request = environment_request(c, &op, generation).await?;
     if generation != c.generation.load(Ordering::SeqCst) {
         return Err("SESSION_LOCKED".into());
     }
-    let mut data = SecretConfiguration(send(s, &op).await?);
+    let mut data = SecretConfiguration(send(request, op).await?);
     if generation != c.generation.load(Ordering::SeqCst) {
         return Err("SESSION_LOCKED".into());
     }
@@ -1056,7 +1108,11 @@ async fn read_env(c: State<'_, Control>, project: String) -> Result<Value, Strin
         // remove the main .env. Named secrets need this authenticated opt-in.
         let named_op = named_environment_op(&read)?;
         zeroize_json(&mut data.0);
-        data = SecretConfiguration(send(s, &named_op).await?);
+        let request = environment_request(c, &named_op, generation).await?;
+        if generation != c.generation.load(Ordering::SeqCst) {
+            return Err("SESSION_LOCKED".into());
+        }
+        data = SecretConfiguration(send(request, named_op).await?);
         if generation != c.generation.load(Ordering::SeqCst) {
             return Err("SESSION_LOCKED".into());
         }
@@ -1152,6 +1208,10 @@ async fn mutate(c: State<'_, Control>, mutation: Mutation) -> Result<Value, Stri
     let name = {
         let mut inner = c.inner.lock().await;
         let s = session(&mut inner)?;
+        if unresolved(&s.saved.pending) {
+            resolve_pending_session(s).await?;
+        }
+        if s.generation != c.generation.load(Ordering::SeqCst) { return Err("SESSION_LOCKED".into()); }
         if unresolved(&s.saved.pending) {
             return Err("Resolve the unconfirmed operation at the top first".into());
         }
@@ -1263,6 +1323,11 @@ fn unix_now() -> u64 {
 async fn resolve_pending(c: State<'_, Control>) -> Result<Value, String> {
     let mut inner = c.inner.lock().await;
     let s = session(&mut inner)?;
+    let result = resolve_pending_session(s).await?;
+    if s.generation != c.generation.load(Ordering::SeqCst) { return Err("SESSION_LOCKED".into()); }
+    Ok(result)
+}
+async fn resolve_pending_session(s: &mut Session) -> Result<Value, String> {
     let Some(pending) = s.saved.pending.as_ref() else { return Ok(json!({"outcome":"none"})) };
     let (attempted, sent_at, job_id, key) = (pending.attempted, pending.sent_at, pending.job_id.clone(), pending.operation.idempotency.clone());
     let clear = |s: &mut Session| -> Result<(), String> {
@@ -1308,7 +1373,6 @@ async fn resolve_pending(c: State<'_, Control>) -> Result<Value, String> {
         p.job_id = Some(job.clone());
         persist(&s.saved)?;
     }
-    if s.generation != c.generation.load(Ordering::SeqCst) { return Err("SESSION_LOCKED".into()); }
     Ok(json!({"outcome":"applied","job_id":job,"status":status}))
 }
 #[tauri::command]
@@ -1400,7 +1464,7 @@ async fn server_update_check(
     c: State<'_, Control>,
 ) -> Result<updater::Preview, String> {
     let (ssh, lease) = terminal_authority(&c).await?;
-    native_task(&c, move || {
+    blocking_task(move || {
         lease.check()?;
         let result = updater::check(&app, &ssh)?;
         lease.check()?;
@@ -1444,7 +1508,7 @@ async fn server_access_check(
         let mut inner = c.inner.lock().await;
         session(&mut inner)?.saved.enrollment.key_id.clone()
     };
-    native_task(&c, move || {
+    blocking_task(move || {
         lease.check()?;
         let result = updater::check_access(&app, &ssh, &key_id)?;
         lease.check()?;
@@ -1471,7 +1535,7 @@ async fn server_access_prepare(
 #[tauri::command]
 async fn server_repair_preview(app: tauri::AppHandle, c: State<'_, Control>, action: String) -> Result<updater::RepairPreview, String> {
     let (ssh, lease) = terminal_authority(&c).await?;
-    native_task(&c, move || {
+    blocking_task(move || {
         lease.check()?;
         let preview = updater::preview_repair(&app, &ssh, &action)?;
         lease.check()?;
@@ -1773,6 +1837,160 @@ mod transport_tests {
             },
         });
         c
+    }
+    #[test]
+    fn environment_read_does_not_wait_for_exclusive_work_or_block_other_reads() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let c = read_test_control().await;
+            let _exclusive = c.native_gate.lock().await;
+            let control = c.clone();
+            let result = tokio::time::timeout(
+                Duration::from_secs(2),
+                read_env_with(
+                    &c,
+                    "demo".into(),
+                    || Ok(()),
+                    move |_, op| {
+                        let control = control.clone();
+                        async move {
+                            assert_eq!(op.target, "/v1/projects/demo/configuration");
+                            assert!(
+                                control.inner.try_lock().is_ok(),
+                                "environment HTTP wait held the session mutex"
+                            );
+                            let projects =
+                                read_api_with(&control, Read::Projects {}, |_, _| async {
+                                    Ok(json!({"projects":[]}))
+                                })
+                                .await?;
+                            assert!(projects["projects"].is_array());
+                            Ok(json!({"release_id":"rel-test", "env_file":"SECRET=test"}))
+                        }
+                    },
+                ),
+            )
+            .await
+            .expect("environment read waited for unrelated native work")
+            .unwrap();
+            assert_eq!(result["env_file"], "SECRET=test");
+            assert_eq!(result["release_id"], "rel-test");
+        });
+    }
+    #[test]
+    fn environment_read_requires_authentication_and_rejects_revoked_secrets() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let c = read_test_control().await;
+            let denied = read_env_with(&c, "demo".into(), || Err("Touch ID denied".into()), |_, _| async {
+                panic!("an unauthenticated read reached the server");
+            }).await;
+            assert_eq!(denied.unwrap_err(), "Touch ID denied");
+            // Revoke during authentication, the initial read, or the named-file
+            // opt-in. None may deliver environment values to the webview.
+            for revoke_at in [Some(0), Some(1), Some(2), None] {
+                let c = read_test_control().await;
+                let auth_generation = c.generation.clone();
+                let response_generation = c.generation.clone();
+                let mut requests = 0;
+                let result = read_env_with(&c, "demo".into(), move || {
+                    if revoke_at == Some(0) { auth_generation.fetch_add(1, Ordering::SeqCst); }
+                    Ok(())
+                }, |_, op| {
+                    requests += 1;
+                    if Some(requests) == revoke_at { response_generation.fetch_add(1, Ordering::SeqCst); }
+                    if requests == 2 {
+                        assert_eq!(op.target, "/v1/projects/demo/configuration?env_files=1");
+                    }
+                    std::future::ready(Ok(if requests == 1 {
+                        json!({"env_file":"MAIN_SECRET=test", "env_files_supported":true})
+                    } else {
+                        json!({"env_file":"MAIN_SECRET=test", "env_files":{".env.backend":"BACKEND_SECRET=test"}})
+                    }))
+                }).await;
+                if let Some(revoke_at) = revoke_at {
+                    assert_eq!(result.unwrap_err(), "SESSION_LOCKED");
+                    assert_eq!(requests, revoke_at);
+                } else {
+                    let data = result.unwrap();
+                    assert_eq!(data["env_file"], "MAIN_SECRET=test");
+                    assert_eq!(data["env_files"][".env.backend"], "BACKEND_SECRET=test");
+                    assert_eq!(requests, 2);
+                }
+            }
+        });
+    }
+    #[test]
+    fn native_workflows_queue_and_remain_exclusive_after_caller_cancellation() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let c = Control::new();
+            let control = c.clone();
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel();
+            let first = tokio::spawn(async move {
+                native_task(&control, move || {
+                    started_tx.send(()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                    Ok(())
+                })
+                .await
+            });
+            started_rx.await.unwrap();
+            first.abort();
+            assert!(first.await.unwrap_err().is_cancelled());
+            let control = c.clone();
+            let mut second =
+                tokio::spawn(async move { native_task(&control, || Ok("queued")).await });
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), &mut second)
+                    .await
+                    .is_err(),
+                "cancelling a caller released its still-running native worker"
+            );
+            release_tx.send(()).unwrap();
+            assert_eq!(
+                tokio::time::timeout(Duration::from_secs(2), second)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap(),
+                "queued"
+            );
+        });
+    }
+    #[test]
+    fn queued_native_work_cannot_run_in_a_new_session() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let c = Control::new();
+            let exclusive = c.native_gate.lock().await;
+            let control = c.clone();
+            let (queued_tx, queued_rx) = tokio::sync::oneshot::channel();
+            let queued = tokio::spawn(async move {
+                queued_tx.send(()).unwrap();
+                native_task(&control, || -> Result<(), String> {
+                    panic!("queued native work crossed a session change");
+                })
+                .await
+            });
+            queued_rx.await.unwrap();
+            c.generation.fetch_add(1, Ordering::SeqCst);
+            drop(exclusive);
+            assert_eq!(queued.await.unwrap().unwrap_err(), "SESSION_LOCKED");
+        });
     }
     #[test]
     fn configuration_read_redacts_every_environment_file_before_webview_delivery() {
@@ -2141,11 +2359,15 @@ mod transport_tests {
             "HTTP_409:",
             "HTTP_429:",
             "CONNECTION_UNAVAILABLE:",
+            "HTTP_503: RECOVERY_REQUIRED",
+            "HTTP_503: UPDATE_IN_PROGRESS",
         ] {
             assert!(definitive_initial_rejection(false, status));
             assert!(!definitive_initial_rejection(true, status));
         }
         assert!(!definitive_initial_rejection(false, "HTTP_500:"));
+        assert!(!definitive_initial_rejection(false, "HTTP_503: STATE_WRITE_FAILED"));
+        assert!(!definitive_initial_rejection(false, "HTTP_503: DEPENDENCY_UNAVAILABLE"));
         assert!(!definitive_initial_rejection(false, "NETWORK_UNCERTAIN:"));
         let op = Mutation::Restart {
             project: "demo".into(),

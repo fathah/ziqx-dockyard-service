@@ -54,6 +54,18 @@ services:
 
 Safe existing `.env.*` files in the VPS project folder appear in the editor for adoption. Each deployment privately snapshots its managed files; save alone does not change running services. Additional build contexts, bind sources, includes, configs, and unmanaged secret/env files must already exist on the VPS. Relative paths resolve from `/docker/<project-id>`. Dockyard uploads Compose and managed environment inputs; it does not upload a source tree. Use Docker healthchecks for application readiness. Without them, Compose waits for services to run, which does not prove application readiness.
 
+### Optional recurring health checks
+
+In **Configuration → Health checks**, select a service and choose **Off** or set a check interval such as `1m` or `5m`, then **Apply to Compose**. Save keeps the change as a draft; Deploy applies the new settings using the selected deployment strategy. Controlled restart recreates the full stack. New probes suggested by Dockyard default to one minute. Existing Compose settings are preserved until you edit them.
+
+Off writes `healthcheck.disable: true`, including for probes inherited from an image. The configured command is retained so it can be enabled again. If another service uses `depends_on: condition: service_healthy`, explicitly choose to wait for container startup instead before applying Off. Dockyard changes only those dependencies on the selected service. Changes involving shared YAML anchor definitions must be made directly in the editor.
+
+Enabled uses the existing Compose or image healthcheck command; an image without one still needs a command in Compose. The interval controls recurring Docker probes; timeout, retries and startup timing remain as configured. This does not schedule a cron job or stop probes automatically after a startup window. HAProxy's own backend probes are configured separately in HAProxy.
+
+With checks off, controlled deployments still verify container identity and running state, but cannot prove application readiness from a Docker health result. Seamless and blue-green deployments retain their healthcheck requirement. Turning checks off selects Controlled restart in the configuration editor. This does not fix a crashing application or invalid environment settings.
+
+Application health endpoints remain available to UptimeRobot or a future cron task independently of Docker's healthcheck setting. Dockyard itself already serves `/healthz` (agent liveness) and `/readyz` (local admission/recovery readiness), with the same private mTLS access as the API; neither periodically probes project endpoints.
+
 A successful deployment mirrors submitted `compose.yml`, main `.env`, and managed `.env.*` files into `/docker/<project-id>/`. Docker runs private, verified revisions. Normal API reads expose safe service metadata from SQLite; environment values and resolved source are write-only.
 
 ## Authorization

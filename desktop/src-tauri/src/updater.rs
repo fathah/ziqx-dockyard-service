@@ -824,7 +824,7 @@ pub fn apply(
         return Err("Dockyard jobs changed since your update review. Check the server again before updating".into());
     }
     native::authenticate_reason(if current.jobs.recovery_count > 0 {
-        "Update Dockyard while preserving its recovery jobs and write lock. This does not repair the failed deployment."
+        "Update Dockyard while preserving recovery jobs for the affected projects. This does not repair the failed deployment."
     } else {
         "Update and restart the Dockyard control service on your VPS"
     })?;

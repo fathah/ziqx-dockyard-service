@@ -1,4 +1,5 @@
 import Button from "./Button";
+import { version as desktopVersion } from "../package.json";
 import useRecentProjects from "./useRecentProjects";
 import DomainHTTPS from "./DomainHTTPS";
 import { domainTarget } from "./domainRoutes";
@@ -679,7 +680,7 @@ function App() {
     try {
       const result = await api.resolvePending();
       if (result.outcome === "not_applied" || result.outcome === "not_sent")
-        toast.success("It was never applied. Nothing changed.");
+        toast.success("Unaccepted request discarded. You can submit a new operation.");
       else if (result.outcome === "applied")
         toast.success(`Found it · ${result.status?.replaceAll("_", " ")}`);
       await refresh();
@@ -907,7 +908,7 @@ function App() {
                   disabled={busy}
                   onClick={() => void doResolve()}
                 >
-                  Check
+                  Check & clear
                 </Button>
               </div>
             )}
@@ -1106,7 +1107,7 @@ function App() {
                     : updated
                       ? `Last read ${ago(updated)}`
                       : "Awaiting private connection"}
-                  <span className="footer-dot">·</span>v0.1.0
+                  <span className="footer-dot">·</span>v{desktopVersion}
                 </span>
               </footer>
             )}
@@ -1662,7 +1663,9 @@ export function ProjectDetail({
       .filter((job) => job.project_id === p.id)
       .map((job) => [job.job_id, job.status, job.finished_at]),
   );
-  const recoveryJob = jobs.find((job) => job.status === "recovery_required");
+  const recoveryJob = jobs.find(
+    (job) => job.project_id === p.id && job.status === "recovery_required",
+  );
   const projectOperation = jobs.find(
     (job) =>
       job.project_id === p.id && ["queued", "running"].includes(job.status),
@@ -2164,8 +2167,9 @@ export function ProjectDetail({
               <div>
                 <strong>Recovery required</strong>
                 <p>
-                  An interrupted server operation blocks updates. Resolve it in
-                  Deployments, then refresh Services.
+                  This project has an operation awaiting recovery. Resolve it in
+                  Deployments, then refresh Services. Other projects can
+                  continue.
                 </p>
               </div>
               {openDeployments && (

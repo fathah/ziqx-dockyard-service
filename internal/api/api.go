@@ -72,7 +72,7 @@ func fail(w http.ResponseWriter, err error, request string) {
 	switch code {
 	case "QUEUE_FULL", "PROJECT_LIMIT":
 		status = 429
-	case "DEPENDENCY_UNAVAILABLE", "DOCKER_UNAVAILABLE", "CADDY_UNAVAILABLE", "CADDY_CONFIG_WRITE_REQUIRED", "RECOVERY_REQUIRED", "METADATA_UNAVAILABLE":
+	case "DEPENDENCY_UNAVAILABLE", "DOCKER_UNAVAILABLE", "CADDY_UNAVAILABLE", "CADDY_CONFIG_WRITE_REQUIRED", "RECOVERY_REQUIRED", "UPDATE_IN_PROGRESS", "STATE_WRITE_FAILED", "METADATA_UNAVAILABLE":
 		status = 503
 	case "HOSTNAME_INVALID", "HOSTNAME_NOT_ALLOWED", "PORT_INVALID", "ENVIRONMENT_INVALID", "ENV_FILES_INVALID", "IMAGE_INVALID", "REQUEST_INVALID", "COMPOSE_INVALID", "COMPOSE_PERSISTENT_BLUE_GREEN", "COMPOSE_RESOURCE_LIMIT":
 		status = 400
@@ -92,9 +92,11 @@ func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == "GET" && (r.URL.Path == "/healthz" || r.URL.Path == "/readyz") {
-		if r.URL.Path == "/readyz" && !a.Engine.Ready() {
-			problem(w, 503, "RECOVERY_REQUIRED", "")
-			return
+		if r.URL.Path == "/readyz" {
+			if err := a.Engine.Availability(); err != nil {
+				fail(w, err, "")
+				return
+			}
 		}
 		write(w, 200, map[string]string{"status": "ok"})
 		return
@@ -899,8 +901,8 @@ func (a *API) mutate(w http.ResponseWriter, r *http.Request, principal auth.Prin
 		accepted(w, j)
 		return
 	}
-	if !e.Ready() {
-		problem(w, 503, "RECOVERY_REQUIRED", request)
+	if err := e.ProjectAdmission(id); err != nil {
+		fail(w, err, request)
 		return
 	}
 	busy, err := e.Store.Busy(id)

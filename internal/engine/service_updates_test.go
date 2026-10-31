@@ -21,6 +21,69 @@ type updatingDocker struct {
 
 type resolvingServiceDocker struct{ *updatingDocker }
 
+type failedRestartDocker struct {
+	*updatingDocker
+	observeErr error
+}
+
+func (d *failedRestartDocker) HealthyServiceUpdate(context.Context, model.Project, model.ServiceUpdate) error {
+	return model.Fail("SERVICE_UNHEALTHY")
+}
+func (d *failedRestartDocker) ObserveFailedServiceRestart(_ context.Context, _ model.Project, plan model.ServiceUpdate) (model.ServiceInstance, error) {
+	instance := plan.Instance
+	instance.ContainerIDs = []string{strings.Repeat("b", 64)}
+	return instance, d.observeErr
+}
+
+func TestFailedWorkerRecoveryUnlocksCorrectedDeploymentWithoutClaimingHealth(t *testing.T) {
+	for _, scenario := range []string{"verified-worker", "unverified-worker", "routed-app"} {
+		t.Run(scenario, func(t *testing.T) {
+			e, j, base, _, events := serviceFixture(t, "restart")
+			old, next := *j.Input.Previous, *j.Input.Project
+			old.Mode, next.Mode = "compose", "compose"
+			plan := *j.Input.ServiceUpdate
+			plan.Service, plan.Instance.Name = "worker", "worker"
+			if scenario == "routed-app" {
+				plan.Service, plan.Instance.Name = "web", "web"
+			}
+			plan.Instance.Release.Image = "new-worker-image"
+			next.ServiceInstances[plan.Service] = plan.Instance
+			j.Input.Previous, j.Input.Project, j.Input.ServiceUpdate = &old, &next, &plan
+			j.Status, j.Error = "recovery_required", "SERVICE_UPDATE_RECOVERY_REQUIRED"
+			if err := e.Store.Update(j, &old); err != nil {
+				t.Fatal(err)
+			}
+			d := &failedRestartDocker{updatingDocker: base}
+			if scenario == "unverified-worker" {
+				d.observeErr = model.Uncertain("SERVICE_IDENTITY_CHANGED")
+			}
+			e.Docker = d
+			err := e.Reconcile(context.Background(), j.ID)
+			got, _ := e.Store.Job(j.ID)
+			if len(*events) != 0 {
+				t.Fatal("failed recovery changed containers or traffic", *events)
+			}
+			if scenario != "verified-worker" {
+				if err == nil || got.Status != "recovery_required" || e.ProjectAdmission(j.ProjectID) == nil {
+					t.Fatal("cleared unverified or routed recovery", got, err)
+				}
+				return
+			}
+			if err != nil || got.Status != "failed" || got.Warning != "SERVICE_UNHEALTHY_RECONCILED" || e.ProjectAdmission(j.ProjectID) != nil {
+				t.Fatal("failed worker still prevents deploying a fix", got, err)
+			}
+			p, _ := e.Store.Project(j.ProjectID)
+			if p.ServiceInstances["worker"].Release.Image != "new-worker-image" || len(p.ServiceInstances["worker"].ContainerIDs) != 1 || p.RouteService != old.RouteService || p.BluePort != old.BluePort {
+				t.Fatal("lost observed identity or changed routes", p)
+			}
+			repair := model.Job{ID: "job-corrected-deploy", ProjectID: p.ID, Action: "deploy", Status: "queued"}
+			if err := e.Store.Accept(repair, nil, "corrected-deploy", "corrected-deploy", 10, 10); err != nil {
+				t.Fatal("corrected deployment cannot be queued", err)
+			}
+		})
+	}
+}
+
 // Model Docker reassigning an automatic port when network aliases are promoted.
 type rebindingServiceDocker struct {
 	*updatingDocker

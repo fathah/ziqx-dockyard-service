@@ -638,6 +638,49 @@ func (d Docker) HealthyServiceUpdate(ctx context.Context, p model.Project, plan 
 	return nil
 }
 
+// Record a failed controlled restart without claiming that its app is healthy.
+// The immutable Compose hash and image identify the replacement even when a
+// crash loop prevents the original update from recording its new container IDs.
+func (d Docker) ObserveFailedServiceRestart(ctx context.Context, p model.Project, plan model.ServiceUpdate) (model.ServiceInstance, error) {
+	instance := plan.Instance
+	if plan.Mode != "restart" || plan.Proxy != nil || instance.Release.Image == "" {
+		return instance, model.Uncertain("SERVICE_RECOVERY_REQUIRES_INSPECTION")
+	}
+	before, err := d.inspectServiceContainers(ctx, p, instance)
+	if err != nil {
+		return instance, err
+	}
+	if !instanceIdentity(instance, before) {
+		return instance, model.Uncertain("SERVICE_IDENTITY_CHANGED")
+	}
+	hashes, err := d.recoveryHashes(ctx, p, instance.Release)
+	if err != nil {
+		return instance, err
+	}
+	for _, c := range before {
+		if hashes[instance.Name] == "" || c.Config.Labels["com.docker.compose.config-hash"] != hashes[instance.Name] {
+			return instance, model.Uncertain("COMPOSE_LIVE_RELEASE_UNKNOWN")
+		}
+	}
+	instance.ContainerID, instance.ContainerIDs = "", nil
+	for _, c := range before {
+		instance.ContainerIDs = append(instance.ContainerIDs, c.ID)
+	}
+	after, err := d.inspectServiceContainers(ctx, p, instance)
+	if err != nil {
+		return instance, err
+	}
+	if !instanceIdentity(instance, after) {
+		return instance, model.Uncertain("SERVICE_IDENTITY_CHANGED")
+	}
+	for _, c := range after {
+		if c.Config.Labels["com.docker.compose.config-hash"] != hashes[instance.Name] {
+			return instance, model.Uncertain("COMPOSE_LIVE_RELEASE_UNKNOWN")
+		}
+	}
+	return instance, nil
+}
+
 func healthyServiceContainer(ctx context.Context, p model.Project, plan model.ServiceUpdate, c Container) error {
 	if !c.State.Running || c.Image != plan.Instance.Release.Image || c.State.Health != nil && c.State.Health.Status != "healthy" || plan.Mode == "seamless" && c.State.Health == nil {
 		return model.Fail("SERVICE_UNHEALTHY")

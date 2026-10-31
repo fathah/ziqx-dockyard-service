@@ -167,7 +167,9 @@ New project creation requires `app_id` plus `environment`; new Compose deploy re
 
 ## Interrupted jobs
 
-Any job left running at restart becomes `recovery_required`. Unknown route/DNS outcomes also use that state, and all mutation admissions/worker claims stop. Read APIs remain available. Both app containers are retained; stopping the agent never stops serving apps.
+Any job left running at restart becomes `recovery_required`. Unknown route/DNS outcomes also use that state. From 0.7.39, the recovery lock applies only to the affected project; other projects can accept and execute jobs. Read APIs, configuration draft saving and Dockyard server updates remain available. Recovery does not mark a failed deployment healthy or bypass container/route verification. Shared Caddy changes still require coherent disk/live routing. Stopping the agent never stops serving apps.
+
+Control-service updates refuse queued/running work, but allow recovery-only jobs and preserve their exact records. During replacement and startup verification, the updater holds `/var/lib/dockyard/maintenance.lock` exclusively. The daemon pauses admissions and worker claims until it is released; a crashed updater releases the advisory lock automatically, so the file itself does not leave a permanent block. This prevents accepted work from being lost if the update has to restore its database backup.
 
 Inspect the job/status, then stop the daemon and reconcile locally:
 
@@ -182,6 +184,10 @@ For projects with managed routes, reconciliation requires the full live Caddy JS
 For individual service updates, recovery verifies the original routes and service identity if traffic has not switched. An interruption in `pulling` occurs before any candidate start; reconciliation preserves the current services and the reusable reserved ports. If a candidate was journaled, recovery may clean up that verified candidate, or finish draining the old app after positively verifying the new route and app. Waiting or refreshing does not clear a recovery lock. Inspect the Dockyard journal for the interruption's cause before retrying. Version 0.7.2 fixes a crash after pulling the first individual service update from a persisted job; update the server before retrying that failure.
 
 If the filesystem/live route is divergent, no recognized snippet exists, or the serving container cannot be verified, reconciliation refuses to clear the block. Preserve evidence and restore a known, coherent configuration under an explicit operator recovery procedure. Automatic compensation of these cases is not implemented. A failed initial provisioning job is left visible rather than silently adopted or retried.
+
+From 0.7.39, a failed controlled restart of a service without assigned public domains can be closed even while it is unhealthy: recovery verifies its immutable Compose configuration hash, image, replica/container identity and unchanged public routes. It records the observed replacement and finishes the job as failed with `SERVICE_UNHEALTHY_RECONCILED`, preserving a diagnostic that health is still failing. The project can then accept a corrected configuration deployment using Controlled restart. No container is started or stopped by this recovery branch. Routed apps, unknown identities, changed routes, and ambiguous configuration remain subject to their existing recovery checks.
+
+Desktop 0.1.12 clears a first-attempt `503 RECOVERY_REQUIRED` or `UPDATE_IN_PROGRESS` rejection rather than keeping an unconfirmed write. Existing unconfirmed writes can be resolved with **Check & clear**; a new submission also tries a read-only request lookup first. It clears a request only after the server confirms absence and the signed-request settling window has elapsed, or tracks the accepted job if one exists. Unknown network outcomes are retained for inspection rather than resent automatically.
 
 ## Backups and quotas
 

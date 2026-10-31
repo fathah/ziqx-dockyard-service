@@ -157,3 +157,21 @@ func TestUnknownCaddyOutcomeJournalsObservedRoute(t *testing.T) {
 		t.Fatal("unknown Caddy outcome must journal the candidate for recovery", j)
 	}
 }
+
+func TestRouteWatcherRepairsOtherProjectsDuringRecovery(t *testing.T) {
+	e, d, _ := driftFixture(t)
+	p := model.Project{ID: "broken", AppID: "broken", Environment: model.Production, State: "running", Slots: map[string]model.Release{}}
+	j := model.Job{ID: "job-recovery", ProjectID: p.ID, Action: "service_update", Status: "recovery_required", Created: time.Now()}
+	if err := e.Store.Accept(j, &p, "broken", "broken", 10, 10); err != nil {
+		t.Fatal(err)
+	}
+	d.live = 32773
+	e.checkRoutes(context.Background(), d, map[string]routeAttempt{}, map[string]string{})
+	repair, queued := runQueued(t, e)
+	if !queued || repair.ProjectID != "site" || repair.Status != "succeeded" {
+		t.Fatal("unrelated route repair was blocked", repair)
+	}
+	if _, err := e.queueRouteRepair("broken"); err == nil {
+		t.Fatal("queued a route mutation on the recovering project")
+	}
+}

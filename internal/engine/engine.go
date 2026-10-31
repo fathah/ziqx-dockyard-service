@@ -48,6 +48,7 @@ type Engine struct {
 	Routes    Routes
 	DNS       DNS
 	Admission sync.Mutex
+	execution sync.Mutex // serializes recovery with the one deployment worker
 	wake      chan struct{}
 	failed    atomic.Bool
 	log       io.Writer // current job's deployment log; one worker runs jobs
@@ -62,11 +63,38 @@ func TemplateHash(t config.Template) string {
 	return hex.EncodeToString(h[:])
 }
 func (e *Engine) Ready() bool {
+	return e.Availability() == nil
+}
+
+// Recovery belongs to a project. Only a durable state failure or the short
+// updater maintenance window prevents work across the entire server.
+func (e *Engine) Availability() error {
 	if e.failed.Load() {
-		return false
+		return model.Uncertain("STATE_WRITE_FAILED")
 	}
-	b, err := e.Store.Blocked()
-	return err == nil && !b
+	available, err := e.Store.Available()
+	if err != nil {
+		return model.Uncertain("STATE_WRITE_FAILED")
+	}
+	if !available {
+		return model.Fail("UPDATE_IN_PROGRESS")
+	}
+	return nil
+}
+
+// Call under Admission before preparing or accepting a project mutation.
+func (e *Engine) ProjectAdmission(id string) error {
+	if err := e.Availability(); err != nil {
+		return err
+	}
+	blocked, err := e.Store.Blocked(id)
+	if err != nil {
+		return model.Uncertain("STATE_WRITE_FAILED")
+	}
+	if blocked {
+		return model.FailDetail("RECOVERY_REQUIRED", "This project has an operation awaiting recovery. Other projects can continue.")
+	}
+	return nil
 }
 func (e *Engine) Notify() {
 	select {
@@ -158,6 +186,10 @@ func (e *Engine) Run(ctx context.Context) error {
 			continue
 		}
 		e.Admission.Lock()
+		if !e.Ready() {
+			e.Admission.Unlock()
+			continue
+		}
 		j, err := e.Store.Next()
 		if err == nil {
 			j.Status = "running"
@@ -234,6 +266,8 @@ func (e *Engine) phase(j *model.Job, phase string) error {
 	return nil
 }
 func (e *Engine) execute(ctx context.Context, j model.Job) {
+	e.execution.Lock()
+	defer e.execution.Unlock()
 	log, closeLog := e.openJobLog(j)
 	defer closeLog()
 	if log != nil {
@@ -699,6 +733,15 @@ func (e *Engine) AvailablePorts(ctx context.Context, count int, exclude map[int]
 // Reconcile is a local root operation while the daemon is stopped. It never
 // stops containers or guesses which healthy instance receives traffic.
 func (e *Engine) Reconcile(ctx context.Context, id string) error {
+	e.execution.Lock()
+	defer e.execution.Unlock()
+	return e.reconcile(ctx, id)
+}
+
+func (e *Engine) reconcile(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	j, err := e.Store.Job(id)
 	if err != nil {
 		return err
@@ -828,7 +871,9 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 	j.Status = "failed"
 	j.Error = "JOB_INTERRUPTED_RECONCILED"
 	j.Phase = "reconciled"
-	j.Warning = "CONTAINERS_PRESERVED"
+	if j.Warning != "SERVICE_UNHEALTHY_RECONCILED" {
+		j.Warning = "CONTAINERS_PRESERVED"
+	}
 	if !routeOnlyJob(j) {
 		p.RecoveryDrain = j.Action != "service_update" && j.Action != "configuration_update" && j.Action != "route_repair"
 	}
@@ -838,15 +883,22 @@ func (e *Engine) Reconcile(ctx context.Context, id string) error {
 }
 
 // ReconcileOnline runs the same verified recovery from inside the daemon, so
-// the operator never needs a VPS shell. Any recovery_required job blocks the
-// worker (Ready is false), and Admission excludes new jobs while it runs.
+// the operator never needs a VPS shell. Recovery and deployment side effects
+// share the execution lock; Admission protects the recovered project snapshot.
 func (e *Engine) ReconcileOnline(ctx context.Context, id string) (model.Job, model.Project, error) {
 	e.Admission.Lock()
 	defer e.Admission.Unlock()
-	if e.failed.Load() {
-		return model.Job{}, model.Project{}, model.Uncertain("STATE_WRITE_FAILED")
+	if err := e.Availability(); err != nil {
+		return model.Job{}, model.Project{}, err
 	}
-	if err := e.Reconcile(ctx, id); err != nil {
+	if !e.execution.TryLock() {
+		return model.Job{}, model.Project{}, model.Fail("PROJECT_BUSY")
+	}
+	defer e.execution.Unlock()
+	if err := e.Availability(); err != nil {
+		return model.Job{}, model.Project{}, err
+	}
+	if err := e.reconcile(ctx, id); err != nil {
 		return model.Job{}, model.Project{}, err
 	}
 	j, err := e.Store.Job(id)

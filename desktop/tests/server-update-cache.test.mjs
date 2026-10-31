@@ -36,6 +36,34 @@ function deferred() {
   return { promise, resolve };
 }
 
+test("recovery-only jobs allow a control-service update and remain visible after it", async () => {
+  const value = preview();
+  value.jobs.recovery_count = 1;
+  value.jobs.recovery_jobs = [
+    {
+      job_id: "job-broken",
+      project_id: "broken",
+      status: "recovery_required",
+      action: "service_update",
+      phase: "service_candidate_intent",
+      error_code: "SERVICE_UPDATE_RECOVERY_REQUIRED",
+    },
+  ];
+  let installed;
+  const entry = createServerUpdateCache(
+    async () => value,
+    async (expected) => {
+      installed = expected;
+      return expected.candidate_version;
+    },
+  ).entry("server");
+  await entry.start();
+  assert.equal(await entry.apply(value), true);
+  assert.equal(installed.jobs.active_count, 0);
+  assert.deepEqual(entry.snapshot().preview.jobs, value.jobs);
+  assert.equal(entry.snapshot().preview.version_status, "current");
+});
+
 test("launch and concurrent consumers check once; navigation/unlock retain versions", async () => {
   let calls = 0;
   const next = deferred();

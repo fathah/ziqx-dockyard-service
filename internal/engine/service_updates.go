@@ -256,7 +256,31 @@ func (e *Engine) reconcileService(ctx context.Context, j *model.Job) (model.Proj
 			}
 		}
 		if err := d.HealthyServiceUpdate(ctx, next, plan); err != nil {
-			return old, err
+			// A failed, unrouted worker must not prevent deploying its fix. Close
+			// the failed update only after identifying its exact replacement and
+			// proving that all public routes still match the original snapshot.
+			var fault *model.Fault
+			observer, ok := e.Docker.(interface {
+				ObserveFailedServiceRestart(context.Context, model.Project, model.ServiceUpdate) (model.ServiceInstance, error)
+			})
+			_, oldDomains, oldErr := runtime.ServiceUpdateTarget(old, plan.Service)
+			_, nextDomains, nextErr := runtime.ServiceUpdateTarget(next, plan.Service)
+			if !errors.As(err, &fault) || fault.Code != "SERVICE_UNHEALTHY" || !ok || oldErr != nil || nextErr != nil || len(oldDomains) != 0 || len(nextDomains) != 0 || len(j.Input.RouteEdits) != 0 || !bytes.Equal(runtime.Snippet(old, old.Active), runtime.Snippet(next, next.Active)) {
+				return old, err
+			}
+			if err := e.Routes.Ensure(ctx, old); err != nil {
+				return old, err
+			}
+			observed, err := observer.ObserveFailedServiceRestart(ctx, next, plan)
+			if err != nil {
+				return old, err
+			}
+			plan.Instance = observed
+			next.ServiceInstances[plan.Service] = observed
+			j.Input.Project, j.Input.ServiceUpdate = &next, &plan
+			j.Warning = "SERVICE_UNHEALTHY_RECONCILED"
+			j.Diagnostic = "The failed service replacement was verified without restarting it. Its health is still failing. Deploy the corrected configuration with Controlled restart."
+			return next, nil
 		}
 		if err := e.Routes.Ensure(ctx, next); err != nil {
 			if err := e.Routes.Ensure(ctx, old); err != nil {
